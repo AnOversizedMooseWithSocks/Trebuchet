@@ -51,6 +51,29 @@ test('app.js contains the airdrop feature', () => {
   );
 });
 
+test('app.js contains the Solflare browser wallet bridge', () => {
+  assert.ok(
+    appJs.includes('getSolflareProvider'),
+    'the Solflare provider detection is missing from app.js',
+  );
+  assert.ok(
+    appJs.includes('window.solana?.providers'),
+    'the Solflare multi-provider detection is missing from app.js',
+  );
+  assert.ok(
+    appJs.includes('wallet-standard:app-ready'),
+    'the Solflare Wallet Standard discovery path is missing from app.js',
+  );
+  assert.ok(
+    appJs.includes("standardWalletFeature(provider.wallet, 'standard:events')"),
+    'the Solflare Wallet Standard account-change listener is missing from app.js',
+  );
+  assert.ok(
+    appJs.includes('getSolflareSigner'),
+    'the Solflare signer bridge is missing from app.js',
+  );
+});
+
 test('app.js is not a truncated stale-module build', () => {
   // The full app.js is ~18k lines / ~830KB. A rebuild from the stale modules
   // produces ~12k lines / ~540KB. Guard against a regressed bundle slipping in.

@@ -192,9 +192,10 @@ export function get(publicKey) {
   return load().find((w) => w.publicKey === publicKey) || null;
 }
 
-// Return all currently-pending wallets, decrypted into the in-memory
-// shape ({ publicKey, secretKey, mnemonic, createdAt }). Returned via
-// the local-only API to the loopback frontend, never over the network.
+// Return all currently-pending wallets, decrypted into the in-memory shape
+// ({ publicKey, secretKey, mnemonic, createdAt }). Server routes expose only
+// metadata by default; secret material is revealed per-wallet on explicit user
+// action.
 export function list() {
   return load();
 }

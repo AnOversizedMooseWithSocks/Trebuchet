@@ -44,3 +44,37 @@ test('dependency risk controls document audit residuals and PR checklist', () =>
   assert.match(security, /@metaplex-foundation\/umi-uploader-irys/);
   assert.match(template, /Dependency Risk/);
 });
+
+test('Electron only opens allowed external URL schemes', () => {
+  const main = read('main.js');
+
+  assert.match(main, /function openExternalSafe\(rawUrl\)/);
+  assert.match(main, /url\.protocol !== 'https:'/);
+  assert.doesNotMatch(main, /shell\.openExternal\(url\)/);
+  assert.doesNotMatch(main, /shell\.openExternal\(URLS\./);
+});
+
+test('pending-wallet list API does not bulk-return secret material', () => {
+  const server = read('server.js');
+  const listStart = server.indexOf("app.get('/api/pending-wallets'");
+  const revealStart = server.indexOf("app.post('/api/pending-wallets/reveal'");
+  assert.ok(listStart >= 0, 'pending-wallet list route missing');
+  assert.ok(revealStart > listStart, 'pending-wallet reveal route must follow list route');
+
+  const listRoute = server.slice(listStart, revealStart);
+  assert.match(listRoute, /hasSecretKey/);
+  assert.match(listRoute, /hasMnemonic/);
+  assert.doesNotMatch(listRoute, /secretKeyB58/);
+  assert.doesNotMatch(listRoute, /out\.secretKey\s*=/);
+  assert.doesNotMatch(listRoute, /out\.mnemonic\s*=/);
+});
+
+test('splash debug endpoint is opt-in only', () => {
+  const server = read('server.js');
+  const gatedRoute = "if (process.env.TREBUCHET_ENABLE_SPLASH_DEBUG === '1') {";
+  const gateStart = server.indexOf(gatedRoute);
+  const routeStart = server.indexOf("app.get('/api/_splash-debug'");
+
+  assert.ok(gateStart >= 0, 'splash debug env gate missing');
+  assert.ok(routeStart > gateStart, 'splash debug route must be inside the env-gated block');
+});

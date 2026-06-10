@@ -75,6 +75,9 @@ bind('generateWalletBtn', 'click', async () => {
       // address so the user doesn't have to re-enter anything to finish
       // a second demo run after a reset. No-op in real mode.
       applyDemoDestinationWallet();
+      if (typeof window.applySolflareDestinationWallet === 'function') {
+        window.applySolflareDestinationWallet({ silent: true });
+      }
 
       // Reset step summaries from any prior attempt
       for (let i = 2; i <= 6; i++) setStepSummary(i, '');

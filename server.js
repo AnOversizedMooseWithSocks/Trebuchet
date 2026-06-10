@@ -532,47 +532,45 @@ app.get('/', (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 
-// Diagnostic endpoint for the splash-video 404 problem. Reports what
-// server.js sees on disk: the resolved public/ path, whether it exists,
-// what's inside it, and whether intro.mp4 specifically is readable.
-// Useful for narrowing down whether a 404 on /intro.mp4 is "server
-// can't find the file" vs "file exists but isn't being served for
-// some other reason." Hit this from DevTools:
+// Opt-in diagnostic endpoint for splash-video 404 debugging. It reports local
+// filesystem/process paths, so keep it unavailable in normal desktop/web runs.
+// Enable only for targeted troubleshooting:
 //
+//   TREBUCHET_ENABLE_SPLASH_DEBUG=1 npm run web
 //   fetch('/api/_splash-debug').then(r => r.json()).then(console.log)
-//
-// Safe to ship — only reads its own directory, no user data exposed.
-app.get('/api/_splash-debug', (_req, res) => {
-  const introPath = path.join(publicDir, 'intro.mp4');
-  let publicListing = null;
-  let publicListingError = null;
-  try {
-    publicListing = fs.readdirSync(publicDir);
-  } catch (e) {
-    publicListingError = e.message;
-  }
-  let introStat = null;
-  let introStatError = null;
-  try {
-    const s = fs.statSync(introPath);
-    introStat = { size: s.size, isFile: s.isFile(), mtime: s.mtime };
-  } catch (e) {
-    introStatError = e.message;
-  }
-  res.json({
-    __dirname,
-    publicDir,
-    publicDirExists: fs.existsSync(publicDir),
-    publicListing,
-    publicListingError,
-    introPath,
-    introExists: fs.existsSync(introPath),
-    introStat,
-    introStatError,
-    cwd: process.cwd(),
-    execPath: process.execPath,
+if (process.env.TREBUCHET_ENABLE_SPLASH_DEBUG === '1') {
+  app.get('/api/_splash-debug', (_req, res) => {
+    const introPath = path.join(publicDir, 'intro.mp4');
+    let publicListing = null;
+    let publicListingError = null;
+    try {
+      publicListing = fs.readdirSync(publicDir);
+    } catch (e) {
+      publicListingError = e.message;
+    }
+    let introStat = null;
+    let introStatError = null;
+    try {
+      const s = fs.statSync(introPath);
+      introStat = { size: s.size, isFile: s.isFile(), mtime: s.mtime };
+    } catch (e) {
+      introStatError = e.message;
+    }
+    res.json({
+      __dirname,
+      publicDir,
+      publicDirExists: fs.existsSync(publicDir),
+      publicListing,
+      publicListingError,
+      introPath,
+      introExists: fs.existsSync(introPath),
+      introStat,
+      introStatError,
+      cwd: process.cwd(),
+      execPath: process.execPath,
+    });
   });
-});
+}
 
 // ---------------------------------------------------------------------------
 // Server log streaming
@@ -3959,29 +3957,23 @@ app.post('/api/launch-journals/dismiss', (req, res) => {
 
 app.get('/api/pending-wallets', (req, res) => {
   try {
-    // Augment each entry with a base58 form of the secret key, since
-    // that's what users actually paste into wallet apps.
+    // Return metadata only. Secret material is available through the explicit
+    // per-wallet reveal endpoint below, so loading the recovery panel no longer
+    // decrypts and ships every pending mnemonic/private key to the renderer.
     //
-    // Tolerate entries whose decryption failed (e.g. the file was
-    // copied from another machine, or the OS keychain rotated): one
-    // bad entry must not break the whole panel, so we surface a
-    // `decryptionFailed` flag instead of crashing on Uint8Array.from
-    // of undefined.
+    // Tolerate entries whose decryption failed (e.g. the file was copied from
+    // another machine, or the OS keychain rotated): one bad entry must not break
+    // the whole panel, so we surface a `decryptionFailed` flag.
     const wallets = pendingWallets.list().map((w) => {
+      const hasSecretKey = Array.isArray(w.secretKey);
+      const hasMnemonic = typeof w.mnemonic === 'string';
       const out = {
         publicKey: w.publicKey,
         createdAt: w.createdAt,
+        hasSecretKey,
+        hasMnemonic,
       };
-      if (Array.isArray(w.secretKey)) {
-        out.secretKey = w.secretKey;
-        out.secretKeyB58 = secretKeyToBase58(w.secretKey);
-      }
-      if (typeof w.mnemonic === 'string') {
-        out.mnemonic = w.mnemonic;
-      }
-      // If neither was decryptable, the front-end shows a "decryption
-      // failed" state with only a Discard button.
-      if (!out.secretKey && !out.mnemonic) {
+      if (!hasSecretKey && !hasMnemonic) {
         out.decryptionFailed = true;
       }
       return out;
@@ -3989,6 +3981,44 @@ app.get('/api/pending-wallets', (req, res) => {
     res.json({ success: true, wallets });
   } catch (error) {
     console.error('Error listing pending wallets:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/pending-wallets/reveal', (req, res) => {
+  try {
+    const { publicKey } = req.body;
+    if (!publicKey) {
+      return res.status(400).json({ success: false, error: 'publicKey required' });
+    }
+
+    const wallet = pendingWallets.get(publicKey);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'pending wallet not found' });
+    }
+
+    const out = {
+      publicKey: wallet.publicKey,
+      createdAt: wallet.createdAt,
+    };
+    if (Array.isArray(wallet.secretKey)) {
+      out.secretKey = wallet.secretKey;
+      out.secretKeyB58 = secretKeyToBase58(wallet.secretKey);
+    }
+    if (typeof wallet.mnemonic === 'string') {
+      out.mnemonic = wallet.mnemonic;
+    }
+    if (!out.secretKey && !out.mnemonic) {
+      return res.status(409).json({
+        success: false,
+        error: 'pending wallet secret could not be decrypted',
+        decryptionFailed: true,
+      });
+    }
+
+    res.json({ success: true, wallet: out });
+  } catch (error) {
+    console.error('Error revealing pending wallet:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

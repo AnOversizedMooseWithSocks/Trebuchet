@@ -121,14 +121,14 @@ function buildPendingWalletRow(wallet) {
         </div>
       </div>
     `;
-    wireRowButtons(wrap, wallet, pubShort, /*hasMnemonic=*/false);
+    wireRowButtons(wrap, wallet, pubShort);
     return wrap;
   }
 
   // Prefer the recovery phrase if this wallet was generated with one.
   // Older cached entries from before mnemonic support fall back to the
   // base58 secret key.
-  const hasMnemonic = !!wallet.mnemonic;
+  const hasMnemonic = !!wallet.hasMnemonic;
   const copyLabel = hasMnemonic ? 'Copy recovery phrase' : 'Copy secret key';
   const copyIcon = hasMnemonic ? 'fa-list-ol' : 'fa-key';
 
@@ -159,13 +159,13 @@ function buildPendingWalletRow(wallet) {
       </div>
     </div>
   `;
-  wireRowButtons(wrap, wallet, pubShort, hasMnemonic);
+  wireRowButtons(wrap, wallet, pubShort, { hasMnemonic });
   return wrap;
 }
 
 // Wire the per-row buttons. Extracted so both the normal and the
 // decryption-failed render paths share the same handler logic.
-function wireRowButtons(wrap, wallet, pubShort, hasMnemonic) {
+function wireRowButtons(wrap, wallet, pubShort, { hasMnemonic = false } = {}) {
   // Centralised clipboard helper so we don't duplicate the try/catch
   // every time. navigator.clipboard.writeText can throw in non-secure
   // contexts (older Electron, http://), if the page doesn't have focus,
@@ -189,13 +189,18 @@ function wireRowButtons(wrap, wallet, pubShort, hasMnemonic) {
   const copySecretBtn = wrap.querySelector('[data-action="copy-secret"]');
   if (copySecretBtn) {
     copySecretBtn.addEventListener('click', async () => {
-      const text = hasMnemonic ? wallet.mnemonic : wallet.secretKeyB58;
-      if (!text) {
-        log(`No secret available for ${pubShort}`, 'warning');
-        return;
+      try {
+        const revealed = await revealPendingWalletSecret(wallet.publicKey);
+        const text = hasMnemonic ? revealed.mnemonic : revealed.secretKeyB58;
+        if (!text) {
+          log(`No secret available for ${pubShort}`, 'warning');
+          return;
+        }
+        const what = hasMnemonic ? 'Recovery phrase' : 'Secret key';
+        await copyToClipboard(text, `${what} for ${pubShort}`);
+      } catch (e) {
+        log(`Couldn't reveal recovery secret for ${pubShort}: ${e.message}`, 'warning');
       }
-      const what = hasMnemonic ? 'Recovery phrase' : 'Secret key';
-      await copyToClipboard(text, `${what} for ${pubShort}`);
     });
   }
 
@@ -239,4 +244,3 @@ function formatAge(isoString) {
   if (seconds < 86400 * 7) return `${Math.floor(seconds / 86400)} days ago`;
   return new Date(isoString).toLocaleDateString();
 }
-
