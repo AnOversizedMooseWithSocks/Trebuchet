@@ -85,15 +85,23 @@ async function withPage(fn, size = 'desktop') {
     // Intercept the HTML response and remove the splash screen markup
     // before the browser parses it — no video frames at all in the recording.
     await p.route('**/', async (route) => {
-      const resp = await route.fetch();
-      const ct = resp.headers()['content-type'] || '';
-      if (ct.includes('text/html')) {
-        let body = await resp.text();
-        // Remove the splash screen div entirely (self-closing or paired tag)
-        body = body.replace(/<div[^>]*id="splashScreen"[^>]*>[\s\S]*?<\/div>/i, '');
-        await route.fulfill({ response: resp, body });
-      } else {
-        await route.fulfill({ response: resp });
+      try {
+        const resp = await route.fetch();
+        const ct = resp.headers()['content-type'] || '';
+        if (ct.includes('text/html')) {
+          let body = await resp.text();
+          // Remove the splash screen div entirely (self-closing or paired tag)
+          body = body.replace(/<div[^>]*id="splashScreen"[^>]*>[\s\S]*?<\/div>/i, '');
+          await route.fulfill({ response: resp, body });
+        } else {
+          await route.fulfill({ response: resp });
+        }
+      } catch (e) {
+        // CI occasionally closes a context while the next run's document
+        // request is still being proxied. Let Playwright surface real
+        // navigation failures through p.goto(), but do not let this async route
+        // handler crash the entire E2E process with an uncaught ECONNRESET.
+        try { await route.continue(); } catch {}
       }
     });
 
