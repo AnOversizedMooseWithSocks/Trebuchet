@@ -75,10 +75,10 @@
   const MUSIC_FADE_MS = 1500;   // fade-in (and fade-out on toggle/hide)
 
   // ---- State -------------------------------------------------------------
-  // Preference flags. Default ON; we only flip them off when the persisted
-  // value is explicitly false (mirrors how the intro-video pref is read).
+  // Preference flags. Sound effects default on. Background music defaults off
+  // and only starts when the persisted value is explicitly true.
   let sfxEnabled = true;
-  let musicEnabled = true;
+  let musicEnabled = false;
 
   // name -> { pool: [HTMLAudioElement], index: roundRobinCursor }
   const sfxBank = {};
@@ -320,16 +320,15 @@
   }
 
   // ---- Preference wiring -------------------------------------------------
-  // Read persisted prefs once on load. Default-on: a value is only treated as
-  // off when it's explicitly false. On any read error we keep the defaults,
-  // matching the rest of the renderer's "fail toward the nice behaviour" style.
+  // Read persisted prefs once on load. On any read error we keep the quiet
+  // music default while leaving sound effects on.
   function loadPrefs() {
     fetch('/api/user-prefs')
       .then((r) => r.json())
       .then((data) => {
         if (data && data.prefs) {
           sfxEnabled = data.prefs.playSoundEffects !== false;
-          musicEnabled = data.prefs.playBackgroundMusic !== false;
+          musicEnabled = data.prefs.playBackgroundMusic === true;
         }
         const sfxToggle = document.getElementById('soundEffectsToggle');
         if (sfxToggle) sfxToggle.checked = sfxEnabled;
@@ -424,8 +423,8 @@
   watchDetailsPanels();
   watchStepCards();
   watchLaunchSuccessModal();
-  // Start music as early as possible. In Electron this begins immediately,
-  // under the first startup dialog; in a browser it's a no-op until a gesture.
+  // If the loaded preference allows music, loadPrefs() starts it. This early
+  // call stays harmless because musicEnabled defaults to false until then.
   tryStartMusic();
   loadPrefs();
   wireSettingsToggles();

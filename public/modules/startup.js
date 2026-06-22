@@ -494,19 +494,61 @@ setupSplashScreen();
 // ===========================================================================
 // User preferences (renderer side)
 // ---------------------------------------------------------------------------
-// The medieval gauntlet cursor theme and the 3D coin token preview are
-// always-on features — not user-toggleable. We apply the cursor theme
-// unconditionally here; the coin preview is gated by coinPreviewEnabled,
-// which defaults to true. (No settings UI and no persisted pref for either.)
+// The medieval gauntlet cursor theme is opt-in. It is fun as flavor, but
+// custom cursor images bypass OS accessibility sizing/contrast and can make
+// text entry feel imprecise, so fresh installs keep the native cursor.
 // ===========================================================================
 (function setupAppearance() {
-  // Cursor theme: always on.
-  document.body.classList.add('medieval-cursor');
+  const toggle = document.getElementById('medievalCursorToggle');
+
+  function applyCursorPreference(enabled) {
+    document.body.classList.toggle('medieval-cursor', enabled);
+    if (!enabled) document.body.classList.remove('cursor-clenched');
+    if (toggle) toggle.checked = enabled;
+  }
+
+  // Old builds wrote medievalCursor:true into userPrefs.json as part of the
+  // default-shaped prefs object even when the user only changed an unrelated
+  // setting. Require the new opt-in marker too so those migrated files open
+  // with the quieter native cursor.
+  function cursorEnabledFromPrefs(prefs) {
+    return !!(prefs && prefs.medievalCursor === true && prefs.medievalCursorOptIn === true);
+  }
+
+  applyCursorPreference(false);
+
+  fetch('/api/user-prefs')
+    .then((r) => r.json())
+    .then((data) => {
+      applyCursorPreference(cursorEnabledFromPrefs(data && data.prefs));
+    })
+    .catch((err) => {
+      console.warn('Failed to read cursor preference:', err);
+      applyCursorPreference(false);
+    });
+
+  if (toggle) {
+    toggle.addEventListener('change', () => {
+      const enabled = toggle.checked;
+      applyCursorPreference(enabled);
+      fetch('/api/user-prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          medievalCursor: enabled,
+          medievalCursorOptIn: enabled,
+        }),
+      }).catch((err) => {
+        console.warn('Failed to persist cursor preference:', err);
+      });
+    });
+  }
 
   // Global mousedown clench: a click ANYWHERE adds .cursor-clenched so the
   // gauntlet shows the fist even over non-interactive space, then relaxes on
   // release. Listeners are passive — we never preventDefault.
   document.addEventListener('mousedown', () => {
+    if (!document.body.classList.contains('medieval-cursor')) return;
     document.body.classList.add('cursor-clenched');
   }, { passive: true });
   document.addEventListener('mouseup', () => {
@@ -906,6 +948,7 @@ function syncDemoChrome() {
 function applyVanityAvailabilityUi(vanity) {
   const available = vanity && vanity.available;
   const target = document.getElementById('vanityCATarget');
+  const endTarget = document.getElementById('vanityCAEndTarget');
   const mode = document.getElementById('vanityCAMode');
   const btn = document.getElementById('grindCABtn');
   if (available) {
@@ -913,6 +956,7 @@ function applyVanityAvailabilityUi(vanity) {
     // and a later status check showed the feature came back). Rare but
     // cheap to handle.
     if (target) { target.disabled = false; target.title = ''; }
+    if (endTarget) { endTarget.disabled = false; endTarget.title = ''; }
     if (mode) { mode.disabled = false; }
     if (btn) { btn.disabled = false; btn.title = ''; }
     const note = document.getElementById('vanityCAUnavailableNote');
@@ -923,6 +967,7 @@ function applyVanityAvailabilityUi(vanity) {
   // why the button is dead. Reason comes from the server when available.
   const reason = (vanity && vanity.reason) || 'vanity address generation is not available in this build';
   if (target) { target.disabled = true; target.title = reason; }
+  if (endTarget) { endTarget.disabled = true; endTarget.title = reason; }
   if (mode) { mode.disabled = true; }
   if (btn) { btn.disabled = true; btn.title = reason; }
   // Insert a help line below the existing description, so the user sees
@@ -957,4 +1002,3 @@ function applyVanityAvailabilityUi(vanity) {
 // splash element missing), both gates are still default-true and this
 // is the only place the trigger ever fires.
 _evaluateStartupGates();
-

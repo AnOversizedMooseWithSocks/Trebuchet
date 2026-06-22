@@ -46,6 +46,7 @@ import {
 } from './rpcConfig.js';
 
 import * as pendingWallets from './pendingWallets.js';
+import * as vanityCaStore from './vanityCaStore.js';
 import { createLaunchReportUmi, publishLaunchReport } from './launchReportService.js';
 import * as launchJournal from './launchJournal.js';
 import * as userPrefs from './userPrefs.js';
@@ -643,12 +644,53 @@ app.post('/api/generate-wallet', async (req, res) => {
   }
 });
 
+app.get('/api/wallet-qr', async (req, res) => {
+  try {
+    const publicKey = String(req.query.publicKey || '').trim();
+    if (!publicKey) {
+      return res.status(400).json({ success: false, error: 'publicKey required' });
+    }
+    // Validate before rendering so typos fail with a useful message instead
+    // of producing a QR that scans to nonsense.
+    new PublicKey(publicKey);
+    const qrCode = await getWalletQRCode(publicKey);
+    res.json({ success: true, publicKey, qrCode });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 // SOL-only balance (kept for backwards compatibility / Step 1 display)
 // ---------------------------------------------------------------------------
+
+app.get('/api/vanity-ca-candidates', (req, res) => {
+  try {
+    res.json({ success: true, candidates: vanityCaStore.listMetadata() });
+  } catch (error) {
+    console.error('Error listing vanity CA candidates:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/vanity-ca-candidates/remove', (req, res) => {
+  try {
+    const { publicKey } = req.body || {};
+    if (!publicKey) {
+      return res.status(400).json({ success: false, error: 'publicKey required' });
+    }
+    vanityCaStore.remove(publicKey);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error removing vanity CA candidate:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // SSE streaming endpoint for vanity CA grind progress
 app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
   let { prefix, suffix, threads, blockhash, token } = req.query;
+  prefix = typeof prefix === 'string' ? prefix.trim() : '';
+  suffix = typeof suffix === 'string' ? suffix.trim() : '';
 
   // Validate session token inline.  This endpoint is exempt from the
   // middleware so EventSource can connect, but we still gate on the
@@ -735,10 +777,10 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
     }
   }
 
-  const target = prefix || suffix;
-  const targetLen = target.length;
-  // 58^len
+  const target = prefix && suffix ? `${prefix}...${suffix}` : (prefix || suffix);
+  const targetLen = prefix.length + suffix.length;
   const expected = Math.pow(58, targetLen);
+  const vanityMode = prefix && suffix ? 'both' : (prefix ? 'prefix' : 'suffix');
 
   // SSE headers
   res.writeHead(200, {
@@ -761,14 +803,22 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
   });
 
   // Send initial metadata
-  res.write(`data: ${JSON.stringify({ type: 'start', target, targetLen, expected })}\n\n`);
+  res.write(`data: ${JSON.stringify({
+    type: 'start',
+    target,
+    targetLen,
+    expected,
+    prefix: prefix || null,
+    suffix: suffix || null,
+    mode: vanityMode,
+  })}\n\n`);
 
   let lastAttempts = 0;
   let lastSend = Date.now();
 
   try {
-    const generateVanityKeypair = await getVanityKeygen();
-    const result = await generateVanityKeypair({
+    const vanityMod = await import('./vanityKeygen.js');
+    const result = await vanityMod.generateVanityKeypair({
       prefix, suffix, threads, blockhash,
       onProgress: ({ attempts, key }) => {
         // Throttle to ~4 updates/sec
@@ -793,6 +843,19 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
     // pending-wallet/journal recovery stores, so there's nothing to skip.)
     if (isDemoMode()) {
       demoChainService.registerWallet(walletInfo.publicKey);
+    } else {
+      vanityCaStore.add({
+        publicKey: result.publicKey,
+        secretKey: result.secretKey,
+        rarity: result.rarity,
+        epochs: result.epochs,
+        attempts: result.attempts,
+        expectedAttempts: result.expectedAttempts,
+        target,
+        prefix: prefix || null,
+        suffix: suffix || null,
+        mode: vanityMode,
+      });
     }
 
     const qrCode = await getWalletQRCode(walletInfo.publicKey);
@@ -811,6 +874,11 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
         rarity: result.rarity,
         epochs: result.epochs,
         expectedAttempts: result.expectedAttempts,
+        target,
+        prefix: prefix || null,
+        suffix: suffix || null,
+        mode: vanityMode,
+        persisted: !isDemoMode(),
         ...(result.vrfProof ? {
           vrfProof: result.vrfProof,
           vrfPk: result.vrfPk,
@@ -856,7 +924,9 @@ app.post('/api/cancel-vanity-grind', async (req, res) => {
 
 app.post('/api/generate-vanity-wallet', async (req, res) => {
   try {
-    const { prefix, suffix, threads } = req.body;
+    let { prefix, suffix, threads } = req.body;
+    prefix = typeof prefix === 'string' ? prefix.trim() : '';
+    suffix = typeof suffix === 'string' ? suffix.trim() : '';
     if (!prefix && !suffix) {
       return res.status(400).json({ success: false, error: 'prefix or suffix required' });
     }
@@ -873,8 +943,9 @@ app.post('/api/generate-vanity-wallet', async (req, res) => {
       });
     }
 
-    const target = prefix || suffix;
-    console.log(`Generating vanity wallet (${prefix ? 'prefix' : 'suffix'}: "${target}")...`);
+    const target = prefix && suffix ? `${prefix}...${suffix}` : (prefix || suffix);
+    const vanityMode = prefix && suffix ? 'both' : (prefix ? 'prefix' : 'suffix');
+    console.log(`Generating vanity wallet (${vanityMode}: "${target}")...`);
 
     const generateVanityKeypair = await getVanityKeygen();
     const result = await generateVanityKeypair({ prefix, suffix, threads });
@@ -912,6 +983,10 @@ app.post('/api/generate-vanity-wallet', async (req, res) => {
         rarity: result.rarity,
         epochs: result.epochs,
         expectedAttempts: result.expectedAttempts,
+        target,
+        prefix: prefix || null,
+        suffix: suffix || null,
+        mode: vanityMode,
       },
     });
   } catch (error) {
@@ -1490,6 +1565,7 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       vanityPrefix,
       vanitySuffix,
       vanityCAKeypair: vanityCAKeypairRaw,
+      vanityCAPublicKey,
     } = req.body;
 
     // If the caller asked for a fresh vanity grind (prefix/suffix) but the
@@ -1555,6 +1631,21 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       },
     );
 
+    let vanityCAKeypair = vanityCAKeypairRaw ? JSON.parse(vanityCAKeypairRaw) : null;
+    if (!vanityCAKeypair && vanityCAPublicKey) {
+      const candidate = vanityCaStore.get(vanityCAPublicKey);
+      if (!candidate) {
+        return res.status(404).json({ success: false, error: 'Saved Vanity CA not found' });
+      }
+      if (!Array.isArray(candidate.secretKey)) {
+        return res.status(409).json({
+          success: false,
+          error: 'Saved Vanity CA secret could not be decrypted',
+        });
+      }
+      vanityCAKeypair = candidate.secretKey;
+    }
+
     const result = await createTokenWithMetaplex({
       tempWalletSecretKey: tempWalletSecretKeyArr,
       name: normalizedName,
@@ -1564,9 +1655,12 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       logoBase64,
       vanityPrefix,
       vanitySuffix,
-      vanityCAKeypair: vanityCAKeypairRaw ? JSON.parse(vanityCAKeypairRaw) : null,
+      vanityCAKeypair,
       onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
     });
+    if (vanityCAPublicKey) {
+      vanityCaStore.remove(vanityCAPublicKey);
+    }
 
     launchJournal.upsertForWallet(
       walletPublicKey,

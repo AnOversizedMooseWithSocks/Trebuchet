@@ -57,7 +57,7 @@ bind('generateWalletBtn', 'click', async () => {
 
       // Reset UI panels that may carry stale info from a previous attempt
       document.getElementById('walletInfo').classList.remove('hidden');
-      document.getElementById('qrCode').src = data.wallet.qrCode;
+      setWalletQrImages(data.wallet.qrCode);
       document.getElementById('walletAddress').value = data.wallet.publicKey;
       document.getElementById('privateKeyContainer').classList.add('hidden');
       document.getElementById('tokenCreatedInfo').classList.add('hidden');
@@ -255,4 +255,3 @@ bind('tokenLogo', 'change', async (e) => {
 });
 
 const poolList = document.getElementById('poolList');
-

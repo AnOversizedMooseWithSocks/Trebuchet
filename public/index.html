@@ -3181,6 +3181,27 @@
             border-radius: var(--radius-sm);
                         transition: width 0.15s ease, background 0.15s ease;
         }
+        .vanity-ca-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            padding-top: 0.35rem;
+            border-top: 1px solid var(--rule-faint);
+        }
+        .vanity-ca-option {
+            max-width: 100%;
+            font-family: var(--font-mono);
+        }
+        .position-total-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .position-total-hint {
+            line-height: 30px;
+            white-space: nowrap;
+        }
         @keyframes vanityPulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
@@ -3524,11 +3545,23 @@
                         off to go straight to the app on launch.
                     </p>
 
+                    <hr class="my-3">
+                    <h6 class="subtitle is-6 mb-2">Appearance</h6>
+                    <div class="field">
+                        <label class="checkbox">
+                            <input type="checkbox" id="medievalCursorToggle">
+                            <span>Use themed cursor icons</span>
+                        </label>
+                    </div>
+                    <p class="help mb-2">
+                        Replaces the operating-system cursor with Trebuchet's
+                        medieval cursor set.
+                    </p>
+
                     <!-- ============================================ -->
-                    <!-- Audio. A click sound effect and looping       -->
-                    <!-- background music, both on by default. Both    -->
-                    <!-- are handled entirely in the renderer          -->
-                    <!-- (public/modules/audio.js); changes here take  -->
+                    <!-- Audio. Sound effects default on; background    -->
+                    <!-- music is opt-in. Both are handled entirely in  -->
+                    <!-- the renderer; changes here take                -->
                     <!-- effect immediately and persist to             -->
                     <!-- userPrefs.json as playSoundEffects /          -->
                     <!-- playBackgroundMusic.                          -->
@@ -3543,12 +3576,12 @@
                     </div>
                     <div class="field">
                         <label class="checkbox">
-                            <input type="checkbox" id="backgroundMusicToggle" checked>
+                            <input type="checkbox" id="backgroundMusicToggle">
                             <span>Play background music</span>
                         </label>
                     </div>
                     <p class="help mb-2">
-                        Background music starts when the app opens and pauses
+                        Background music starts only when enabled and pauses
                         while the window is in the background. Sound effects
                         cover buttons, dropdown menus, checkboxes, and changes
                         to the estimated launch cost.
@@ -3885,18 +3918,22 @@
                     </div>
                     <!-- Vanity CA: grind a custom token mint address -->
                     <h4 class="title is-6 mt-4">Vanity CA <span class="tag is-warning is-light is-size-7" style="vertical-align: middle;">Optional</span></h4>
-                    <p class="help is-size-7 mb-2">Make your token CA start or end with a custom string. Grinds during token creation. 4 chars ~30s, 5 chars ~30min.</p>
+                    <p class="help is-size-7 mb-2">Make your token CA start or end with a custom string. Saved candidates survive restarts.</p>
                     <div class="field has-addons">
                         <p class="control">
                             <span class="select is-small">
                                 <select id="vanityCAMode">
                                     <option value="suffix">Ends with</option>
                                     <option value="prefix">Starts with</option>
+                                    <option value="both">Starts &amp; Ends With</option>
                                 </select>
                             </span>
                         </p>
-                        <p class="control is-expanded">
+                        <p class="control is-expanded" id="vanityCAStartControl">
                             <input class="input is-small is-family-monospace" type="text" id="vanityCATarget" placeholder="e.g. RATi" maxlength="10">
+                        </p>
+                        <p class="control is-expanded hidden" id="vanityCAEndControl">
+                            <input class="input is-small is-family-monospace" type="text" id="vanityCAEndTarget" placeholder="end" maxlength="10">
                         </p>
                         <p class="control">
                             <button class="button is-primary is-small" id="grindCABtn">
@@ -3922,8 +3959,9 @@
                                         <span id="vanityCARarity" class="tag is-info is-size-7"></span>
                                         <span class="has-text-grey ml-2" id="vanityCAResultMeta"></span>
                                     </p>
+                                    <div id="vanityCAOptions" class="vanity-ca-options hidden mt-2"></div>
                                 </div>
-                                <button class="button is-small is-light" id="clearVanityCAResultBtn" title="Discard and grind again">
+                                <button class="button is-small is-light" id="clearVanityCAResultBtn" title="Discard selected vanity CA">
                                     <span class="icon is-small"><i class="fas fa-times"></i></span>
                                 </button>
                             </div>

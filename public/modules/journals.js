@@ -498,7 +498,6 @@ function buildLaunchJournalRow(journal, wallet) {
     createdTokenInfo = null;
     lpResult = null;
     fundingRequirement = { solLamports: 0, byQuote: {}, autoSwapPlan: [] };
-    if (typeof clearVanityCAs === 'function') clearVanityCAs();
 
     tempWallet = {
       publicKey: wallet.publicKey,
@@ -506,7 +505,10 @@ function buildLaunchJournalRow(journal, wallet) {
 
     document.getElementById('walletInfo').classList.remove('hidden');
     document.getElementById('walletAddress').value = wallet.publicKey;
-    document.getElementById('qrCode').src = '';
+    setWalletQrImages(null);
+    ensureWalletQrCode(tempWallet).catch((e) => {
+      log(`Couldn't render wallet QR: ${e.message}`, 'warning');
+    });
     document.getElementById('privateKeyContainer').classList.add('hidden');
     document.getElementById('tokenCreatedInfo').classList.add('hidden');
     document.getElementById('createTokenBtn').classList.remove('hidden');

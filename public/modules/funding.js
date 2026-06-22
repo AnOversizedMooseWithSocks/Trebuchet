@@ -540,11 +540,18 @@ function attachRowLogoFallbacks(root) {
 
 function renderFundingRequirements() {
   document.getElementById('step3WalletAddr').textContent = tempWallet.publicKey;
-  // The QR data URL was generated server-side when the wallet was created
-  // and stashed on tempWallet alongside publicKey/secretKey. Reuse it here
-  // so users on mobile can scan rather than copy-paste the address.
-  const step3Qr = document.getElementById('step3QrCode');
-  if (step3Qr && tempWallet.qrCode) step3Qr.src = tempWallet.qrCode;
+  // The QR data URL is usually generated server-side with the wallet, but
+  // recovered wallets from a prior session only have the public key. In that
+  // case regenerate the QR lazily so the funding panel doesn't show a broken
+  // image icon.
+  if (tempWallet.qrCode) {
+    setWalletQrImages(tempWallet.qrCode);
+  } else {
+    setWalletQrImages(null);
+    ensureWalletQrCode(tempWallet).catch((e) => {
+      log(`Couldn't render wallet QR: ${e.message}`, 'warning');
+    });
+  }
 
   // ---- Section 1: things the user must send themselves ------------------
   // SOL is always present. Manual-prefund tokens (no auto-swap route, or
@@ -1751,4 +1758,3 @@ bind('continueToTokenBtn', 'click', () => {
   setStepSummary(3, `funded`);
   activateStep(4);
 });
-

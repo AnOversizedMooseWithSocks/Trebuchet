@@ -109,6 +109,39 @@ let lastAirdropResult = null;
 // restart). Null in normal sessions.
 let restoredAirdropPayload = null;
 
+function setWalletQrImages(qrCode) {
+  ['qrCode', 'step3QrCode'].forEach((id) => {
+    const img = document.getElementById(id);
+    if (!img) return;
+    if (qrCode) {
+      img.src = qrCode;
+      img.classList.remove('hidden');
+    } else {
+      img.removeAttribute('src');
+      img.classList.add('hidden');
+    }
+  });
+}
+
+async function ensureWalletQrCode(wallet = tempWallet) {
+  if (!wallet || !wallet.publicKey) {
+    setWalletQrImages(null);
+    return null;
+  }
+  if (wallet.qrCode) {
+    setWalletQrImages(wallet.qrCode);
+    return wallet.qrCode;
+  }
+  const resp = await fetch('/api/wallet-qr?publicKey=' + encodeURIComponent(wallet.publicKey));
+  const data = await resp.json();
+  if (!resp.ok || !data.success || !data.qrCode) {
+    throw new Error(data.error || `QR generation failed with HTTP ${resp.status}`);
+  }
+  wallet.qrCode = data.qrCode;
+  setWalletQrImages(wallet.qrCode);
+  return wallet.qrCode;
+}
+
 // Cache of resolved quote-token info, keyed by the canonical input the
 // user typed/picked (e.g. 'SOL', 'USDC', or a base58 mint address). Each
 // entry is the full info payload that resolvePoolQuote would otherwise
@@ -673,4 +706,3 @@ const STEP_TITLES = {
   5: 'Create Pools',
   6: 'Transfer Assets',
 };
-
