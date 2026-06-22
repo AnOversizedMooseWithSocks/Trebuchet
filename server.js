@@ -47,6 +47,7 @@ import {
 
 import * as pendingWallets from './pendingWallets.js';
 import * as vanityCaStore from './vanityCaStore.js';
+import * as secretStore from './secretStore.js';
 import { createLaunchReportUmi, publishLaunchReport } from './launchReportService.js';
 import * as launchJournal from './launchJournal.js';
 import * as userPrefs from './userPrefs.js';
@@ -481,6 +482,37 @@ function isDemoMode() {
   }
 }
 
+function secretPinLockedError(action = 'use saved recovery secrets') {
+  const error = new Error(`Unlock your Recovery PIN before ${action}.`);
+  error.statusCode = 423;
+  error.code = 'SECRET_PIN_LOCKED';
+  return error;
+}
+
+function sendErrorResponse(res, error, fallbackStatus = 500) {
+  const status = error?.statusCode || error?.status || fallbackStatus;
+  const body = {
+    success: false,
+    error: error?.message || String(error || 'Unknown error'),
+  };
+  if (error?.code) body.code = error.code;
+  if (error?.code === 'SECRET_PIN_LOCKED') body.secretPinLocked = true;
+  res.status(status).json(body);
+}
+
+function rejectIfSecretPinLocked(res, action) {
+  if (!secretStore.isSecretPinLocked()) return false;
+  sendErrorResponse(res, secretPinLockedError(action), 423);
+  return true;
+}
+
+function migrateSecretsToUnlockedPin() {
+  // These loads opportunistically rewrite legacy/plain/safeStorage tokens
+  // into pin: tokens when the PIN key is currently unlocked.
+  pendingWallets.list();
+  vanityCaStore.list();
+}
+
 
 
 // ---------------------------------------------------------------------------
@@ -604,16 +636,59 @@ app.get('/api/server-logs', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Recovery PIN endpoints
+// ---------------------------------------------------------------------------
+
+app.get('/api/secret-pin/status', (_req, res) => {
+  res.json({ success: true, status: secretStore.secretPinStatus() });
+});
+
+app.post('/api/secret-pin/setup', (req, res) => {
+  try {
+    secretStore.setupSecretPin(req.body?.pin);
+    migrateSecretsToUnlockedPin();
+    res.json({ success: true, status: secretStore.secretPinStatus() });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+app.post('/api/secret-pin/unlock', (req, res) => {
+  try {
+    const ok = secretStore.unlockSecretPin(req.body?.pin);
+    if (!ok) {
+      return res.status(401).json({
+        success: false,
+        code: 'BAD_SECRET_PIN',
+        error: 'Recovery PIN is incorrect',
+      });
+    }
+    migrateSecretsToUnlockedPin();
+    res.json({ success: true, status: secretStore.secretPinStatus() });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+app.post('/api/secret-pin/lock', (_req, res) => {
+  res.json({ success: true, status: secretStore.lockSecretPin() });
+});
+
+// ---------------------------------------------------------------------------
 // Wallet endpoints
 // ---------------------------------------------------------------------------
 
 app.post('/api/generate-wallet', async (req, res) => {
   try {
+    const demoMode = isDemoMode();
+    if (!demoMode && rejectIfSecretPinLocked(res, 'generating a recoverable launch wallet')) {
+      return;
+    }
     console.log('Generating temporary wallet...');
     const walletInfo = await generateTemporaryWallet();
     const qrCode = await getWalletQRCode(walletInfo.publicKey);
 
-    if (isDemoMode()) {
+    if (demoMode) {
       // Demo: still produce a REAL keypair (the secret key is shown to the
       // user and downstream code expects a valid signer), but register a
       // fresh empty WalletState in the demo ledger instead of writing to
@@ -640,7 +715,7 @@ app.post('/api/generate-wallet', async (req, res) => {
     });
   } catch (error) {
     console.error('Error generating wallet:', error);
-    res.status(500).json({ success: false, error: error.message });
+    sendErrorResponse(res, error);
   }
 });
 
@@ -665,7 +740,12 @@ app.get('/api/wallet-qr', async (req, res) => {
 
 app.get('/api/vanity-ca-candidates', (req, res) => {
   try {
-    res.json({ success: true, candidates: vanityCaStore.listMetadata() });
+    const secretPinLocked = secretStore.isSecretPinLocked();
+    const candidates = vanityCaStore.listMetadata().map((candidate) => ({
+      ...candidate,
+      ...(candidate.decryptionFailed && secretPinLocked ? { secretPinLocked: true } : {}),
+    }));
+    res.json({ success: true, candidates, secretPinLocked });
   } catch (error) {
     console.error('Error listing vanity CA candidates:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -702,6 +782,11 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
   const expectedBuf = Buffer.from(API_SESSION_TOKEN);
   if (tokenBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(tokenBuf, expectedBuf)) {
     return res.status(403).json({ success: false, error: 'invalid session token' });
+  }
+
+  const demoMode = isDemoMode();
+  if (!demoMode && rejectIfSecretPinLocked(res, 'saving a Vanity CA candidate')) {
+    return;
   }
 
   if (!prefix && !suffix) {
@@ -841,7 +926,7 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
     // it starts as an empty, fundable launch wallet — same as the plain
     // generate-wallet demo branch. (This stream endpoint never writes to the
     // pending-wallet/journal recovery stores, so there's nothing to skip.)
-    if (isDemoMode()) {
+    if (demoMode) {
       demoChainService.registerWallet(walletInfo.publicKey);
     } else {
       vanityCaStore.add({
@@ -878,7 +963,7 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
         prefix: prefix || null,
         suffix: suffix || null,
         mode: vanityMode,
-        persisted: !isDemoMode(),
+        persisted: !demoMode,
         ...(result.vrfProof ? {
           vrfProof: result.vrfProof,
           vrfPk: result.vrfPk,
@@ -924,6 +1009,10 @@ app.post('/api/cancel-vanity-grind', async (req, res) => {
 
 app.post('/api/generate-vanity-wallet', async (req, res) => {
   try {
+    const demoMode = isDemoMode();
+    if (!demoMode && rejectIfSecretPinLocked(res, 'generating a recoverable vanity wallet')) {
+      return;
+    }
     let { prefix, suffix, threads } = req.body;
     prefix = typeof prefix === 'string' ? prefix.trim() : '';
     suffix = typeof suffix === 'string' ? suffix.trim() : '';
@@ -960,7 +1049,7 @@ app.post('/api/generate-vanity-wallet', async (req, res) => {
     };
 
     const qrCode = await getWalletQRCode(walletInfo.publicKey);
-    if (isDemoMode()) {
+    if (demoMode) {
       // Demo: register an empty wallet in the demo ledger and DON'T touch the
       // disk-backed recovery stores — mirrors the generate-wallet demo branch
       // so synthetic demo wallets never leak into real recovery data.
@@ -991,7 +1080,7 @@ app.post('/api/generate-vanity-wallet', async (req, res) => {
     });
   } catch (error) {
     console.error('Error generating vanity wallet:', error);
-    res.status(500).json({ success: false, error: error.message });
+    sendErrorResponse(res, error);
   }
 });
 app.post('/api/check-balance', async (req, res) => {
@@ -1139,6 +1228,10 @@ app.post('/api/publish-launch-report', async (req, res) => {
 
     if (!mint) {
       return res.json({ success: true, skipped: true, reason: 'missing-mint' });
+    }
+
+    if (walletPublicKey && rejectIfSecretPinLocked(res, 'publishing a launch report')) {
+      return;
     }
 
     // Journal-backed idempotency: the report publishes during the transfer
@@ -1568,6 +1661,11 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       vanityCAPublicKey,
     } = req.body;
 
+    if ((req.body.walletPublicKey || vanityCAPublicKey)
+        && rejectIfSecretPinLocked(res, 'creating a token with saved recovery secrets')) {
+      return;
+    }
+
     // If the caller asked for a fresh vanity grind (prefix/suffix) but the
     // binary isn't built, reject up front with the same 503 the dedicated
     // vanity endpoints use. Pre-ground vanity keypairs (vanityCAKeypair)
@@ -1706,7 +1804,7 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
         { stage: 'token_create_failed', error: error.message },
       );
     }
-    res.status(500).json({ success: false, error: error.message });
+    sendErrorResponse(res, error);
   } finally {
     // Release the per-wallet operation lock if we claimed it.
     if (claimedLaunchOp && walletPublicKey) {
@@ -2553,6 +2651,10 @@ app.post('/api/acquire-quote-tokens', async (req, res) => {
       });
       return res.json({ jobId });
     }
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'acquiring quote tokens with a saved launch wallet')) {
+      return;
+    }
     const { secretKeyArr, keypair: ownerKeypair } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
 
@@ -2575,7 +2677,7 @@ app.post('/api/acquire-quote-tokens', async (req, res) => {
     res.json({ jobId });
   } catch (error) {
     console.error('[acquire] error starting job:', error);
-    res.status(500).json({ error: error.message });
+    sendErrorResponse(res, error);
   }
 });
 
@@ -2714,6 +2816,10 @@ app.post('/api/create-lp', async (req, res) => {
     console.log('Creating LP for token:', tokenMint);
     console.log('Allocations:', JSON.stringify(allocations, null, 2));
 
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'creating liquidity pools with a saved launch wallet')) {
+      return;
+    }
     const { secretKeyArr, walletPublicKey: resolvedWalletPublicKey } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
     walletPublicKey = resolvedWalletPublicKey;
@@ -2831,8 +2937,10 @@ app.post('/api/create-lp', async (req, res) => {
         },
       );
     }
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.code === 'SECRET_PIN_LOCKED' ? { secretPinLocked: true } : {}),
       error: error.message,
       partialResults: error.partialResults || [],
       failedAllocationIndex: error.failedAllocationIndex,
@@ -2920,6 +3028,10 @@ app.post('/api/resume-launch', async (req, res) => {
         `allocation(s) carried over from prior attempt`,
     );
 
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'resuming a launch with a saved launch wallet')) {
+      return;
+    }
     const { secretKeyArr, walletPublicKey: resolvedWalletPublicKey } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
     walletPublicKey = resolvedWalletPublicKey;
@@ -3027,8 +3139,10 @@ app.post('/api/resume-launch', async (req, res) => {
         },
       );
     }
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.code === 'SECRET_PIN_LOCKED' ? { secretPinLocked: true } : {}),
       error: error.message,
       partialResults: error.partialResults || [],
       failedAllocationIndex: error.failedAllocationIndex,
@@ -3298,6 +3412,10 @@ app.post('/api/transfer-assets', async (req, res) => {
 
     console.log('Transferring assets to:', destinationWallet);
 
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'transferring assets with a saved launch wallet')) {
+      return;
+    }
     const { secretKeyArr, walletPublicKey: resolvedWalletPublicKey } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
     walletPublicKey = resolvedWalletPublicKey;
@@ -3591,7 +3709,7 @@ app.post('/api/transfer-assets', async (req, res) => {
         { stage: 'transfer_failed', error: error.message },
       );
     }
-    res.status(500).json({ success: false, error: error.message });
+    sendErrorResponse(res, error);
   } finally {
     // Release the per-wallet operation lock if we claimed it. 409
     // rejections never claim, so a rejected duplicate doesn't release
@@ -3660,6 +3778,10 @@ async function runAirdropHandler(req, res) {
       });
     }
 
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'running an airdrop with a saved launch wallet')) {
+      return;
+    }
     const { secretKeyArr, walletPublicKey: resolvedWalletPublicKey } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
     walletPublicKey = resolvedWalletPublicKey;
@@ -3776,7 +3898,7 @@ async function runAirdropHandler(req, res) {
     });
   } catch (error) {
     console.error('Airdrop retry failed:', error);
-    res.status(500).json({ success: false, error: error.message });
+    sendErrorResponse(res, error);
   } finally {
     // Release the launch-op mutex no matter how the handler exited. Only
     // when WE claimed it — a 409 from rejectOrClaimLaunchOp means another
@@ -3856,6 +3978,10 @@ app.post('/api/launch-journals/resume', async (req, res) => {
     }
 
     walletPublicKey = journal.walletPublicKey;
+    if (walletPublicKey
+        && rejectIfSecretPinLocked(res, 'resuming a launch journal with a saved wallet')) {
+      return;
+    }
     const wallet = pendingWallets.get(walletPublicKey);
     if (!wallet || !Array.isArray(wallet.secretKey)) {
       return res.status(409).json({
@@ -4015,8 +4141,10 @@ app.post('/api/launch-journals/resume', async (req, res) => {
         },
       );
     }
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.code === 'SECRET_PIN_LOCKED' ? { secretPinLocked: true } : {}),
       error: error.message,
       partialResults,
       failedAllocationIndex: error.failedAllocationIndex,
@@ -4051,6 +4179,7 @@ app.post('/api/launch-journals/dismiss', (req, res) => {
 
 app.get('/api/pending-wallets', (req, res) => {
   try {
+    const secretPinLocked = secretStore.isSecretPinLocked();
     // Return metadata only. Secret material is available through the explicit
     // per-wallet reveal endpoint below, so loading the recovery panel no longer
     // decrypts and ships every pending mnemonic/private key to the renderer.
@@ -4069,10 +4198,11 @@ app.get('/api/pending-wallets', (req, res) => {
       };
       if (!hasSecretKey && !hasMnemonic) {
         out.decryptionFailed = true;
+        if (secretPinLocked) out.secretPinLocked = true;
       }
       return out;
     });
-    res.json({ success: true, wallets });
+    res.json({ success: true, wallets, secretPinLocked });
   } catch (error) {
     console.error('Error listing pending wallets:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -4081,6 +4211,9 @@ app.get('/api/pending-wallets', (req, res) => {
 
 app.post('/api/pending-wallets/reveal', (req, res) => {
   try {
+    if (rejectIfSecretPinLocked(res, 'revealing a recovery secret')) {
+      return;
+    }
     const { publicKey } = req.body;
     if (!publicKey) {
       return res.status(400).json({ success: false, error: 'publicKey required' });
@@ -4170,6 +4303,9 @@ function resolveSigner({ tempWalletSecretKey, walletPublicKey } = {}) {
 
   // (1) Prefer the server-side stored secret, keyed by public key.
   if (walletPublicKey) {
+    if (secretStore.isSecretPinLocked()) {
+      throw secretPinLockedError('using a saved launch wallet');
+    }
     const stored = pendingWallets.get(walletPublicKey);
     if (stored && Array.isArray(stored.secretKey)) {
       secretKeyArr = stored.secretKey;

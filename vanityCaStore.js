@@ -95,15 +95,19 @@ function persist(list) {
 
 function load() {
   const raw = readRaw();
-  const decoded = raw
-    .map(decodeEntry)
+  const decodedAll = raw.map(decodeEntry);
+  const decoded = decodedAll
     .filter((entry) => typeof entry.publicKey === 'string' && entry.publicKey.length > 0);
 
   const hasLegacyPlaintext = raw.some((entry) => Array.isArray(entry.secretKey));
-  const hasPlainTokens = raw.some((entry) =>
-    typeof entry.secretKeyEnc === 'string' && entry.secretKeyEnc.startsWith('plain:'));
-  if (hasLegacyPlaintext || (hasPlainTokens && secretStore.isEncrypting())) {
+  const hasReencryptableTokens = raw.some((entry) =>
+    secretStore.shouldReencryptToken(entry.secretKeyEnc));
+  const hasReencryptFailure = raw.some((entry, idx) =>
+    secretStore.shouldReencryptToken(entry.secretKeyEnc) && !Array.isArray(decodedAll[idx]?.secretKey));
+  if (hasLegacyPlaintext || (hasReencryptableTokens && !hasReencryptFailure)) {
     persist(decoded);
+  } else if (hasReencryptableTokens && hasReencryptFailure) {
+    console.warn('vanityCaStore: skipped secret migration because at least one entry could not be decrypted');
   }
 
   return decoded;

@@ -1533,6 +1533,27 @@
             padding: 2rem 1rem;
             color: var(--ink-soft);
         }
+        .secret-pin-modal {
+            z-index: 10002 !important;
+        }
+        .secret-pin-modal .modal-card {
+            max-width: min(440px, calc(100vw - 2rem));
+        }
+        .secret-pin-status-line {
+            min-height: 1.25rem;
+        }
+        .secret-pin-settings-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .secret-pin-settings-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
         /* ========================================================
            Layout & visual style
            ======================================================== */
@@ -3373,6 +3394,39 @@
         </div>
     </div>
 
+    <div id="secretPinModal" class="modal secret-pin-modal" role="dialog" aria-modal="true" aria-labelledby="secretPinTitle">
+        <div class="modal-background"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title" id="secretPinTitle">Recovery PIN</p>
+            </header>
+            <section class="modal-card-body">
+                <p class="mb-3" id="secretPinDescription">Set a 4-digit PIN. Trebuchet combines it with this device to encrypt launch wallets and saved Vanity CAs.</p>
+                <div class="field">
+                    <label class="label is-small" for="secretPinInput">PIN</label>
+                    <div class="control has-icons-left">
+                        <input class="input" id="secretPinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="one-time-code">
+                        <span class="icon is-small is-left"><i class="fas fa-lock"></i></span>
+                    </div>
+                </div>
+                <div class="field" id="secretPinConfirmField">
+                    <label class="label is-small" for="secretPinConfirmInput">Confirm PIN</label>
+                    <div class="control has-icons-left">
+                        <input class="input" id="secretPinConfirmInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="new-password">
+                        <span class="icon is-small is-left"><i class="fas fa-check"></i></span>
+                    </div>
+                </div>
+                <p class="help secret-pin-status-line" id="secretPinModalStatus"></p>
+            </section>
+            <footer class="modal-card-foot">
+                <button class="button is-primary" id="secretPinSubmitBtn" type="button">
+                    <span class="icon"><i class="fas fa-unlock"></i></span>
+                    <span>Continue</span>
+                </button>
+            </footer>
+        </div>
+    </div>
+
     <!-- Hero -->
     <section class="hero is-primary">
         <div class="hero-body">
@@ -3502,6 +3556,28 @@
                         </div>
                     </div>
                     <p id="rpcTestResult" class="help"></p>
+
+                    <hr class="my-3">
+                    <h6 class="subtitle is-6 mb-2">Recovery PIN</h6>
+                    <div class="secret-pin-settings-row">
+                        <div>
+                            <span class="icon"><i class="fas fa-shield-alt"></i></span>
+                            <span id="secretPinStatusText" class="is-size-7">Checking...</span>
+                        </div>
+                        <div class="secret-pin-settings-actions">
+                            <button class="button is-small" id="secretPinUnlockBtn" type="button">
+                                <span class="icon is-small"><i class="fas fa-unlock"></i></span>
+                                <span>Unlock</span>
+                            </button>
+                            <button class="button is-small" id="secretPinLockBtn" type="button">
+                                <span class="icon is-small"><i class="fas fa-lock"></i></span>
+                                <span>Lock</span>
+                            </button>
+                        </div>
+                    </div>
+                    <p class="help mb-2">
+                        Encrypts launch-wallet recovery phrases and saved Vanity CAs with your PIN plus this device.
+                    </p>
 
                     <!-- ============================================ -->
                     <!-- Demo mode toggle. Intentional opt-in (no      -->
@@ -3709,10 +3785,9 @@
                     handled it.
                 </p>
                 <p class="is-size-7 mb-3 has-text-grey">
-                    Recovery phrases are encrypted at rest using your OS keychain
-                    (Keychain on macOS, DPAPI on Windows, libsecret/kwallet on
-                    Linux) — the file on disk can't be read on another user
-                    account or another machine.
+                    Recovery phrases are encrypted at rest. If the Recovery PIN
+                    is locked, unlock it in Settings to resume or reveal saved
+                    wallet secrets.
                 </p>
                 <div id="launchJournalsList"></div>
             </div>
@@ -3740,10 +3815,9 @@
                     to recover.
                 </p>
                 <p class="is-size-7 mb-3 has-text-grey">
-                    Recovery info is encrypted at rest using your OS keychain
-                    (Keychain on macOS, DPAPI on Windows, libsecret/kwallet on
-                    Linux) — the file on disk can't be read on another user
-                    account or another machine.
+                    Recovery info is encrypted at rest. If the Recovery PIN is
+                    locked, unlock it in Settings to copy recovery phrases or
+                    use saved launch wallets.
                 </p>
                 <div id="pendingWalletsList"></div>
             </div>

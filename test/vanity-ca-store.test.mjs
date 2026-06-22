@@ -40,6 +40,7 @@ async function withMutedConsole(fn) {
 test('persists vanity CA candidates without exposing secret metadata in listMetadata', async (t) => {
   await withMutedConsole(async () => {
     const configDir = makeTempConfigDir(t);
+    secretStore.lockSecretPin();
     secretStore.setSafeStorage(null);
     const store = await importFreshStore(configDir);
 
@@ -80,5 +81,33 @@ test('persists vanity CA candidates without exposing secret metadata in listMeta
 
     store.remove('Vanity111111111111111111111111111111111');
     assert.deepEqual(store.list(), []);
+  });
+});
+
+test('stores vanity CA secrets with the configured Recovery PIN', async (t) => {
+  await withMutedConsole(async () => {
+    const configDir = makeTempConfigDir(t);
+    process.env.TREBUCHET_CONFIG_DIR = configDir;
+    secretStore.setSafeStorage(null);
+    secretStore.setupSecretPin('1357');
+    t.after(() => secretStore.lockSecretPin());
+    const store = await importFreshStore(configDir);
+
+    store.add({
+      publicKey: 'PinVanity1111111111111111111111111111111',
+      secretKey: [9, 8, 7],
+      rarity: 'Rare',
+    });
+
+    const disk = JSON.parse(readFileSync(storeFile(configDir), 'utf8'));
+    assert.match(disk[0].secretKeyEnc, /^pin:/);
+    assert.deepEqual(store.get('PinVanity1111111111111111111111111111111').secretKey, [9, 8, 7]);
+
+    secretStore.lockSecretPin();
+    assert.equal(store.get('PinVanity1111111111111111111111111111111').secretKey, undefined);
+    assert.equal(store.listMetadata()[0].decryptionFailed, true);
+
+    assert.equal(secretStore.unlockSecretPin('1357'), true);
+    assert.deepEqual(store.get('PinVanity1111111111111111111111111111111').secretKey, [9, 8, 7]);
   });
 });

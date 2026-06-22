@@ -87,6 +87,43 @@ function buildPendingWalletRow(wallet) {
   const pubShort = `${wallet.publicKey.slice(0, 6)}…${wallet.publicKey.slice(-6)}`;
   const ageStr = formatAge(wallet.createdAt);
 
+  // Locked-PIN branch: the file is fine, but the in-memory PIN key has not
+  // been unlocked yet. Keep this visually softer than real decryption failure.
+  if (wallet.secretPinLocked) {
+    wrap.innerHTML = `
+      <div class="mb-2">
+        <strong>Public key:</strong>
+        <span class="is-family-monospace">${pubShort}</span>
+        &nbsp;<span class="has-text-grey">(${ageStr})</span>
+      </div>
+      <div class="notification is-info is-light is-size-7 py-2 px-3 mb-2">
+        <strong>Recovery PIN locked.</strong> Unlock it to reveal this wallet's recovery phrase or secret key.
+      </div>
+      <div class="field is-grouped">
+        <div class="control">
+          <button class="button is-small is-info" data-action="unlock-pin">
+            <span class="icon is-small"><i class="fas fa-unlock"></i></span>
+            <span>Unlock PIN</span>
+          </button>
+        </div>
+        <div class="control">
+          <button class="button is-small" data-action="copy-pubkey">
+            <span class="icon is-small"><i class="fas fa-copy"></i></span>
+            <span>Copy public key</span>
+          </button>
+        </div>
+        <div class="control">
+          <button class="button is-small is-danger is-light" data-action="dismiss">
+            <span class="icon is-small"><i class="fas fa-trash"></i></span>
+            <span>Discard</span>
+          </button>
+        </div>
+      </div>
+    `;
+    wireRowButtons(wrap, wallet, pubShort);
+    return wrap;
+  }
+
   // Decryption-failed branch: the file is on disk but we can't read the
   // secret material. Most common cause is the OS keychain has rotated
   // (e.g. file was copied from another machine, user account changed).
@@ -203,6 +240,14 @@ function wireRowButtons(wrap, wallet, pubShort, { hasMnemonic = false } = {}) {
       }
     });
   }
+
+  wrap.querySelector('[data-action="unlock-pin"]')?.addEventListener('click', async () => {
+    if (typeof showSecretPinModal === 'function') {
+      await showSecretPinModal('unlock');
+      await loadPendingWallets();
+      if (typeof loadLaunchJournals === 'function') await loadLaunchJournals();
+    }
+  });
 
   wrap.querySelector('[data-action="copy-pubkey"]').addEventListener('click', async () => {
     await copyToClipboard(wallet.publicKey, `Public key ${pubShort}`);

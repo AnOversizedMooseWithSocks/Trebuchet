@@ -2361,4 +2361,4 @@ function clearVanityCAs() {
   renderVanityCAList();
 }
 
-loadSavedVanityCAs();
+renderVanityCAList();

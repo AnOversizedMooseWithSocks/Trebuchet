@@ -378,7 +378,7 @@ function buildLaunchJournalRow(journal, wallet) {
   const canResume = canResumeLaunchJournal(journal, wallet);
   const resumeLabel = journalHasCompletedLp(journal) ? 'Continue transfer' : 'Resume launch';
   const resumeHelp = !canResume && journal.token?.mint && journal.poolPlan?.allocations
-    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafeCreatedPoolEvents(journal).length > 0 ? ': unsafe partial pool state recorded' : ': matching recoverable wallet is missing'}.</div>`
+    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.secretPinLocked ? ': unlock the Recovery PIN first' : wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafeCreatedPoolEvents(journal).length > 0 ? ': unsafe partial pool state recorded' : ': matching recoverable wallet is missing'}.</div>`
     : '';
 
   // Recovery material from the matching wallet, folded into this card so the
@@ -396,13 +396,25 @@ function buildLaunchJournalRow(journal, wallet) {
             <span>${secretIsMnemonic ? 'Copy recovery phrase' : 'Copy secret key'}</span>
           </button>
         </div>` : '';
-  const decryptNoteHtml = (wallet && wallet.decryptionFailed) ? `
+  const pinLockedNoteHtml = (wallet && wallet.secretPinLocked) ? `
+    <div class="notification is-info is-light is-size-7 py-2 px-3 my-2">
+      The recoverable wallet for this launch is locked behind your Recovery
+      PIN. Unlock it to resume, copy the recovery phrase, or use the wallet.
+    </div>` : '';
+  const decryptNoteHtml = (wallet && wallet.decryptionFailed && !wallet.secretPinLocked) ? `
     <div class="notification is-danger is-light is-size-7 py-2 px-3 my-2">
       The recoverable wallet for this launch can't be decrypted — the OS
       keychain key has likely changed (file copied to another account or
       machine, or the keychain was reset). If you backed up the recovery
       phrase elsewhere, use that.
     </div>` : '';
+  const unlockPinBtnHtml = (wallet && wallet.secretPinLocked) ? `
+        <div class="control">
+          <button class="button is-small is-info" data-action="unlock-pin">
+            <span class="icon is-small"><i class="fas fa-unlock"></i></span>
+            <span>Unlock PIN</span>
+          </button>
+        </div>` : '';
   // The removal action also discards the wallet secret when one is attached,
   // so the label and confirmation make that consequence explicit.
   const removeLabel = hasSecret ? 'Dismiss &amp; discard wallet' : 'Dismiss journal';
@@ -419,6 +431,7 @@ function buildLaunchJournalRow(journal, wallet) {
     <div class="notification is-warning is-light is-size-7 py-2 px-3 my-2">
       ${escapeHtml(launchJournalRecoveryText(journal))}
     </div>
+    ${pinLockedNoteHtml}
     ${decryptNoteHtml}
     ${launchJournalPoolRows(journal)}
     ${launchJournalTxRows(journal)}
@@ -441,6 +454,7 @@ function buildLaunchJournalRow(journal, wallet) {
         </div>
       ` : ''}
       ${recoverBtnHtml}
+      ${unlockPinBtnHtml}
       ${journal.token?.mint ? `
         <div class="control">
           <button class="button is-small" data-action="copy-token">
@@ -478,6 +492,13 @@ function buildLaunchJournalRow(journal, wallet) {
   });
   wrap.querySelector('[data-action="copy-wallet"]').addEventListener('click', async () => {
     await copyText(journal.walletPublicKey, 'Launch wallet public key');
+  });
+  wrap.querySelector('[data-action="unlock-pin"]')?.addEventListener('click', async () => {
+    if (typeof showSecretPinModal === 'function') {
+      await showSecretPinModal('unlock');
+      await loadLaunchJournals();
+      if (typeof loadPendingWallets === 'function') await loadPendingWallets();
+    }
   });
 
   // Use-wallet button: load this wallet as active tempWallet for a fresh launch

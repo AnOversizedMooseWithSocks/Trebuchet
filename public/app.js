@@ -18173,7 +18173,7 @@ function clearVanityCAs() {
   renderVanityCAList();
 }
 
-loadSavedVanityCAs();
+renderVanityCAList();
 // ===========================================================================
 // STEP 6: Transfer assets
 // ===========================================================================
@@ -19430,7 +19430,7 @@ function buildLaunchJournalRow(journal, wallet) {
   const canResume = canResumeLaunchJournal(journal, wallet);
   const resumeLabel = journalHasCompletedLp(journal) ? 'Continue transfer' : 'Resume launch';
   const resumeHelp = !canResume && journal.token?.mint && journal.poolPlan?.allocations
-    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafeCreatedPoolEvents(journal).length > 0 ? ': unsafe partial pool state recorded' : ': matching recoverable wallet is missing'}.</div>`
+    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.secretPinLocked ? ': unlock the Recovery PIN first' : wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafeCreatedPoolEvents(journal).length > 0 ? ': unsafe partial pool state recorded' : ': matching recoverable wallet is missing'}.</div>`
     : '';
 
   // Recovery material from the matching wallet, folded into this card so the
@@ -19448,13 +19448,25 @@ function buildLaunchJournalRow(journal, wallet) {
             <span>${secretIsMnemonic ? 'Copy recovery phrase' : 'Copy secret key'}</span>
           </button>
         </div>` : '';
-  const decryptNoteHtml = (wallet && wallet.decryptionFailed) ? `
+  const pinLockedNoteHtml = (wallet && wallet.secretPinLocked) ? `
+    <div class="notification is-info is-light is-size-7 py-2 px-3 my-2">
+      The recoverable wallet for this launch is locked behind your Recovery
+      PIN. Unlock it to resume, copy the recovery phrase, or use the wallet.
+    </div>` : '';
+  const decryptNoteHtml = (wallet && wallet.decryptionFailed && !wallet.secretPinLocked) ? `
     <div class="notification is-danger is-light is-size-7 py-2 px-3 my-2">
       The recoverable wallet for this launch can't be decrypted — the OS
       keychain key has likely changed (file copied to another account or
       machine, or the keychain was reset). If you backed up the recovery
       phrase elsewhere, use that.
     </div>` : '';
+  const unlockPinBtnHtml = (wallet && wallet.secretPinLocked) ? `
+        <div class="control">
+          <button class="button is-small is-info" data-action="unlock-pin">
+            <span class="icon is-small"><i class="fas fa-unlock"></i></span>
+            <span>Unlock PIN</span>
+          </button>
+        </div>` : '';
   // The removal action also discards the wallet secret when one is attached,
   // so the label and confirmation make that consequence explicit.
   const removeLabel = hasSecret ? 'Dismiss &amp; discard wallet' : 'Dismiss journal';
@@ -19471,6 +19483,7 @@ function buildLaunchJournalRow(journal, wallet) {
     <div class="notification is-warning is-light is-size-7 py-2 px-3 my-2">
       ${escapeHtml(launchJournalRecoveryText(journal))}
     </div>
+    ${pinLockedNoteHtml}
     ${decryptNoteHtml}
     ${launchJournalPoolRows(journal)}
     ${launchJournalTxRows(journal)}
@@ -19493,6 +19506,7 @@ function buildLaunchJournalRow(journal, wallet) {
         </div>
       ` : ''}
       ${recoverBtnHtml}
+      ${unlockPinBtnHtml}
       ${journal.token?.mint ? `
         <div class="control">
           <button class="button is-small" data-action="copy-token">
@@ -19530,6 +19544,13 @@ function buildLaunchJournalRow(journal, wallet) {
   });
   wrap.querySelector('[data-action="copy-wallet"]').addEventListener('click', async () => {
     await copyText(journal.walletPublicKey, 'Launch wallet public key');
+  });
+  wrap.querySelector('[data-action="unlock-pin"]')?.addEventListener('click', async () => {
+    if (typeof showSecretPinModal === 'function') {
+      await showSecretPinModal('unlock');
+      await loadLaunchJournals();
+      if (typeof loadPendingWallets === 'function') await loadPendingWallets();
+    }
   });
 
   // Use-wallet button: load this wallet as active tempWallet for a fresh launch
@@ -19734,6 +19755,43 @@ function buildPendingWalletRow(wallet) {
   const pubShort = `${wallet.publicKey.slice(0, 6)}…${wallet.publicKey.slice(-6)}`;
   const ageStr = formatAge(wallet.createdAt);
 
+  // Locked-PIN branch: the file is fine, but the in-memory PIN key has not
+  // been unlocked yet. Keep this visually softer than real decryption failure.
+  if (wallet.secretPinLocked) {
+    wrap.innerHTML = `
+      <div class="mb-2">
+        <strong>Public key:</strong>
+        <span class="is-family-monospace">${pubShort}</span>
+        &nbsp;<span class="has-text-grey">(${ageStr})</span>
+      </div>
+      <div class="notification is-info is-light is-size-7 py-2 px-3 mb-2">
+        <strong>Recovery PIN locked.</strong> Unlock it to reveal this wallet's recovery phrase or secret key.
+      </div>
+      <div class="field is-grouped">
+        <div class="control">
+          <button class="button is-small is-info" data-action="unlock-pin">
+            <span class="icon is-small"><i class="fas fa-unlock"></i></span>
+            <span>Unlock PIN</span>
+          </button>
+        </div>
+        <div class="control">
+          <button class="button is-small" data-action="copy-pubkey">
+            <span class="icon is-small"><i class="fas fa-copy"></i></span>
+            <span>Copy public key</span>
+          </button>
+        </div>
+        <div class="control">
+          <button class="button is-small is-danger is-light" data-action="dismiss">
+            <span class="icon is-small"><i class="fas fa-trash"></i></span>
+            <span>Discard</span>
+          </button>
+        </div>
+      </div>
+    `;
+    wireRowButtons(wrap, wallet, pubShort);
+    return wrap;
+  }
+
   // Decryption-failed branch: the file is on disk but we can't read the
   // secret material. Most common cause is the OS keychain has rotated
   // (e.g. file was copied from another machine, user account changed).
@@ -19851,6 +19909,14 @@ function wireRowButtons(wrap, wallet, pubShort, { hasMnemonic = false } = {}) {
     });
   }
 
+  wrap.querySelector('[data-action="unlock-pin"]')?.addEventListener('click', async () => {
+    if (typeof showSecretPinModal === 'function') {
+      await showSecretPinModal('unlock');
+      await loadPendingWallets();
+      if (typeof loadLaunchJournals === 'function') await loadLaunchJournals();
+    }
+  });
+
   wrap.querySelector('[data-action="copy-pubkey"]').addEventListener('click', async () => {
     await copyToClipboard(wallet.publicKey, `Public key ${pubShort}`);
   });
@@ -19897,8 +19963,6 @@ function formatAge(isoString) {
 log('Trebuchet is ready. Click "Generate Wallet" to begin.');
 loadRpcConfig();
 startRpcHealthPolling();
-loadLaunchJournals();
-loadPendingWallets();
 loadFeeTiers();
 bindStepHeaders();
 updateCancelButtonState();
@@ -19979,6 +20043,7 @@ window.addEventListener('beforeunload', (e) => {
 const _startupGates = {
   splash: true,
   disclaimer: true,
+  secretPin: true,
 };
 let _startupTriggerFired = false;
 
@@ -19993,7 +20058,7 @@ function _releaseStartupGate(name) {
 
 function _evaluateStartupGates() {
   if (_startupTriggerFired) return;
-  if (!_startupGates.splash || !_startupGates.disclaimer) return;
+  if (!_startupGates.splash || !_startupGates.disclaimer || !_startupGates.secretPin) return;
   _startupTriggerFired = true;
   // Fire-and-forget. The server endpoint is local so this should
   // never fail in practice; if it somehow does, the user can still
@@ -20113,6 +20178,228 @@ function setupDisclaimer() {
   }
 }
 setupDisclaimer();
+
+// ---------------------------------------------------------------------------
+// Recovery PIN gate
+// ---------------------------------------------------------------------------
+//
+// Saved launch wallets and Vanity CAs are encrypted behind a 4-digit Recovery
+// PIN. On first run we require setup before any new real launch can persist
+// secrets; on later launches we require unlock before recovery panels and
+// saved Vanity CAs are loaded.
+let _secretPinStatus = null;
+
+function secretPinEls() {
+  return {
+    modal: document.getElementById('secretPinModal'),
+    title: document.getElementById('secretPinTitle'),
+    description: document.getElementById('secretPinDescription'),
+    input: document.getElementById('secretPinInput'),
+    confirmField: document.getElementById('secretPinConfirmField'),
+    confirmInput: document.getElementById('secretPinConfirmInput'),
+    submitBtn: document.getElementById('secretPinSubmitBtn'),
+    statusLine: document.getElementById('secretPinModalStatus'),
+    statusText: document.getElementById('secretPinStatusText'),
+    unlockBtn: document.getElementById('secretPinUnlockBtn'),
+    lockBtn: document.getElementById('secretPinLockBtn'),
+  };
+}
+
+function normalizePinField(input) {
+  if (!input) return '';
+  input.value = input.value.replace(/\D/g, '').slice(0, 4);
+  return input.value;
+}
+
+async function fetchSecretPinStatus() {
+  const resp = await fetch('/api/secret-pin/status');
+  const data = await resp.json();
+  if (!resp.ok || !data.success) throw new Error(data.error || 'Could not read Recovery PIN status');
+  _secretPinStatus = data.status || { configured: false, unlocked: false, locked: false };
+  refreshSecretPinUi(_secretPinStatus);
+  return _secretPinStatus;
+}
+
+function refreshSecretPinUi(status = _secretPinStatus) {
+  const { statusText, unlockBtn, lockBtn } = secretPinEls();
+  const configured = !!status?.configured;
+  const unlocked = !!status?.unlocked;
+  const locked = !!status?.locked;
+  const protectionLabel = status?.deviceSecretProtected
+    ? 'device-bound'
+    : 'local fallback';
+
+  if (statusText) {
+    statusText.textContent = !configured
+      ? 'PIN not set'
+      : (unlocked
+        ? `Unlocked for this session (${protectionLabel})`
+        : (locked ? `Locked (${protectionLabel})` : `Configured (${protectionLabel})`));
+  }
+  if (unlockBtn) {
+    unlockBtn.style.display = unlocked ? 'none' : '';
+    const label = unlockBtn.querySelector('span:last-child');
+    if (label) label.textContent = configured ? 'Unlock' : 'Set PIN';
+  }
+  if (lockBtn) {
+    lockBtn.disabled = !unlocked;
+    lockBtn.style.display = configured ? '' : 'none';
+  }
+}
+
+function loadSecretDependentStartupState() {
+  loadLaunchJournals();
+  loadPendingWallets();
+  if (typeof loadSavedVanityCAs === 'function') {
+    loadSavedVanityCAs();
+  }
+}
+
+function showSecretPinModal(mode) {
+  const els = secretPinEls();
+  if (!els.modal || !els.input || !els.submitBtn || !els.statusLine) {
+    _releaseStartupGate('secretPin');
+    return Promise.resolve(false);
+  }
+
+  const setupMode = mode === 'setup';
+  _gateStartup('secretPin');
+  els.modal.classList.add('is-active');
+  if (els.title) els.title.textContent = setupMode ? 'Set Recovery PIN' : 'Unlock Recovery PIN';
+  if (els.description) {
+    els.description.textContent = setupMode
+      ? 'Choose a 4-digit PIN. Trebuchet combines it with this device to encrypt launch wallets and saved Vanity CAs.'
+      : 'Enter your 4-digit PIN on this device to unlock saved launch wallets and Vanity CAs.';
+  }
+  if (els.confirmField) els.confirmField.classList.toggle('hidden', !setupMode);
+  if (els.submitBtn) {
+    const label = els.submitBtn.querySelector('span:last-child');
+    if (label) label.textContent = setupMode ? 'Set PIN' : 'Unlock';
+  }
+  els.statusLine.textContent = '';
+  els.statusLine.className = 'help secret-pin-status-line';
+  els.input.value = '';
+  if (els.confirmInput) els.confirmInput.value = '';
+  setTimeout(() => els.input.focus(), 0);
+
+  return new Promise((resolve) => {
+    let submitting = false;
+
+    const setStatus = (message, kind = '') => {
+      els.statusLine.textContent = message || '';
+      els.statusLine.className = 'help secret-pin-status-line' + (kind ? ` ${kind}` : '');
+    };
+
+    const finish = async (status) => {
+      _secretPinStatus = status || await fetchSecretPinStatus();
+      refreshSecretPinUi(_secretPinStatus);
+      els.modal.classList.remove('is-active');
+      _releaseStartupGate('secretPin');
+      loadSecretDependentStartupState();
+      resolve(true);
+    };
+
+    const submit = async () => {
+      if (submitting) return;
+      const pin = normalizePinField(els.input);
+      const confirm = normalizePinField(els.confirmInput);
+      if (pin.length !== 4) {
+        setStatus('Enter exactly 4 digits.', 'is-danger');
+        return;
+      }
+      if (setupMode && pin !== confirm) {
+        setStatus('PINs do not match.', 'is-danger');
+        return;
+      }
+
+      submitting = true;
+      els.submitBtn.disabled = true;
+      setStatus(setupMode ? 'Setting PIN...' : 'Unlocking...', 'is-info');
+      try {
+        const resp = await fetch(setupMode ? '/api/secret-pin/setup' : '/api/secret-pin/unlock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success) {
+          throw new Error(data.error || `PIN request failed with HTTP ${resp.status}`);
+        }
+        await finish(data.status);
+      } catch (e) {
+        setStatus(e.message || 'PIN request failed.', 'is-danger');
+        els.input.value = '';
+        if (els.confirmInput) els.confirmInput.value = '';
+        els.input.focus();
+      } finally {
+        submitting = false;
+        els.submitBtn.disabled = false;
+      }
+    };
+
+    els.input.oninput = () => normalizePinField(els.input);
+    if (els.confirmInput) els.confirmInput.oninput = () => normalizePinField(els.confirmInput);
+    els.input.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        if (setupMode && els.confirmInput && normalizePinField(els.input).length === 4) {
+          els.confirmInput.focus();
+        } else {
+          submit();
+        }
+      }
+    };
+    if (els.confirmInput) {
+      els.confirmInput.onkeydown = (e) => {
+        if (e.key === 'Enter') submit();
+      };
+    }
+    els.submitBtn.onclick = submit;
+  });
+}
+
+async function setupSecretPinGate() {
+  const els = secretPinEls();
+  if (els.unlockBtn) {
+    els.unlockBtn.onclick = async () => {
+      const status = await fetchSecretPinStatus().catch(() => _secretPinStatus);
+      await showSecretPinModal(status?.configured ? 'unlock' : 'setup');
+    };
+  }
+  if (els.lockBtn) {
+    els.lockBtn.onclick = async () => {
+      try {
+        const resp = await fetch('/api/secret-pin/lock', { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success) throw new Error(data.error || 'Could not lock Recovery PIN');
+        _secretPinStatus = data.status;
+        refreshSecretPinUi(_secretPinStatus);
+        await showSecretPinModal('unlock');
+      } catch (e) {
+        log(`Could not lock Recovery PIN: ${e.message}`, 'warning');
+      }
+    };
+  }
+
+  _gateStartup('secretPin');
+  try {
+    const status = await fetchSecretPinStatus();
+    if (!status.configured) {
+      return showSecretPinModal('setup');
+    }
+    if (status.locked || !status.unlocked) {
+      return showSecretPinModal('unlock');
+    }
+    _releaseStartupGate('secretPin');
+    loadSecretDependentStartupState();
+    return true;
+  } catch (e) {
+    console.warn('Recovery PIN status unavailable:', e);
+    refreshSecretPinUi({ configured: false, unlocked: false, locked: false });
+    _releaseStartupGate('secretPin');
+    loadSecretDependentStartupState();
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Universal modal close affordances
@@ -20887,13 +21174,11 @@ function applyVanityAvailabilityUi(vanity) {
   }
 }
 
-// Final gate evaluation. Both setupDisclaimer() and setupSplashScreen()
-// have run by this point. If either gated itself (showed a modal or
-// played the splash), the gate is currently false and this call is a
-// no-op — the trigger will fire later when the user dismisses
-// whichever is still blocking. If NEITHER gated (returning user +
-// splash element missing), both gates are still default-true and this
-// is the only place the trigger ever fires.
+setupSecretPinGate();
+
+// Final gate evaluation. setupDisclaimer(), setupSplashScreen(), and the
+// Recovery PIN gate have run by this point. If any of them gated itself,
+// this call is a no-op; the trigger will fire when the last blocker clears.
 _evaluateStartupGates();
 // audio.js — sound effects and looping background music
 //
