@@ -121,8 +121,12 @@ async function withPage(fn, size = 'desktop') {
     // First real launch now requires a Recovery PIN before recoverable secrets
     // can be persisted. Later pages in the same E2E server session usually stay
     // unlocked, but this also handles an unlock prompt if one appears.
-    try {
-      await p.waitForSelector('#secretPinModal.is-active #secretPinInput', { state: 'visible', timeout: 8000 });
+    await p.waitForFunction(() => {
+      const modal = document.querySelector('#secretPinModal');
+      const status = document.querySelector('#secretPinStatusText')?.textContent || '';
+      return modal?.classList.contains('is-active') || status.startsWith('Unlocked');
+    }, { timeout: 20000 });
+    if (await p.locator('#secretPinModal.is-active #secretPinInput').count()) {
       await p.fill('#secretPinInput', '1234');
       if (await p.locator('#secretPinConfirmInput:visible').count()) {
         await p.fill('#secretPinConfirmInput', '1234');
@@ -132,7 +136,7 @@ async function withPage(fn, size = 'desktop') {
         const modal = document.querySelector('#secretPinModal');
         return modal && !modal.classList.contains('is-active');
       }, { timeout: 15000 });
-    } catch {}
+    }
 
     // Brief settle so the UI is interactive.
     await p.waitForTimeout(500);
