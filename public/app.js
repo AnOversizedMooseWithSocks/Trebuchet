@@ -20211,6 +20211,19 @@ function normalizePinField(input) {
   return input.value;
 }
 
+function waitForModalInactive(modal) {
+  if (!modal || !modal.classList.contains('is-active')) return Promise.resolve();
+  return new Promise((resolve) => {
+    const observer = new MutationObserver(() => {
+      if (!modal.classList.contains('is-active')) {
+        observer.disconnect();
+        resolve();
+      }
+    });
+    observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+  });
+}
+
 async function fetchSecretPinStatus() {
   const resp = await fetch('/api/secret-pin/status');
   const data = await resp.json();
@@ -20255,12 +20268,14 @@ function loadSecretDependentStartupState() {
   }
 }
 
-function showSecretPinModal(mode) {
+async function showSecretPinModal(mode) {
   const els = secretPinEls();
   if (!els.modal || !els.input || !els.submitBtn || !els.statusLine) {
     _releaseStartupGate('secretPin');
     return Promise.resolve(false);
   }
+
+  await waitForModalInactive(document.getElementById('disclaimerModal'));
 
   const setupMode = mode === 'setup';
   _gateStartup('secretPin');
