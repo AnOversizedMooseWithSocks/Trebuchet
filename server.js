@@ -3044,6 +3044,25 @@ app.post('/api/resume-launch', async (req, res) => {
       return;
     }
     claimedLaunchOp = true;
+
+    const activeJournal = launchJournal.activeForWallet(walletPublicKey);
+    const unsafeEvents = unsafeCreatedPoolEvents(activeJournal || {}, priorResults);
+    if (unsafeEvents.length > 0) {
+      const pools = unsafeEvents.map((event) => event.poolId).filter(Boolean).join(', ');
+      return res.status(409).json({
+        success: false,
+        code: 'UNSAFE_PARTIAL_POOL_STATE',
+        manualRecoveryRequired: true,
+        failedPhase: 'main_positions',
+        partialResults: priorResults,
+        unsafePoolEvents: unsafeEvents,
+        error:
+          'This launch recorded a pool creation before it recorded completed LP positions. ' +
+          'Trebuchet cannot safely resume automatically without risking duplicate pool work. ' +
+          `Sweep the launch wallet or recover the existing LP positions manually${pools ? `; recorded pool(s): ${pools}` : ''}.`,
+      });
+    }
+
     launchJournal.upsertForWallet(
       walletPublicKey,
       {

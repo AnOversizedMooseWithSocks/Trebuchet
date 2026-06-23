@@ -16637,16 +16637,16 @@ bind('createLpBtn', 'click', async () => {
           } else {
             // Main-positions failure: at least one pool was created but
             // its main positions couldn't be opened (or the next pool
-            // couldn't be created). The resume endpoint can pick up
-            // from where the failure happened — completed pools are
-            // skipped, only the missing work is retried.
+            // couldn't be created). Complete prior pools are resumable,
+            // but a pool that was created without a completed allocation
+            // result is not safe to auto-resume yet.
             document.getElementById('lpFailReassurance').innerHTML =
               `<strong>Your assets are safe</strong> — they're still in the ephemeral wallet ` +
               `(SOL, any auto-swapped quote tokens, and the LP NFTs from pools that did succeed). ` +
-              `Click <strong>Resume launch</strong> to retry just the missing pools — already-` +
-              `created pools will be skipped. If retrying keeps failing, you can sweep the wallet ` +
-              `back to your destination as a last resort; the pools that succeeded above are ` +
-              `permanent on-chain.`;
+              `Click <strong>Resume launch</strong> to continue only if Trebuchet has enough ` +
+              `journaled state to skip completed pools safely. If the journal shows a pool was ` +
+              `created before a completed LP result was recorded, automatic resume will stop and ` +
+              `you should sweep the wallet or recover the existing LP positions manually.`;
           }
           // Continue/sweep button label. For 'bootstrap' and 'locks',
           // the user has unfinished work that retry can fix in place,
@@ -17465,6 +17465,47 @@ bind('retryBootstrapsBtn', 'click', async () => {
         return;
       }
 
+      if (data.manualRecoveryRequired || data.code === 'UNSAFE_PARTIAL_POOL_STATE') {
+        lpResult = { results: data.partialResults || [] };
+        (data.partialResults || []).forEach((r) => {
+          markPoolDone(r.allocationIndex, r);
+          if (r.bootstrap) markBootstrapDoneForPool(r.allocationIndex, r.bootstrap);
+        });
+        (data.unsafePoolEvents || []).forEach((event) => {
+          if (event.allocationIndex != null) {
+            markPoolFailed(event.allocationIndex, data.error);
+          }
+        });
+
+        document.getElementById('lpFailInfo').classList.remove('hidden');
+        document.getElementById('lpFailHeading').textContent =
+          'Automatic resume is unavailable.';
+        document.getElementById('lpFailSummary').textContent = data.error;
+
+        const lpFailCtr = document.getElementById('lpFailInfo').querySelector('.notification');
+        if (lpFailCtr) {
+          const prevB = lpFailCtr.querySelector('.error-banner');
+          if (prevB) prevB.remove();
+          renderStructuredError(lpFailCtr, data.error, categorizeError(data.error));
+        }
+
+        const successCount = (data.partialResults || []).length;
+        const totalCount = allocations.length;
+        document.getElementById('lpFailSucceededCount').innerHTML =
+          `<strong>${successCount}</strong> of ${totalCount} pool${totalCount === 1 ? '' : 's'} ` +
+          `have completed LP results in the journal. A later pool was created before its ` +
+          `completed position state was recorded, so retrying automatically could duplicate work.`;
+        document.getElementById('lpFailReassurance').innerHTML =
+          `<strong>Your assets are still recoverable by the launch wallet.</strong> ` +
+          `Use the sweep/recovery path to move remaining SOL, quote tokens, and LP NFTs back to ` +
+          `your destination wallet, then handle any already-created positions manually in Raydium.`;
+        document.getElementById('continueToTransferAfterFailBtnLabel').textContent =
+          'Skip to Transfer Assets';
+        btn.classList.add('hidden');
+        markLaunchActiveForRpcHealth(false);
+        return;
+      }
+
       // Partial: at least one allocation still couldn't be completed.
       // The data has the same shape as a fresh create-lp failure:
       // partialResults, failedAllocationIndex, failedPhase, bootstrapFailures.
@@ -17582,10 +17623,10 @@ bind('retryBootstrapsBtn', 'click', async () => {
         document.getElementById('lpFailReassurance').innerHTML =
           `<strong>Your assets are safe</strong> — they're still in the ephemeral wallet ` +
           `(SOL, any auto-swapped quote tokens, and the LP NFTs from pools that did succeed). ` +
-          `Click <strong>Resume launch</strong> to retry just the missing pools — already-` +
-          `created pools will be skipped. If retrying keeps failing, you can sweep the wallet ` +
-          `back to your destination as a last resort; the pools that succeeded above are ` +
-          `permanent on-chain.`;
+          `Click <strong>Resume launch</strong> to continue only if Trebuchet has enough ` +
+          `journaled state to skip completed pools safely. If the journal shows a pool was ` +
+          `created before a completed LP result was recorded, automatic resume will stop and ` +
+          `you should sweep the wallet or recover the existing LP positions manually.`;
         document.getElementById('continueToTransferAfterFailBtnLabel').textContent =
           'Skip to Transfer Assets';
       }
