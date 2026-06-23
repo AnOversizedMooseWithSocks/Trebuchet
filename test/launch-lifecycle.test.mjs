@@ -20,18 +20,46 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import BN from 'bn.js';
+import { TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'treb-launch-'));
 process.env.TREBUCHET_CONFIG_DIR = TMP;
 
 const journal = await import('../launchJournal.js');
 const lp = await import('../lpService.js');
+const {
+  deterministicKeypair,
+  makeFakeConnection,
+  makeFakeTokenAccountEntry,
+} = await import('./helpers/mockSolana.mjs');
 const { makeMockRaydium, makeResultEntry } = await import('./helpers/mockRaydium.mjs');
 
 const hooks = lp.__testHooks;
 
 // A valid base58 recipient pubkey for fee-key transfer tests.
 const RECIPIENT = 'So11111111111111111111111111111111111111112';
+
+function recoveryConnectionFor(ownerPublicKey, ownedMints) {
+  const owner = ownerPublicKey.toBase58();
+  const owned = new Set(ownedMints);
+  return makeFakeConnection({
+    async getParsedTokenAccountsByOwner(_owner, filter) {
+      const mint = filter?.mint?.toBase58 ? filter.mint.toBase58() : String(filter?.mint || '');
+      if (!owned.has(mint)) return { value: [] };
+      return {
+        value: [
+          makeFakeTokenAccountEntry({
+            mint,
+            owner,
+            programId: TOKEN_2022_PROGRAM_ID,
+            amount: '1',
+            decimals: 0,
+          }),
+        ],
+      };
+    },
+  });
+}
 
 test('lpService exposes test-only DI seams without affecting production defaults', () => {
   assert.equal(typeof lp.setSdkFactoryForTests, 'function');
@@ -303,6 +331,99 @@ test('createSinglePool emits main_open_failed with context before throwing', asy
   assert.match(failed.error, /simulated RPC timeout during open/, 'failure carries the thrown error message');
   assert.equal(typeof failed.tickLower, 'number', 'failure records tickLower');
   assert.equal(typeof failed.tickUpper, 'number', 'failure records tickUpper');
+});
+
+test('createSinglePool resumes a verified partial Phase 1 pool from the missing slice', async () => {
+  const ownerKeypair = deterministicKeypair(42);
+  const prior = makeResultEntry({ mainCount: 2, withBootstrap: false });
+  prior.phase1Incomplete = true;
+  prior.recoveredFrom = 'journal_events';
+  prior.mainPositions[0].sliceIndex = 0;
+  prior.mainPositions[0].sharePercent = 50;
+  prior.mainPositions[1].sliceIndex = 1;
+  prior.mainPositions[1].sharePercent = 25;
+
+  const raydium = makeMockRaydium({
+    connection: recoveryConnectionFor(
+      ownerKeypair.publicKey,
+      prior.mainPositions.map((p) => p.nftMint),
+    ),
+  });
+  const launchedToken = { address: '__LAUNCHED__', decimals: 9, programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' };
+  const quoteToken = { address: 'So11111111111111111111111111111111111111112', decimals: 9, programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' };
+
+  const events = [];
+  const result = await hooks.createSinglePool({
+    raydium,
+    ownerKeypair,
+    ammConfig: { id: 'mock-config', tickSpacing: 60 },
+    launchedToken,
+    quoteToken,
+    initialPrice: 0.0001,
+    wideBaseRaw: new BN('4000000000'),
+    bootstrapBaseRaw: 1n,
+    bootstrapMode: 'minimal',
+    distribution: [
+      { sharePercent: 50, recipient: null },
+      { sharePercent: 25, recipient: null },
+      { sharePercent: 25, recipient: null },
+    ],
+    ladderMode: 'off',
+    ladderBands: [],
+    ladderCeiling: 1,
+    existingPool: prior,
+    onProgress: (event) => events.push(event),
+  });
+
+  assert.equal(raydium.recordedCalls.createPool.length, 0, 'recovery must not create another pool');
+  assert.equal(raydium.recordedCalls.openPositionFromBase.length, 1, 'only the missing slice is opened');
+  assert.equal(result.poolId, prior.poolId, 'the existing pool is reused');
+  assert.equal(result.mainPositions.length, 3, 'recovered plus newly-opened slices produce a complete main set');
+  assert.equal(result.mainPositions[0].nftMint, prior.mainPositions[0].nftMint);
+  assert.equal(result.mainPositions[1].nftMint, prior.mainPositions[1].nftMint);
+  assert.notEqual(result.mainPositions[2].nftMint, prior.mainPositions[1].nftMint);
+  assert.deepEqual(
+    events.filter((event) => event.stage === 'main_open_recovered').map((event) => event.sliceIndex),
+    [0, 1],
+    'recorded slices are marked recovered, not reopened',
+  );
+  const opened = events.find((event) => event.stage === 'main_open_done');
+  assert.equal(opened?.sliceIndex, 2, 'resume continues at the missing slice');
+});
+
+test('createSinglePool refuses partial Phase 1 recovery when a recorded NFT left the launch wallet', async () => {
+  const ownerKeypair = deterministicKeypair(43);
+  const prior = makeResultEntry({ mainCount: 1, withBootstrap: false });
+  prior.phase1Incomplete = true;
+  prior.recoveredFrom = 'journal_events';
+
+  const raydium = makeMockRaydium({
+    connection: recoveryConnectionFor(ownerKeypair.publicKey, []),
+  });
+  const launchedToken = { address: '__LAUNCHED__', decimals: 9, programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' };
+  const quoteToken = { address: 'So11111111111111111111111111111111111111112', decimals: 9, programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' };
+
+  await assert.rejects(() => hooks.createSinglePool({
+    raydium,
+    ownerKeypair,
+    ammConfig: { id: 'mock-config', tickSpacing: 60 },
+    launchedToken,
+    quoteToken,
+    initialPrice: 0.0001,
+    wideBaseRaw: new BN('3000000000'),
+    bootstrapBaseRaw: 1n,
+    bootstrapMode: 'minimal',
+    distribution: [
+      { sharePercent: 50, recipient: null },
+      { sharePercent: 50, recipient: null },
+    ],
+    ladderMode: 'off',
+    ladderBands: [],
+    ladderCeiling: 1,
+    existingPool: prior,
+  }), /no longer held by the launch wallet/);
+
+  assert.equal(raydium.recordedCalls.openPositionFromBase.length, 0, 'nothing new opens until verification passes');
 });
 
 // ---------------------------------------------------------------------------

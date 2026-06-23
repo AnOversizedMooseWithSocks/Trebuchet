@@ -196,9 +196,13 @@ function _lpEventToRow(event) {
   switch (event.stage) {
     // Success events.
     case 'pool_create_done':       stage = 'pool'; break;
+    case 'phase1_pool_recovery_start': stage = 'pool'; break;
     case 'main_open_done':         stage = `slice-${event.sliceIndex}`; break;
+    case 'main_open_recovered':    stage = `slice-${event.sliceIndex}`; break;
     case 'ladder_open_done':       stage = `ladder-${event.bandIndex}`; break;
+    case 'ladder_open_recovered':  stage = `ladder-${event.bandIndex}`; break;
     case 'support_open_done':      stage = 'support-open'; break;
+    case 'support_open_recovered': stage = 'support-open'; break;
     case 'bootstrap_open_done':    stage = 'bs-open'; break;
     case 'main_lock_done':         stage = `lock-${event.sliceIndex}`; break;
     case 'ladder_lock_done':       stage = `ladder-lock-${event.bandIndex}`; break;

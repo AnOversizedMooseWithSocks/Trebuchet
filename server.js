@@ -67,6 +67,7 @@ import {
   normalizeTokenSymbol,
   normalizeWholeTokenSupply,
 } from './validators.js';
+import { normalizeDistribution } from './lpDistribution.js';
 import { isWalletEffectivelyEmpty } from './walletRecovery.js';
 
 // In-flight airdrop guard. Maps wallet public key → boolean (currently
@@ -1646,6 +1647,154 @@ function unsafeCreatedPoolEvents(journal, priorResults) {
   );
 }
 
+function latestEventsByIndex(events, stage, indexKey, allocationIndex) {
+  const byIndex = new Map();
+  for (const event of events || []) {
+    if (event.stage !== stage || event.allocationIndex !== allocationIndex) continue;
+    const idx = Number(event[indexKey]);
+    if (!Number.isInteger(idx) || idx < 0) continue;
+    byIndex.set(idx, event);
+  }
+  return [...byIndex.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([index, event]) => ({ index, event }));
+}
+
+function mergePriorResults(priorResults, recoveredResults) {
+  const merged = cloneJson(priorResults || []);
+  for (const recovered of recoveredResults || []) {
+    upsertJournalResult(merged, recovered);
+  }
+  return merged;
+}
+
+function materializePhase1RecoveryResults(journal, priorResults, allocations) {
+  const completedAllocations = new Set((priorResults || []).map((r) => r.allocationIndex));
+  const poolCreateEvents = unsafeCreatedPoolEvents(journal, priorResults);
+  const byAllocation = new Map();
+  const blockedEvents = [];
+
+  for (const event of poolCreateEvents) {
+    const allocIdx = Number(event.allocationIndex);
+    if (!Number.isInteger(allocIdx) || allocIdx < 0 || allocIdx >= allocations.length) {
+      blockedEvents.push({ ...event, reason: 'allocation index is outside the current plan' });
+      continue;
+    }
+    if (completedAllocations.has(allocIdx)) continue;
+    if (!event.poolId) {
+      blockedEvents.push({ ...event, reason: 'pool_create_done is missing poolId' });
+      continue;
+    }
+    const bucket = byAllocation.get(allocIdx) || [];
+    bucket.push(event);
+    byAllocation.set(allocIdx, bucket);
+  }
+
+  const recoveredResults = [];
+  for (const [allocationIndex, events] of byAllocation.entries()) {
+    const poolIds = [...new Set(events.map((event) => event.poolId).filter(Boolean))];
+    if (poolIds.length !== 1) {
+      blockedEvents.push(...events.map((event) => ({
+        ...event,
+        reason: 'multiple created pools recorded for one allocation',
+      })));
+      continue;
+    }
+
+    let distribution;
+    try {
+      distribution = normalizeDistribution(allocations[allocationIndex]?.distribution);
+    } catch (err) {
+      blockedEvents.push(...events.map((event) => ({
+        ...event,
+        reason: `distribution cannot be normalized: ${launchJournal.errorMessage(err)}`,
+      })));
+      continue;
+    }
+
+    const alloc = allocations[allocationIndex] || {};
+    const mainPositions = latestEventsByIndex(
+      journal.events,
+      'main_open_done',
+      'sliceIndex',
+      allocationIndex,
+    ).map(({ index, event }) => {
+      if (index >= distribution.length) {
+        blockedEvents.push({ ...event, reason: 'main slice index is outside the current distribution' });
+        return null;
+      }
+      return {
+        sliceIndex: index,
+        sharePercent: Number.isFinite(Number(event.sharePercent))
+          ? Number(event.sharePercent)
+          : distribution[index]?.sharePercent,
+        tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+        tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+        nftMint: event.nftMint || null,
+        locked: false,
+        recipient: distribution[index]?.recipient || null,
+        transferredTo: null,
+        txIds: { open: event.txId || null, lock: null, transfer: null },
+      };
+    }).filter(Boolean);
+
+    const ladderPositions = latestEventsByIndex(
+      journal.events,
+      'ladder_open_done',
+      'bandIndex',
+      allocationIndex,
+    ).map(({ index, event }) => ({
+      bandIndex: index,
+      tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+      tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+      nftMint: event.nftMint || null,
+      locked: false,
+      txIds: { open: event.txId || null, lock: null },
+    }));
+
+    const supportPositions = (journal.events || [])
+      .filter((event) => event.stage === 'support_open_done' && event.allocationIndex === allocationIndex)
+      .slice(-1)
+      .map((event) => ({
+        tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+        tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+        depthPct: Number.isFinite(event.depthPct) ? event.depthPct : null,
+        quoteRaw: event.quoteAmountRaw || null,
+        nftMint: event.nftMint || null,
+        locked: false,
+        txIds: { open: event.txId || null, lock: null },
+      }));
+
+    const missingNftEvent = [...mainPositions, ...ladderPositions, ...supportPositions]
+      .find((position) => !position.nftMint);
+    if (missingNftEvent) {
+      blockedEvents.push(...events.map((event) => ({
+        ...event,
+        reason: 'one or more recorded open events is missing nftMint',
+      })));
+      continue;
+    }
+
+    const createEvent = events.at(-1);
+    recoveredResults.push({
+      allocationIndex,
+      phase1Incomplete: true,
+      recoveredFrom: 'journal_events',
+      quoteSymbol: alloc.quoteSymbolOverride || alloc.quoteToken || `allocation ${allocationIndex + 1}`,
+      quoteAddress: alloc.quoteToken || null,
+      supplyPercent: alloc.supplyPercent,
+      poolId: poolIds[0],
+      mainPositions,
+      ladderPositions,
+      supportPositions,
+      bootstrap: null,
+      txIds: { createPool: createEvent.txId || null },
+    });
+  }
+
+  return { recoveredResults, blockedEvents };
+}
+
 app.post('/api/create-token', uploadLogo, async (req, res) => {
   // uploadLogo (multer) has already parsed req.body / req.file by the time
   // we reach here, so the demo handler can read the same fields.
@@ -3069,19 +3218,24 @@ app.post('/api/resume-launch', async (req, res) => {
     claimedLaunchOp = true;
 
     const activeJournal = launchJournal.activeForWallet(walletPublicKey);
-    const unsafeEvents = unsafeCreatedPoolEvents(activeJournal || {}, priorResults);
-    if (unsafeEvents.length > 0) {
-      const pools = unsafeEvents.map((event) => event.poolId).filter(Boolean).join(', ');
+    const phase1Recovery = materializePhase1RecoveryResults(
+      activeJournal || {},
+      priorResults,
+      allocations,
+    );
+    let effectivePriorResults = mergePriorResults(priorResults, phase1Recovery.recoveredResults);
+    if (phase1Recovery.blockedEvents.length > 0) {
+      const pools = phase1Recovery.blockedEvents.map((event) => event.poolId).filter(Boolean).join(', ');
       const message =
-        'This launch recorded a pool creation before it recorded completed LP positions. ' +
-        'Trebuchet cannot safely resume automatically without risking duplicate pool work. ' +
+        'This launch recorded ambiguous partial pool state that Trebuchet cannot safely ' +
+        'resume automatically without risking duplicate or skipped LP work. ' +
         `Sweep the launch wallet or recover the existing LP positions manually${pools ? `; recorded pool(s): ${pools}` : ''}.`;
       const errorDetails = {
         code: 'UNSAFE_PARTIAL_POOL_STATE',
         route: 'resume-launch',
         failedPhase: 'main_positions',
-        priorResultCount: priorResults.length,
-        unsafePoolEvents,
+        priorResultCount: effectivePriorResults.length,
+        unsafePoolEvents: phase1Recovery.blockedEvents,
       };
       launchJournal.upsertForWallet(
         walletPublicKey,
@@ -3091,7 +3245,7 @@ app.post('/api/resume-launch', async (req, res) => {
           error: message,
           errorDetails,
           lp: {
-            priorResults,
+            priorResults: effectivePriorResults,
             failedPhase: 'main_positions',
           },
         },
@@ -3100,8 +3254,8 @@ app.post('/api/resume-launch', async (req, res) => {
           error: message,
           errorDetails,
           failedPhase: 'main_positions',
-          priorResultCount: priorResults.length,
-          unsafePoolEventCount: unsafeEvents.length,
+          priorResultCount: effectivePriorResults.length,
+          unsafePoolEventCount: phase1Recovery.blockedEvents.length,
         },
       );
       return res.status(409).json({
@@ -3109,11 +3263,27 @@ app.post('/api/resume-launch', async (req, res) => {
         code: 'UNSAFE_PARTIAL_POOL_STATE',
         manualRecoveryRequired: true,
         failedPhase: 'main_positions',
-        partialResults: priorResults,
-        unsafePoolEvents: unsafeEvents,
+        partialResults: effectivePriorResults,
+        unsafePoolEvents: phase1Recovery.blockedEvents,
         error: message,
         errorDetails,
       });
+    }
+    if (phase1Recovery.recoveredResults.length > 0) {
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        {
+          lp: {
+            partialResults: effectivePriorResults,
+            priorResults: effectivePriorResults,
+          },
+        },
+        {
+          stage: 'lp_phase1_recovery_prepared',
+          recoveredAllocationCount: phase1Recovery.recoveredResults.length,
+          priorResultCount: effectivePriorResults.length,
+        },
+      );
     }
 
     launchJournal.upsertForWallet(
@@ -3131,15 +3301,16 @@ app.post('/api/resume-launch', async (req, res) => {
           allocations,
           lockPositions: lockPositions !== false,
         },
-        lp: {
-          priorResults,
-        },
+        lp: phase1Recovery.recoveredResults.length > 0
+          ? { priorResults: effectivePriorResults, partialResults: effectivePriorResults }
+          : { priorResults: effectivePriorResults },
       },
       {
         stage: 'lp_resume_started',
         tokenMint,
-        priorResultCount: priorResults.length,
+        priorResultCount: effectivePriorResults.length,
         allocationCount: allocations.length,
+        phase1RecoveryCount: phase1Recovery.recoveredResults.length,
       },
     );
 
@@ -3156,7 +3327,7 @@ app.post('/api/resume-launch', async (req, res) => {
       targetMarketCapUsd,
       allocations,
       lockPositions: lockPositions !== false,
-      priorResults,
+      priorResults: effectivePriorResults,
       onProgress: (event) => {
         try { recordLpJournalProgress(walletPublicKey, event); }
         catch (_) { /* never let a progress write break the launch */ }
@@ -4114,19 +4285,25 @@ app.post('/api/launch-journals/resume', async (req, res) => {
       return res.json({ success: true, recovered: true, results: priorResults });
     }
 
-    const unsafeEvents = unsafeCreatedPoolEvents(journal, priorResults);
-    if (unsafeEvents.length > 0) {
-      const pools = unsafeEvents.map((event) => event.poolId).filter(Boolean).join(', ');
+    const phase1Recovery = materializePhase1RecoveryResults(
+      journal,
+      priorResults,
+      allocations,
+    );
+    let effectivePriorResults = mergePriorResults(priorResults, phase1Recovery.recoveredResults);
+    priorResultsForFailure = effectivePriorResults;
+    if (phase1Recovery.blockedEvents.length > 0) {
+      const pools = phase1Recovery.blockedEvents.map((event) => event.poolId).filter(Boolean).join(', ');
       const message =
-        'This journal recorded a pool creation before it recorded completed LP positions. ' +
-        'Trebuchet cannot safely resume automatically without risking duplicate pool work. ' +
+        'This journal recorded ambiguous partial pool state that Trebuchet cannot safely ' +
+        'resume automatically without risking duplicate or skipped LP work. ' +
         `Recover or sweep the launch wallet manually${pools ? `; recorded pool(s): ${pools}` : ''}.`;
       const errorDetails = {
         code: 'UNSAFE_PARTIAL_POOL_STATE',
         route: 'launch-journals/resume',
         failedPhase: 'main_positions',
-        priorResultCount: priorResults.length,
-        unsafePoolEvents,
+        priorResultCount: effectivePriorResults.length,
+        unsafePoolEvents: phase1Recovery.blockedEvents,
         source: 'launch_journal',
       };
       launchJournal.upsertForWallet(
@@ -4137,7 +4314,7 @@ app.post('/api/launch-journals/resume', async (req, res) => {
           error: message,
           errorDetails,
           lp: {
-            priorResults,
+            priorResults: effectivePriorResults,
             failedPhase: 'main_positions',
           },
         },
@@ -4146,8 +4323,8 @@ app.post('/api/launch-journals/resume', async (req, res) => {
           error: message,
           errorDetails,
           failedPhase: 'main_positions',
-          priorResultCount: priorResults.length,
-          unsafePoolEventCount: unsafeEvents.length,
+          priorResultCount: effectivePriorResults.length,
+          unsafePoolEventCount: phase1Recovery.blockedEvents.length,
           source: 'launch_journal',
         },
       );
@@ -4156,11 +4333,28 @@ app.post('/api/launch-journals/resume', async (req, res) => {
         code: 'UNSAFE_PARTIAL_POOL_STATE',
         manualRecoveryRequired: true,
         failedPhase: 'main_positions',
-        partialResults: priorResults,
+        partialResults: effectivePriorResults,
         error: message,
         errorDetails,
-        unsafePoolEvents: unsafeEvents,
+        unsafePoolEvents: phase1Recovery.blockedEvents,
       });
+    }
+    if (phase1Recovery.recoveredResults.length > 0) {
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        {
+          lp: {
+            partialResults: effectivePriorResults,
+            priorResults: effectivePriorResults,
+          },
+        },
+        {
+          stage: 'lp_phase1_recovery_prepared',
+          recoveredAllocationCount: phase1Recovery.recoveredResults.length,
+          priorResultCount: effectivePriorResults.length,
+          source: 'launch_journal',
+        },
+      );
     }
 
     launchJournal.upsertForWallet(
@@ -4178,13 +4372,16 @@ app.post('/api/launch-journals/resume', async (req, res) => {
           allocations,
           lockPositions,
         },
-        lp: { priorResults },
+        lp: phase1Recovery.recoveredResults.length > 0
+          ? { priorResults: effectivePriorResults, partialResults: effectivePriorResults }
+          : { priorResults: effectivePriorResults },
       },
       {
         stage: 'lp_resume_started',
         tokenMint,
-        priorResultCount: priorResults.length,
+        priorResultCount: effectivePriorResults.length,
         allocationCount: allocations.length,
+        phase1RecoveryCount: phase1Recovery.recoveredResults.length,
         source: 'launch_journal',
       },
     );
@@ -4203,7 +4400,7 @@ app.post('/api/launch-journals/resume', async (req, res) => {
       targetMarketCapUsd,
       allocations,
       lockPositions,
-      priorResults,
+      priorResults: effectivePriorResults,
       onProgress: (event) => {
         try { recordLpJournalProgress(walletPublicKey, event); }
         catch (_) { /* never let a progress write break the launch */ }

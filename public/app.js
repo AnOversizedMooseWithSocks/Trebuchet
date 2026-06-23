@@ -18413,9 +18413,13 @@ function _lpEventToRow(event) {
   switch (event.stage) {
     // Success events.
     case 'pool_create_done':       stage = 'pool'; break;
+    case 'phase1_pool_recovery_start': stage = 'pool'; break;
     case 'main_open_done':         stage = `slice-${event.sliceIndex}`; break;
+    case 'main_open_recovered':    stage = `slice-${event.sliceIndex}`; break;
     case 'ladder_open_done':       stage = `ladder-${event.bandIndex}`; break;
+    case 'ladder_open_recovered':  stage = `ladder-${event.bandIndex}`; break;
     case 'support_open_done':      stage = 'support-open'; break;
+    case 'support_open_recovered': stage = 'support-open'; break;
     case 'bootstrap_open_done':    stage = 'bs-open'; break;
     case 'main_lock_done':         stage = `lock-${event.sliceIndex}`; break;
     case 'ladder_lock_done':       stage = `ladder-lock-${event.bandIndex}`; break;
@@ -19164,14 +19168,19 @@ function launchJournalStageLabel(journal) {
     lp_create_started: 'Pool creation started',
     lp_resume_started: 'Launch resume started',
     lp_resume_blocked_unsafe_partial: 'Launch resume blocked',
+    lp_phase1_recovery_prepared: 'Partial pool recovery prepared',
     lp_recovered_for_transfer: 'Launch recovered for transfer',
     pool_create_done: 'Pool created',
+    phase1_pool_recovery_start: 'Partial pool recovery started',
     phase1_pool_done: 'Pool positions recorded',
     main_open_done: 'Main LP position opened',
+    main_open_recovered: 'Main LP position recovered',
     main_open_failed: 'Main LP position failed',
     ladder_open_done: 'Ladder position opened',
+    ladder_open_recovered: 'Ladder position recovered',
     ladder_open_failed: 'Ladder position failed',
     support_open_done: 'Support position opened',
+    support_open_recovered: 'Support position recovered',
     support_open_failed: 'Support position failed',
     bootstrap_open_done: 'Bootstrap opened',
     main_lock_done: 'LP position locked',
