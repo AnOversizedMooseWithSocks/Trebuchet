@@ -265,6 +265,46 @@ test('createSinglePool create-step failure: pool creation throws, no recoverable
   assert.ok(!stages.includes('pool_create_done'), 'no pool reported created on failure');
 });
 
+test('createSinglePool emits main_open_failed with context before throwing', async () => {
+  const raydium = makeMockRaydium({
+    fail: {
+      openPosition: true,
+      messages: { openPosition: 'simulated RPC timeout during open' },
+    },
+  });
+  const launchedToken = { address: '__LAUNCHED__', decimals: 9, programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' };
+  const quoteToken = { address: 'So11111111111111111111111111111111111111112', decimals: 9, programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' };
+
+  const events = [];
+  await assert.rejects(() => hooks.createSinglePool({
+    raydium,
+    ownerKeypair: { publicKey: { toBase58: () => 'owner' } },
+    ammConfig: { id: 'mock-config', tickSpacing: 60 },
+    launchedToken,
+    quoteToken,
+    initialPrice: 0.0001,
+    wideBaseRaw: new BN('2000000000'),
+    bootstrapBaseRaw: 1n,
+    bootstrapMode: 'minimal',
+    distribution: [{ sharePercent: 100, recipient: null }],
+    ladderMode: 'off',
+    ladderBands: [],
+    ladderCeiling: 1,
+    onProgress: (e) => events.push(e),
+  }), /simulated RPC timeout during open/);
+
+  const createDone = events.find((e) => e.stage === 'pool_create_done');
+  const failed = events.find((e) => e.stage === 'main_open_failed');
+  assert.ok(createDone, 'pool creation was recorded before the open failure');
+  assert.ok(failed, 'main_open_failed event emitted before throw');
+  assert.equal(failed.poolId, createDone.poolId, 'failure names the already-created pool');
+  assert.equal(failed.sliceIndex, 0, 'failure identifies the slice');
+  assert.equal(failed.baseAmountRaw, '1000000000', 'failure records the attempted raw amount');
+  assert.match(failed.error, /simulated RPC timeout during open/, 'failure carries the thrown error message');
+  assert.equal(typeof failed.tickLower, 'number', 'failure records tickLower');
+  assert.equal(typeof failed.tickUpper, 'number', 'failure records tickUpper');
+});
+
 // ---------------------------------------------------------------------------
 // Phase 4 (transferFeeKeys) — transfer failure leaves Fee Key recoverable
 // ---------------------------------------------------------------------------
@@ -334,4 +374,44 @@ test('journal records a recoverable partial-launch (failedPhase=locks) rather th
   assert.equal(j.lp.partialResults[0].mainPositions[1].locked, false,
     'recoverable detail: which slice still needs locking is preserved');
   assert.ok(j.error, 'human-readable error recorded');
+});
+
+test('journal persists structured error details and strips secret-looking fields', () => {
+  const walletPk = `ErrWallet${Math.random().toString(36).slice(2, 10)}`;
+  journal.start({ walletPublicKey: walletPk });
+
+  const err = new Error('RPC timeout while opening slice 3');
+  err.code = 'RPC_TIMEOUT';
+  err.secretKey = [1, 2, 3];
+  const details = journal.errorDetails(err, {
+    route: 'create-lp',
+    failedPhase: 'main_positions',
+    failedAllocationIndex: 0,
+  });
+
+  journal.upsertForWallet(
+    walletPk,
+    {
+      stage: 'lp_main_positions_failed',
+      status: 'failed',
+      error: journal.errorMessage(err),
+      errorDetails: details,
+    },
+    {
+      stage: 'main_open_failed',
+      sliceIndex: 2,
+      error: journal.errorMessage(err),
+      secretKey: [1, 2, 3],
+    },
+  );
+
+  const j = journal.activeForWallet(walletPk);
+  assert.equal(j.error, 'RPC timeout while opening slice 3');
+  assert.equal(j.errorDetails.message, 'RPC timeout while opening slice 3');
+  assert.equal(j.errorDetails.code, 'RPC_TIMEOUT');
+  assert.equal(j.errorDetails.secretKey, undefined, 'secret-looking fields are removed from errorDetails');
+  const lastEvent = j.events.at(-1);
+  assert.equal(lastEvent.stage, 'main_open_failed');
+  assert.equal(lastEvent.error, 'RPC timeout while opening slice 3');
+  assert.equal(lastEvent.secretKey, undefined, 'secret-looking fields are removed from events');
 });
