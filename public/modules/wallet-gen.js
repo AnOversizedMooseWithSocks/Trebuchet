@@ -57,7 +57,7 @@ bind('generateWalletBtn', 'click', async () => {
 
       // Reset UI panels that may carry stale info from a previous attempt
       document.getElementById('walletInfo').classList.remove('hidden');
-      document.getElementById('qrCode').src = data.wallet.qrCode;
+      setWalletQrImages(data.wallet.qrCode);
       document.getElementById('walletAddress').value = data.wallet.publicKey;
       document.getElementById('privateKeyContainer').classList.add('hidden');
       document.getElementById('tokenCreatedInfo').classList.add('hidden');
@@ -75,6 +75,9 @@ bind('generateWalletBtn', 'click', async () => {
       // address so the user doesn't have to re-enter anything to finish
       // a second demo run after a reset. No-op in real mode.
       applyDemoDestinationWallet();
+      if (typeof window.applySolflareDestinationWallet === 'function') {
+        window.applySolflareDestinationWallet({ silent: true });
+      }
 
       // Reset step summaries from any prior attempt
       for (let i = 2; i <= 6; i++) setStepSummary(i, '');
@@ -252,4 +255,3 @@ bind('tokenLogo', 'change', async (e) => {
 });
 
 const poolList = document.getElementById('poolList');
-

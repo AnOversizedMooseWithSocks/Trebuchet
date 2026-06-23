@@ -12,7 +12,7 @@
  *   Mythic:    n >  3 epochs
  *
  * Build:   make -C c
- * Usage:   ./c/build/vanity_keygen --suffix RATi --threads 16
+ * Usage:   ./c/build/vanity_keygen --prefix RAT --suffix i --threads 16
  */
 
 #include <pthread.h>
@@ -173,8 +173,6 @@ static int gen_case_variants(const char *target, int len,
 /* Shared state across threads */
 /* ------------------------------------------------------------------ */
 
-typedef enum { MATCH_PREFIX, MATCH_SUFFIX } match_mode_t;
-
 typedef struct {
     atomic_bool  found;
     uint8_t      result_pk[32];
@@ -183,9 +181,10 @@ typedef struct {
     uint64_t     result_attempt;
     char         last_pk[48];
     atomic_int   last_pk_ready;
-    const char  *target;
-    int          target_len;
-    match_mode_t mode;
+    const char  *prefix;
+    int          prefix_len;
+    const char  *suffix;
+    int          suffix_len;
     int          case_sensitive;
     atomic_ullong total_attempts;
     atomic_int   running_threads;
@@ -209,11 +208,12 @@ typedef struct {
 /* Worker thread */
 /* ------------------------------------------------------------------ */
 
-static int check_match(const char *b58, size_t b58_len,
-                       const char *target, int target_len,
-                       match_mode_t mode, int case_sensitive) {
+static int check_part(const char *b58, size_t b58_len,
+                      const char *target, int target_len,
+                      int at_start, int case_sensitive) {
+    if (!target || target_len <= 0) return 1;
     if (b58_len < (size_t)target_len) return 0;
-    if (mode == MATCH_PREFIX) {
+    if (at_start) {
         if (case_sensitive)
             return memcmp(b58, target, (size_t)target_len) == 0;
         else
@@ -225,6 +225,14 @@ static int check_match(const char *b58, size_t b58_len,
         else
             return strncasecmp(tail, target, (size_t)target_len) == 0;
     }
+}
+
+static int check_match(const char *b58, size_t b58_len,
+                       const char *prefix, int prefix_len,
+                       const char *suffix, int suffix_len,
+                       int case_sensitive) {
+    return check_part(b58, b58_len, prefix, prefix_len, 1, case_sensitive)
+        && check_part(b58, b58_len, suffix, suffix_len, 0, case_sensitive);
 }
 
 /* CAS-guarded progress sample: encode pk for the display line */
@@ -279,8 +287,9 @@ static void *grind_thread(void *arg) {
             if (hit) {
                 size_t b58_len = base58_encode(pk, 32, b58, sizeof(b58));
                 if (b58_len > 0) {
-                    matched = check_match(b58, b58_len, gs->target,
-                                          gs->target_len, gs->mode,
+                    matched = check_match(b58, b58_len,
+                                          gs->prefix, gs->prefix_len,
+                                          gs->suffix, gs->suffix_len,
                                           gs->case_sensitive);
                 }
             }
@@ -300,8 +309,9 @@ static void *grind_thread(void *arg) {
                                               memory_order_release);
                     }
                 }
-                matched = check_match(b58, b58_len, gs->target,
-                                      gs->target_len, gs->mode,
+                matched = check_match(b58, b58_len,
+                                      gs->prefix, gs->prefix_len,
+                                      gs->suffix, gs->suffix_len,
                                       gs->case_sensitive);
             }
         }
@@ -361,12 +371,13 @@ static rarity_tier_t classify_rarity(uint64_t attempts, double expected) {
 
 static void print_usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s --prefix <PREFIX> | --suffix <SUFFIX>\n"
+        "Usage: %s [--prefix <PREFIX>] [--suffix <SUFFIX>]\n"
         "       [--threads <N>] [--out <FILE>]\n"
         "       [--case-insensitive] [--quiet]\n"
         "\n"
         "  --prefix PREFIX       Match start of address\n"
         "  --suffix SUFFIX       Match end of address\n"
+        "                         Provide both to match start and end\n"
         "  --threads N           Worker threads (default: CPU count)\n"
         "  --out FILE            Output JSON keypair file (default: stdout)\n"
         "  --vrf-blockhash HEX    Solana blockhash for VRF seed binding\n"
@@ -377,8 +388,41 @@ static void print_usage(const char *prog) {
         "  { secretKey, publicKey, attempts, rarity, expectedAttempts, vrfProof, vrfPk, vrfBlockhash }\n"
         "\n"
         "Examples:\n"
-        "  %s --suffix RATi --threads 16 --out rati-ca.json\n",
-        prog, prog);
+        "  %s --suffix RATi --threads 16 --out rati-ca.json\n"
+        "  %s --prefix RAT --suffix i --threads 16\n",
+        prog, prog, prog);
+}
+
+static int validate_base58_target(const char *label, const char *target,
+                                  int case_sensitive) {
+    int len = target ? (int)strlen(target) : 0;
+    if (len == 0) return 0;
+    for (int i = 0; i < len; i++) {
+        int valid = 0;
+        for (int j = 0; BASE58_ALPHABET[j]; j++) {
+            char tc = case_sensitive ? target[i] : (char)(target[i] | 0x20);
+            char ac = case_sensitive ? BASE58_ALPHABET[j] : (char)(BASE58_ALPHABET[j] | 0x20);
+            if (tc == ac) { valid = 1; break; }
+        }
+        if (!valid) {
+            fprintf(stderr, "Error: %s contains '%c', which is not valid base58\n",
+                    label, target[i]);
+            return -1;
+        }
+    }
+    return len;
+}
+
+static void make_target_label(const char *prefix, const char *suffix,
+                              char out[96]) {
+    if (prefix && suffix)
+        snprintf(out, 96, "%s...%s", prefix, suffix);
+    else if (prefix)
+        snprintf(out, 96, "%s", prefix);
+    else if (suffix)
+        snprintf(out, 96, "%s", suffix);
+    else
+        out[0] = '\0';
 }
 
 static int get_cpu_count(void) {
@@ -434,19 +478,19 @@ int main(int argc, char **argv) {
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
 
-    const char *target_str = NULL;
+    const char *prefix_str = NULL;
+    const char *suffix_str = NULL;
     const char *out_path = NULL;
     const char *vrf_blockhash_hex = NULL;
     int thread_count = 0;
     int case_sensitive = 1;
     int quiet = 0;
-    match_mode_t mode = MATCH_PREFIX;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--prefix") == 0 && i + 1 < argc) {
-            target_str = argv[++i]; mode = MATCH_PREFIX;
+            prefix_str = argv[++i];
         } else if (strcmp(argv[i], "--suffix") == 0 && i + 1 < argc) {
-            target_str = argv[++i]; mode = MATCH_SUFFIX;
+            suffix_str = argv[++i];
         } else if (strcmp(argv[i], "--threads") == 0 && i + 1 < argc) {
             thread_count = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
@@ -465,27 +509,23 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (!target_str || target_str[0] == '\0') {
+    if ((!prefix_str || prefix_str[0] == '\0') &&
+        (!suffix_str || suffix_str[0] == '\0')) {
         fprintf(stderr, "Error: --prefix or --suffix is required\n");
         print_usage(argv[0]); return 1;
     }
 
-    int target_len = (int)strlen(target_str);
-    for (int i = 0; i < target_len; i++) {
-        int valid = 0;
-        for (int j = 0; BASE58_ALPHABET[j]; j++) {
-            char tc = case_sensitive ? target_str[i] : (char)(target_str[i] | 0x20);
-            char ac = case_sensitive ? BASE58_ALPHABET[j] : (char)(BASE58_ALPHABET[j] | 0x20);
-            if (tc == ac) { valid = 1; break; }
-        }
-        if (!valid) {
-            fprintf(stderr, "Error: '%c' is not valid base58\n", target_str[i]);
-            return 1;
-        }
-    }
+    if (prefix_str && prefix_str[0] == '\0') prefix_str = NULL;
+    if (suffix_str && suffix_str[0] == '\0') suffix_str = NULL;
+
+    int prefix_len = prefix_str ? validate_base58_target("prefix", prefix_str, case_sensitive) : 0;
+    if (prefix_len < 0) return 1;
+    int suffix_len = suffix_str ? validate_base58_target("suffix", suffix_str, case_sensitive) : 0;
+    if (suffix_len < 0) return 1;
+    int target_len = prefix_len + suffix_len;
 
     if (target_len > 44) {
-        fprintf(stderr, "Error: target too long (max 44 chars)\n");
+        fprintf(stderr, "Error: combined prefix/suffix too long (max 44 chars)\n");
         return 1;
     }
 
@@ -505,14 +545,14 @@ int main(int argc, char **argv) {
     int fast_num_variants = 0;
     uint64_t fast_target_vals[MAX_CASE_VARIANTS] = {0};
 
-    if (mode == MATCH_SUFFIX && target_len <= MAX_FAST_TARGET_LEN) {
-        fast_mod = pow58(target_len);
+    if (suffix_len > 0 && suffix_len <= MAX_FAST_TARGET_LEN) {
+        fast_mod = pow58(suffix_len);
         if (case_sensitive) {
             int ok = 0;
-            fast_target_vals[0] = b58_to_u64(target_str, target_len, &ok);
+            fast_target_vals[0] = b58_to_u64(suffix_str, suffix_len, &ok);
             if (ok) { fast_num_variants = 1; use_fast_match = 1; }
         } else {
-            fast_num_variants = gen_case_variants(target_str, target_len,
+            fast_num_variants = gen_case_variants(suffix_str, suffix_len,
                                                    fast_target_vals,
                                                    MAX_CASE_VARIANTS);
             if (fast_num_variants > 0) use_fast_match = 1;
@@ -562,16 +602,24 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    char target_label[96];
+    make_target_label(prefix_str, suffix_str, target_label);
+
     if (!quiet) {
-        fprintf(stderr, "Vanity Keygen -- grinding for %s: \"%s\"\n",
-                mode == MATCH_PREFIX ? "prefix" : "suffix", target_str);
+        if (prefix_str && suffix_str)
+            fprintf(stderr, "Vanity Keygen -- grinding for prefix \"%s\" and suffix \"%s\"\n",
+                    prefix_str, suffix_str);
+        else
+            fprintf(stderr, "Vanity Keygen -- grinding for %s: \"%s\"\n",
+                    prefix_str ? "prefix" : "suffix",
+                    prefix_str ? prefix_str : suffix_str);
         fprintf(stderr, "  Threads: %d  Expected: 1 in 58^%d (%.0f attempts)\n",
                 thread_count, target_len, expected);
         fprintf(stderr, "  Rarity tiers: Common <=%.0f  Rare <=%.0f  Legendary <=%.0f  Mythic >%.0f\n",
                 expected, expected * 2, expected * 3, expected * 3);
         if (use_fast_match) {
             fprintf(stderr, "  Fast suffix check: pk %% 58^%d (%d case variant%s)\n",
-                    target_len, fast_num_variants,
+                    suffix_len, fast_num_variants,
                     fast_num_variants == 1 ? "" : "s");
         }
         fprintf(stderr, "  Grinding...\n");
@@ -582,9 +630,10 @@ int main(int argc, char **argv) {
     atomic_init(&gs.found, false);
     atomic_init(&gs.total_attempts, 0);
     atomic_init(&gs.running_threads, thread_count);
-    gs.target            = target_str;
-    gs.target_len        = target_len;
-    gs.mode              = mode;
+    gs.prefix            = prefix_str;
+    gs.prefix_len        = prefix_len;
+    gs.suffix            = suffix_str;
+    gs.suffix_len        = suffix_len;
     gs.case_sensitive    = case_sensitive;
     gs.attempts_per_thread = (uint64_t)(expected * 4.0 / (double)thread_count) + 1000000;
     gs.use_fast_match    = use_fast_match;
@@ -679,7 +728,13 @@ int main(int argc, char **argv) {
     off += snprintf(json_buf + off, sizeof(json_buf) - (size_t)off,
         ",\"expectedAttempts\":%.0f", expected);
     off += snprintf(json_buf + off, sizeof(json_buf) - (size_t)off,
-        ",\"target\":\"%s\"", target_str);
+        ",\"target\":\"%s\"", target_label);
+    if (prefix_str)
+        off += snprintf(json_buf + off, sizeof(json_buf) - (size_t)off,
+            ",\"prefix\":\"%s\"", prefix_str);
+    if (suffix_str)
+        off += snprintf(json_buf + off, sizeof(json_buf) - (size_t)off,
+            ",\"suffix\":\"%s\"", suffix_str);
     off += snprintf(json_buf + off, sizeof(json_buf) - (size_t)off,
         ",\"targetLen\":%d", target_len);
     off += snprintf(json_buf + off, sizeof(json_buf) - (size_t)off,

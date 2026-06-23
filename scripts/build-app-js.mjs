@@ -31,6 +31,7 @@ export const moduleNames = [
   'cancel-flow.js',       // openCancelConfirm(), showCancelledPanel()
   'rpc-panel.js',         // loadRpcConfig(), renderRpcConfig(), selectRpc()
   'wallet-gen.js',        // wallet generation UI, mnemonic grid
+  'solflare-wallet.js',   // Solflare browser wallet connection + signer bridge
   'token-config.js',      // addPool(), renderSimpleConfig() incl. Advanced options section
   'coin-preview.js',      // updateCoinPreview(), flywheel explainer modal
   'depth-chart.js',       // computeDepthProfile(), renderDepthChartSvg() — per-pool liquidity depth

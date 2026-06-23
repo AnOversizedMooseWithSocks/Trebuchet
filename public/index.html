@@ -1533,6 +1533,27 @@
             padding: 2rem 1rem;
             color: var(--ink-soft);
         }
+        .secret-pin-modal {
+            z-index: 10002 !important;
+        }
+        .secret-pin-modal .modal-card {
+            max-width: min(440px, calc(100vw - 2rem));
+        }
+        .secret-pin-status-line {
+            min-height: 1.25rem;
+        }
+        .secret-pin-settings-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .secret-pin-settings-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
         /* ========================================================
            Layout & visual style
            ======================================================== */
@@ -3181,6 +3202,27 @@
             border-radius: var(--radius-sm);
                         transition: width 0.15s ease, background 0.15s ease;
         }
+        .vanity-ca-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            padding-top: 0.35rem;
+            border-top: 1px solid var(--rule-faint);
+        }
+        .vanity-ca-option {
+            max-width: 100%;
+            font-family: var(--font-mono);
+        }
+        .position-total-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .position-total-hint {
+            line-height: 30px;
+            white-space: nowrap;
+        }
         @keyframes vanityPulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
@@ -3352,6 +3394,39 @@
         </div>
     </div>
 
+    <div id="secretPinModal" class="modal secret-pin-modal" role="dialog" aria-modal="true" aria-labelledby="secretPinTitle">
+        <div class="modal-background"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title" id="secretPinTitle">Recovery PIN</p>
+            </header>
+            <section class="modal-card-body">
+                <p class="mb-3" id="secretPinDescription">Set a 4-digit PIN. Trebuchet combines it with this device to encrypt launch wallets and saved Vanity CAs.</p>
+                <div class="field">
+                    <label class="label is-small" for="secretPinInput">PIN</label>
+                    <div class="control has-icons-left">
+                        <input class="input" id="secretPinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="one-time-code">
+                        <span class="icon is-small is-left"><i class="fas fa-lock"></i></span>
+                    </div>
+                </div>
+                <div class="field" id="secretPinConfirmField">
+                    <label class="label is-small" for="secretPinConfirmInput">Confirm PIN</label>
+                    <div class="control has-icons-left">
+                        <input class="input" id="secretPinConfirmInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="new-password">
+                        <span class="icon is-small is-left"><i class="fas fa-check"></i></span>
+                    </div>
+                </div>
+                <p class="help secret-pin-status-line" id="secretPinModalStatus"></p>
+            </section>
+            <footer class="modal-card-foot">
+                <button class="button is-primary" id="secretPinSubmitBtn" type="button">
+                    <span class="icon"><i class="fas fa-unlock"></i></span>
+                    <span>Continue</span>
+                </button>
+            </footer>
+        </div>
+    </div>
+
     <!-- Hero -->
     <section class="hero is-primary">
         <div class="hero-body">
@@ -3482,6 +3557,28 @@
                     </div>
                     <p id="rpcTestResult" class="help"></p>
 
+                    <hr class="my-3">
+                    <h6 class="subtitle is-6 mb-2">Recovery PIN</h6>
+                    <div class="secret-pin-settings-row">
+                        <div>
+                            <span class="icon"><i class="fas fa-shield-alt"></i></span>
+                            <span id="secretPinStatusText" class="is-size-7">Checking...</span>
+                        </div>
+                        <div class="secret-pin-settings-actions">
+                            <button class="button is-small" id="secretPinUnlockBtn" type="button">
+                                <span class="icon is-small"><i class="fas fa-unlock"></i></span>
+                                <span>Unlock</span>
+                            </button>
+                            <button class="button is-small" id="secretPinLockBtn" type="button">
+                                <span class="icon is-small"><i class="fas fa-lock"></i></span>
+                                <span>Lock</span>
+                            </button>
+                        </div>
+                    </div>
+                    <p class="help mb-2">
+                        Encrypts launch-wallet recovery phrases and saved Vanity CAs with your PIN plus this device.
+                    </p>
+
                     <!-- ============================================ -->
                     <!-- Demo mode toggle. Intentional opt-in (no      -->
                     <!-- default-on, no first-run prompt). When on,    -->
@@ -3524,11 +3621,23 @@
                         off to go straight to the app on launch.
                     </p>
 
+                    <hr class="my-3">
+                    <h6 class="subtitle is-6 mb-2">Appearance</h6>
+                    <div class="field">
+                        <label class="checkbox">
+                            <input type="checkbox" id="medievalCursorToggle">
+                            <span>Use themed cursor icons</span>
+                        </label>
+                    </div>
+                    <p class="help mb-2">
+                        Replaces the operating-system cursor with Trebuchet's
+                        medieval cursor set.
+                    </p>
+
                     <!-- ============================================ -->
-                    <!-- Audio. A click sound effect and looping       -->
-                    <!-- background music, both on by default. Both    -->
-                    <!-- are handled entirely in the renderer          -->
-                    <!-- (public/modules/audio.js); changes here take  -->
+                    <!-- Audio. Sound effects default on; background    -->
+                    <!-- music is opt-in. Both are handled entirely in  -->
+                    <!-- the renderer; changes here take                -->
                     <!-- effect immediately and persist to             -->
                     <!-- userPrefs.json as playSoundEffects /          -->
                     <!-- playBackgroundMusic.                          -->
@@ -3543,12 +3652,12 @@
                     </div>
                     <div class="field">
                         <label class="checkbox">
-                            <input type="checkbox" id="backgroundMusicToggle" checked>
+                            <input type="checkbox" id="backgroundMusicToggle">
                             <span>Play background music</span>
                         </label>
                     </div>
                     <p class="help mb-2">
-                        Background music starts when the app opens and pauses
+                        Background music starts only when enabled and pauses
                         while the window is in the background. Sound effects
                         cover buttons, dropdown menus, checkboxes, and changes
                         to the estimated launch cost.
@@ -3676,10 +3785,9 @@
                     handled it.
                 </p>
                 <p class="is-size-7 mb-3 has-text-grey">
-                    Recovery phrases are encrypted at rest using your OS keychain
-                    (Keychain on macOS, DPAPI on Windows, libsecret/kwallet on
-                    Linux) — the file on disk can't be read on another user
-                    account or another machine.
+                    Recovery phrases are encrypted at rest. If the Recovery PIN
+                    is locked, unlock it in Settings to resume or reveal saved
+                    wallet secrets.
                 </p>
                 <div id="launchJournalsList"></div>
             </div>
@@ -3707,10 +3815,9 @@
                     to recover.
                 </p>
                 <p class="is-size-7 mb-3 has-text-grey">
-                    Recovery info is encrypted at rest using your OS keychain
-                    (Keychain on macOS, DPAPI on Windows, libsecret/kwallet on
-                    Linux) — the file on disk can't be read on another user
-                    account or another machine.
+                    Recovery info is encrypted at rest. If the Recovery PIN is
+                    locked, unlock it in Settings to copy recovery phrases or
+                    use saved launch wallets.
                 </p>
                 <div id="pendingWalletsList"></div>
             </div>
@@ -3737,6 +3844,28 @@
                         <span class="icon"><i class="fas fa-wallet"></i></span>
                         <span>Generate Wallet</span>
                     </button>
+
+                    <div class="notification is-info is-light is-size-7 mt-4 py-2 px-3" id="solflareWalletPanel">
+                        <div class="is-flex is-align-items-center is-justify-content-space-between is-flex-wrap-wrap mb-2" style="gap: 0.5rem;">
+                            <strong>Solflare</strong>
+                            <span id="solflareStatus" class="tag is-light">Not connected</span>
+                        </div>
+                        <div class="buttons are-small mb-1">
+                            <button class="button is-warning" id="connectSolflareBtn" type="button">
+                                <span class="icon is-small"><i class="fas fa-link"></i></span>
+                                <span>Connect Solflare</span>
+                            </button>
+                            <button class="button is-light hidden" id="disconnectSolflareBtn" type="button">
+                                <span class="icon is-small"><i class="fas fa-unlink"></i></span>
+                                <span>Disconnect</span>
+                            </button>
+                            <button class="button is-info hidden" id="useSolflareDestinationBtn" type="button">
+                                <span class="icon is-small"><i class="fas fa-arrow-right"></i></span>
+                                <span>Use as destination</span>
+                            </button>
+                        </div>
+                        <p class="mb-0">Connect your browser wallet for the web flow. The current launch path still uses the temporary wallet below for transaction execution.</p>
+                    </div>
 
                     <div id="walletInfo" class="hidden mt-4">
                         <div class="columns is-vcentered">
@@ -3863,18 +3992,22 @@
                     </div>
                     <!-- Vanity CA: grind a custom token mint address -->
                     <h4 class="title is-6 mt-4">Vanity CA <span class="tag is-warning is-light is-size-7" style="vertical-align: middle;">Optional</span></h4>
-                    <p class="help is-size-7 mb-2">Make your token CA start or end with a custom string. Grinds during token creation. 4 chars ~30s, 5 chars ~30min.</p>
+                    <p class="help is-size-7 mb-2">Make your token CA start or end with a custom string. Saved candidates survive restarts.</p>
                     <div class="field has-addons">
                         <p class="control">
                             <span class="select is-small">
                                 <select id="vanityCAMode">
                                     <option value="suffix">Ends with</option>
                                     <option value="prefix">Starts with</option>
+                                    <option value="both">Starts &amp; Ends With</option>
                                 </select>
                             </span>
                         </p>
-                        <p class="control is-expanded">
+                        <p class="control is-expanded" id="vanityCAStartControl">
                             <input class="input is-small is-family-monospace" type="text" id="vanityCATarget" placeholder="e.g. RATi" maxlength="10">
+                        </p>
+                        <p class="control is-expanded hidden" id="vanityCAEndControl">
+                            <input class="input is-small is-family-monospace" type="text" id="vanityCAEndTarget" placeholder="end" maxlength="10">
                         </p>
                         <p class="control">
                             <button class="button is-primary is-small" id="grindCABtn">
@@ -3900,8 +4033,9 @@
                                         <span id="vanityCARarity" class="tag is-info is-size-7"></span>
                                         <span class="has-text-grey ml-2" id="vanityCAResultMeta"></span>
                                     </p>
+                                    <div id="vanityCAOptions" class="vanity-ca-options hidden mt-2"></div>
                                 </div>
-                                <button class="button is-small is-light" id="clearVanityCAResultBtn" title="Discard and grind again">
+                                <button class="button is-small is-light" id="clearVanityCAResultBtn" title="Discard selected vanity CA">
                                     <span class="icon is-small"><i class="fas fa-times"></i></span>
                                 </button>
                             </div>

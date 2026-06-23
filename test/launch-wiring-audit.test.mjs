@@ -160,6 +160,43 @@ test('airdrop plan is journaled at create-lp and restored on resume', () => {
   );
 });
 
+test('classic resume blocks unsafe partial pool state before retrying', () => {
+  const resumeStart = serverSrc.indexOf("app.post('/api/resume-launch'");
+  assert.ok(resumeStart >= 0, 'resume-launch route must exist');
+  const resumeSrc = serverSrc.slice(resumeStart, resumeStart + 5500);
+  assert.ok(
+    /const activeJournal = launchJournal\.activeForWallet\(walletPublicKey\);/.test(resumeSrc),
+    'resume-launch must inspect the active journal before starting another attempt',
+  );
+  assert.ok(
+    /unsafeCreatedPoolEvents\(activeJournal \|\| \{\}, priorResults\)/.test(resumeSrc),
+    'resume-launch must block pool_create_done events not covered by priorResults',
+  );
+  assert.ok(
+    /code: 'UNSAFE_PARTIAL_POOL_STATE'/.test(resumeSrc) &&
+      /manualRecoveryRequired: true/.test(resumeSrc),
+    'unsafe partial pool state must produce a structured non-retryable response',
+  );
+});
+
+test('active LP failure UI stops offering resume for unsafe partial pool state', () => {
+  assert.ok(
+    /data\.manualRecoveryRequired \|\| data\.code === 'UNSAFE_PARTIAL_POOL_STATE'/.test(lpExecSrc),
+    'resume handler must branch on the unsafe partial-pool response',
+  );
+  const unsafeBranchStart = lpExecSrc.indexOf("data.code === 'UNSAFE_PARTIAL_POOL_STATE'");
+  assert.ok(unsafeBranchStart >= 0, 'unsafe partial-pool branch must exist');
+  const unsafeBranch = lpExecSrc.slice(unsafeBranchStart, unsafeBranchStart + 2500);
+  assert.ok(
+    /btn\.classList\.add\('hidden'\)/.test(unsafeBranch),
+    'unsafe partial-pool branch must hide the resume button',
+  );
+  assert.ok(
+    /completed position state was recorded/.test(unsafeBranch),
+    'unsafe partial-pool copy must explain why automatic retry stopped',
+  );
+});
+
 test('report prefers result-recorded pool facts over live config', () => {
   const reportSrc = readFileSync(path.join(REPO, 'public', 'modules', 'launch-report.js'), 'utf8');
   assert.ok(

@@ -122,17 +122,23 @@ function load() {
   const hasLegacyPlaintext = raw.some((e) =>
     Array.isArray(e.secretKey) || typeof e.mnemonic === 'string'
   );
-  const hasPlainTokens = raw.some((e) =>
-    (typeof e.secretKeyEnc === 'string' && e.secretKeyEnc.startsWith('plain:')) ||
-    (typeof e.mnemonicEnc  === 'string' && e.mnemonicEnc.startsWith('plain:'))
+  const hasReencryptableTokens = raw.some((e) =>
+    secretStore.shouldReencryptToken(e.secretKeyEnc) ||
+    secretStore.shouldReencryptToken(e.mnemonicEnc)
   );
-  if (hasLegacyPlaintext || (hasPlainTokens && secretStore.isEncrypting())) {
+  const hasReencryptFailure = raw.some((e, idx) =>
+    (secretStore.shouldReencryptToken(e.secretKeyEnc) && !Array.isArray(decoded[idx]?.secretKey)) ||
+    (secretStore.shouldReencryptToken(e.mnemonicEnc) && typeof decoded[idx]?.mnemonic !== 'string')
+  );
+  if (hasLegacyPlaintext || (hasReencryptableTokens && !hasReencryptFailure)) {
     try {
       persist(decoded);
       console.log('pendingWallets: migrated entries to encrypted form');
     } catch (e) {
       console.warn('pendingWallets: migration write failed (non-fatal):', e.message);
     }
+  } else if (hasReencryptableTokens && hasReencryptFailure) {
+    console.warn('pendingWallets: skipped secret migration because at least one entry could not be decrypted');
   }
 
   return decoded;
@@ -192,9 +198,10 @@ export function get(publicKey) {
   return load().find((w) => w.publicKey === publicKey) || null;
 }
 
-// Return all currently-pending wallets, decrypted into the in-memory
-// shape ({ publicKey, secretKey, mnemonic, createdAt }). Returned via
-// the local-only API to the loopback frontend, never over the network.
+// Return all currently-pending wallets, decrypted into the in-memory shape
+// ({ publicKey, secretKey, mnemonic, createdAt }). Server routes expose only
+// metadata by default; secret material is revealed per-wallet on explicit user
+// action.
 export function list() {
   return load();
 }

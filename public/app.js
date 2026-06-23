@@ -109,6 +109,39 @@ let lastAirdropResult = null;
 // restart). Null in normal sessions.
 let restoredAirdropPayload = null;
 
+function setWalletQrImages(qrCode) {
+  ['qrCode', 'step3QrCode'].forEach((id) => {
+    const img = document.getElementById(id);
+    if (!img) return;
+    if (qrCode) {
+      img.src = qrCode;
+      img.classList.remove('hidden');
+    } else {
+      img.removeAttribute('src');
+      img.classList.add('hidden');
+    }
+  });
+}
+
+async function ensureWalletQrCode(wallet = tempWallet) {
+  if (!wallet || !wallet.publicKey) {
+    setWalletQrImages(null);
+    return null;
+  }
+  if (wallet.qrCode) {
+    setWalletQrImages(wallet.qrCode);
+    return wallet.qrCode;
+  }
+  const resp = await fetch('/api/wallet-qr?publicKey=' + encodeURIComponent(wallet.publicKey));
+  const data = await resp.json();
+  if (!resp.ok || !data.success || !data.qrCode) {
+    throw new Error(data.error || `QR generation failed with HTTP ${resp.status}`);
+  }
+  wallet.qrCode = data.qrCode;
+  setWalletQrImages(wallet.qrCode);
+  return wallet.qrCode;
+}
+
 // Cache of resolved quote-token info, keyed by the canonical input the
 // user typed/picked (e.g. 'SOL', 'USDC', or a base58 mint address). Each
 // entry is the full info payload that resolvePoolQuote would otherwise
@@ -673,7 +706,6 @@ const STEP_TITLES = {
   5: 'Create Pools',
   6: 'Transfer Assets',
 };
-
 // ===========================================================================
 // Logging
 // ===========================================================================
@@ -2613,7 +2645,7 @@ bind('generateWalletBtn', 'click', async () => {
 
       // Reset UI panels that may carry stale info from a previous attempt
       document.getElementById('walletInfo').classList.remove('hidden');
-      document.getElementById('qrCode').src = data.wallet.qrCode;
+      setWalletQrImages(data.wallet.qrCode);
       document.getElementById('walletAddress').value = data.wallet.publicKey;
       document.getElementById('privateKeyContainer').classList.add('hidden');
       document.getElementById('tokenCreatedInfo').classList.add('hidden');
@@ -2631,6 +2663,9 @@ bind('generateWalletBtn', 'click', async () => {
       // address so the user doesn't have to re-enter anything to finish
       // a second demo run after a reset. No-op in real mode.
       applyDemoDestinationWallet();
+      if (typeof window.applySolflareDestinationWallet === 'function') {
+        window.applySolflareDestinationWallet({ silent: true });
+      }
 
       // Reset step summaries from any prior attempt
       for (let i = 2; i <= 6; i++) setStepSummary(i, '');
@@ -2808,7 +2843,374 @@ bind('tokenLogo', 'change', async (e) => {
 });
 
 const poolList = document.getElementById('poolList');
+// ===========================================================================
+// Solflare browser wallet
+// ===========================================================================
 
+let solflareWallet = null;
+let solflareWalletProvider = null;
+let walletStandardSolflareProvider = null;
+let walletStandardListenersStarted = false;
+const walletStandardWallets = [];
+const SOLFLARE_PROVIDER_WAIT_MS = 1500;
+
+function collectSolflareProviderCandidates() {
+  const candidates = [];
+  const add = (provider) => {
+    if (!provider || candidates.includes(provider)) return;
+    candidates.push(provider);
+  };
+
+  add(window.solflare);
+  add(window.solana);
+
+  const solanaProviders = window.solana?.providers;
+  if (Array.isArray(solanaProviders)) {
+    solanaProviders.forEach(add);
+  } else if (solanaProviders && typeof solanaProviders === 'object') {
+    Object.values(solanaProviders).forEach(add);
+  }
+
+  return candidates;
+}
+
+function isSolflareProvider(provider) {
+  if (!provider || typeof provider.connect !== 'function') return false;
+  const name = String(provider.name || provider.walletName || '').toLowerCase();
+  return (
+    provider === window.solflare ||
+    provider.isSolflare === true ||
+    name.includes('solflare')
+  );
+}
+
+function isSolflareStandardWallet(wallet) {
+  if (!wallet) return false;
+  const name = String(wallet.name || '').toLowerCase();
+  const hasSolanaChain = Array.isArray(wallet.chains)
+    && wallet.chains.some((chain) => String(chain).startsWith('solana:'));
+  return name.includes('solflare') && hasSolanaChain;
+}
+
+function standardWalletAccountAddress(wallet) {
+  const account = wallet?.accounts?.[0];
+  return publicKeyToString(account?.address || account?.publicKey);
+}
+
+function standardWalletFeature(wallet, name) {
+  const feature = wallet?.features?.[name];
+  return feature && typeof feature === 'object' ? feature : null;
+}
+
+function createStandardSolflareProvider(wallet) {
+  if (walletStandardSolflareProvider?.wallet === wallet) return walletStandardSolflareProvider;
+
+  walletStandardSolflareProvider = {
+    isSolflare: true,
+    name: wallet.name,
+    wallet,
+    get publicKey() {
+      return standardWalletAccountAddress(wallet);
+    },
+    get isConnected() {
+      return Boolean(standardWalletAccountAddress(wallet));
+    },
+    async connect() {
+      const feature = standardWalletFeature(wallet, 'standard:connect');
+      if (!feature || typeof feature.connect !== 'function') {
+        throw new Error('Solflare does not expose a Wallet Standard connect method.');
+      }
+      const result = await feature.connect();
+      const account = (result?.accounts || wallet.accounts || [])[0];
+      return { publicKey: account?.address || account?.publicKey };
+    },
+    async disconnect() {
+      const feature = standardWalletFeature(wallet, 'standard:disconnect');
+      if (feature && typeof feature.disconnect === 'function') {
+        await feature.disconnect();
+      }
+    },
+  };
+
+  return walletStandardSolflareProvider;
+}
+
+function syncConnectedSolflareProvider(provider, { publicKey = null, logChange = false } = {}) {
+  const nextPublicKey = publicKey
+    || provider?.publicKey
+    || provider?.wallet?.accounts?.[0]?.address
+    || provider?.wallet?.accounts?.[0]?.publicKey;
+  if (nextPublicKey) {
+    setConnectedSolflareWallet(provider, nextPublicKey);
+    if (logChange) {
+      log(`Solflare account changed: ${shortSolflareAddress(solflareWallet.publicKey)}`, 'info');
+    }
+  } else {
+    clearSolflareWallet();
+  }
+}
+
+function getWalletStandardSolflareProvider() {
+  const wallet = walletStandardWallets.find(isSolflareStandardWallet);
+  return wallet ? createStandardSolflareProvider(wallet) : null;
+}
+
+function registerWalletStandardWallets(...wallets) {
+  for (const wallet of wallets) {
+    if (wallet && !walletStandardWallets.includes(wallet)) {
+      walletStandardWallets.push(wallet);
+    }
+  }
+}
+
+function startWalletStandardDiscovery() {
+  if (walletStandardListenersStarted || typeof window === 'undefined') return;
+  walletStandardListenersStarted = true;
+
+  const api = Object.freeze({ register: (...wallets) => registerWalletStandardWallets(...wallets) });
+  window.addEventListener('wallet-standard:register-wallet', (event) => {
+    if (typeof event.detail === 'function') {
+      event.detail(api);
+    }
+  });
+
+  try {
+    window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: api }));
+  } catch (e) {
+    console.warn(`Wallet Standard discovery failed: ${e.message}`);
+  }
+}
+
+function getSolflareProvider() {
+  startWalletStandardDiscovery();
+  return collectSolflareProviderCandidates().find(isSolflareProvider)
+    || getWalletStandardSolflareProvider()
+    || null;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForSolflareProvider(timeoutMs = SOLFLARE_PROVIDER_WAIT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  let provider = getSolflareProvider();
+  while (!provider && Date.now() < deadline) {
+    await wait(100);
+    provider = getSolflareProvider();
+  }
+  return provider;
+}
+
+function publicKeyToString(publicKey) {
+  if (!publicKey) return '';
+  if (typeof publicKey === 'string') return publicKey;
+  if (typeof publicKey.toBase58 === 'function') return publicKey.toBase58();
+  if (typeof publicKey.toString === 'function') return publicKey.toString();
+  return '';
+}
+
+function shortSolflareAddress(address) {
+  return address ? `${address.slice(0, 6)}...${address.slice(-6)}` : '';
+}
+
+function setSolflareStatus(message, type = 'light') {
+  const status = document.getElementById('solflareStatus');
+  if (!status) return;
+  status.className = `tag is-${type}`;
+  status.textContent = message;
+}
+
+function syncSolflareButtons() {
+  const connected = Boolean(solflareWallet?.publicKey);
+  document.getElementById('connectSolflareBtn')?.classList.toggle('hidden', connected);
+  document.getElementById('disconnectSolflareBtn')?.classList.toggle('hidden', !connected);
+  document.getElementById('useSolflareDestinationBtn')?.classList.toggle('hidden', !connected);
+}
+
+function setConnectedSolflareWallet(provider, publicKey) {
+  const address = publicKeyToString(publicKey);
+  if (!address) throw new Error('Solflare did not return a public key.');
+
+  solflareWalletProvider = provider;
+  solflareWallet = {
+    publicKey: address,
+    connectedAt: new Date().toISOString(),
+  };
+  window.connectedSolflareWallet = solflareWallet;
+  setSolflareStatus(shortSolflareAddress(address), 'success');
+  syncSolflareButtons();
+  return solflareWallet;
+}
+
+function clearSolflareWallet(message = 'Not connected') {
+  solflareWallet = null;
+  solflareWalletProvider = null;
+  window.connectedSolflareWallet = null;
+  setSolflareStatus(message, 'light');
+  syncSolflareButtons();
+}
+
+function fillDestinationFromSolflare({ silent = false } = {}) {
+  const destination = document.getElementById('destinationWallet');
+  if (!destination || !solflareWallet?.publicKey) return false;
+
+  destination.value = solflareWallet.publicKey;
+  destination.dispatchEvent(new Event('input', { bubbles: true }));
+  if (!silent) {
+    log(`Destination wallet set to Solflare: ${shortSolflareAddress(solflareWallet.publicKey)}`, 'success');
+  }
+  return true;
+}
+
+async function connectSolflareWallet() {
+  setSolflareStatus('Looking...', 'light');
+  const provider = await waitForSolflareProvider();
+  if (!provider) {
+    setSolflareStatus('Solflare not found', 'warning');
+    log('Solflare was not detected. Unlock the extension, allow this site, then try again.', 'warning');
+    return;
+  }
+
+  const btn = document.getElementById('connectSolflareBtn');
+  await withRunState(async () => {
+    setLoading(btn, true);
+    try {
+      wireSolflareProviderEvents(provider);
+      const result = await provider.connect();
+      const wallet = setConnectedSolflareWallet(provider, provider.publicKey || result?.publicKey);
+      log(`Solflare connected: ${shortSolflareAddress(wallet.publicKey)}`, 'success');
+    } catch (e) {
+      const message = e?.message || 'Connection rejected';
+      setSolflareStatus('Connection failed', 'danger');
+      log(`Solflare connection failed: ${message}`, 'warning');
+    } finally {
+      setLoading(btn, false);
+    }
+  });
+}
+
+async function disconnectSolflareWallet() {
+  const provider = solflareWalletProvider || getSolflareProvider();
+  const btn = document.getElementById('disconnectSolflareBtn');
+  await withRunState(async () => {
+    setLoading(btn, true);
+    try {
+      if (provider && typeof provider.disconnect === 'function') {
+        await provider.disconnect();
+      }
+      clearSolflareWallet();
+      log('Solflare disconnected.');
+    } catch (e) {
+      log(`Solflare disconnect failed: ${e.message}`, 'warning');
+    } finally {
+      setLoading(btn, false);
+    }
+  });
+}
+
+function getSolflareSigner() {
+  if (!solflareWallet?.publicKey || !solflareWalletProvider) return null;
+  const standardWallet = solflareWalletProvider.wallet;
+  if (standardWallet) {
+    const account = standardWallet.accounts?.[0] || null;
+    const signTransaction = standardWalletFeature(standardWallet, 'solana:signTransaction');
+    const signAndSendTransaction = standardWalletFeature(standardWallet, 'solana:signAndSendTransaction');
+    const signMessage = standardWalletFeature(standardWallet, 'solana:signMessage');
+    return {
+      publicKey: account?.publicKey || account?.address || solflareWallet.publicKey,
+      address: solflareWallet.publicKey,
+      signTransaction: signTransaction && typeof signTransaction.signTransaction === 'function'
+        ? signTransaction.signTransaction.bind(signTransaction)
+        : null,
+      signAllTransactions: null,
+      signAndSendTransaction: signAndSendTransaction
+        && typeof signAndSendTransaction.signAndSendTransaction === 'function'
+        ? signAndSendTransaction.signAndSendTransaction.bind(signAndSendTransaction)
+        : null,
+      signMessage: signMessage && typeof signMessage.signMessage === 'function'
+        ? signMessage.signMessage.bind(signMessage)
+        : null,
+    };
+  }
+
+  return {
+    publicKey: solflareWalletProvider.publicKey,
+    address: solflareWallet.publicKey,
+    signTransaction: typeof solflareWalletProvider.signTransaction === 'function'
+      ? solflareWalletProvider.signTransaction.bind(solflareWalletProvider)
+      : null,
+    signAllTransactions: typeof solflareWalletProvider.signAllTransactions === 'function'
+      ? solflareWalletProvider.signAllTransactions.bind(solflareWalletProvider)
+      : null,
+    signAndSendTransaction: typeof solflareWalletProvider.signAndSendTransaction === 'function'
+      ? solflareWalletProvider.signAndSendTransaction.bind(solflareWalletProvider)
+      : null,
+    signMessage: typeof solflareWalletProvider.signMessage === 'function'
+      ? solflareWalletProvider.signMessage.bind(solflareWalletProvider)
+      : null,
+  };
+}
+
+function wireSolflareProviderEvents(provider = getSolflareProvider()) {
+  if (!provider || provider._trebuchetSolflareWired) return;
+
+  provider._trebuchetSolflareWired = true;
+  if (provider.wallet) {
+    const events = standardWalletFeature(provider.wallet, 'standard:events');
+    if (events && typeof events.on === 'function') {
+      const unsubscribe = events.on('change', () => {
+        syncConnectedSolflareProvider(provider, { logChange: true });
+      });
+      if (typeof unsubscribe === 'function') {
+        provider._trebuchetSolflareUnsubscribe = unsubscribe;
+      }
+    }
+    return;
+  }
+
+  if (typeof provider.on !== 'function') return;
+
+  provider.on('connect', (publicKey) => {
+    try {
+      syncConnectedSolflareProvider(provider, { publicKey: provider.publicKey || publicKey });
+    } catch {
+      clearSolflareWallet();
+    }
+  });
+  provider.on('disconnect', () => clearSolflareWallet());
+  provider.on('accountChanged', (publicKey) => {
+    if (publicKey) {
+      setConnectedSolflareWallet(provider, publicKey);
+      log(`Solflare account changed: ${shortSolflareAddress(solflareWallet.publicKey)}`, 'info');
+    } else {
+      clearSolflareWallet();
+    }
+  });
+}
+
+bind('connectSolflareBtn', 'click', connectSolflareWallet);
+bind('disconnectSolflareBtn', 'click', disconnectSolflareWallet);
+bind('useSolflareDestinationBtn', 'click', () => {
+  if (!fillDestinationFromSolflare()) {
+    log('Connect Solflare before using it as the destination wallet.', 'warning');
+  }
+});
+
+window.getConnectedSolflareWallet = () => solflareWallet;
+window.getSolflareSigner = getSolflareSigner;
+window.applySolflareDestinationWallet = fillDestinationFromSolflare;
+
+window.addEventListener?.('solana#initialized', () => {
+  wireSolflareProviderEvents();
+});
+wireSolflareProviderEvents();
+const initialSolflareProvider = getSolflareProvider();
+if (initialSolflareProvider?.isConnected && initialSolflareProvider.publicKey) {
+  setConnectedSolflareWallet(initialSolflareProvider, initialSolflareProvider.publicKey);
+} else {
+  clearSolflareWallet();
+}
 function addPool(initial = {}) {
   // Default supplyPercent to whatever's left of the 100% budget so we never
   // create a new pool that pushes the total over 100. Callers that pass an
@@ -7420,6 +7822,25 @@ function computePoolPositionsTotal(pool) {
   return bsPct + slicePct + bandPct;
 }
 
+function formatPercentCompact(value, maxDecimals = 4) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '0';
+  return Number(n.toFixed(maxDecimals)).toString();
+}
+
+function positionSupplyPct(pool, positionPctOfPool) {
+  const poolPct = Number(pool?.supplyPercent) || 0;
+  const posPct = Number(positionPctOfPool) || 0;
+  return (poolPct * posPct) / 100;
+}
+
+function formatPositionSupplyHint(pool, positionPctOfPool) {
+  const poolPct = Number(pool?.supplyPercent) || 0;
+  const supplyPct = positionSupplyPct(pool, positionPctOfPool);
+  if (!Number.isFinite(poolPct) || !Number.isFinite(supplyPct) || poolPct <= 0) return '';
+  return `= ${formatPercentCompact(supplyPct)}% of supply`;
+}
+
 // Absorb a delta into the wide-slices bucket to keep positions total
 // at 100% after a structural toggle (bs on/off, ladder on/off). When
 // delta > 0, slices need to shrink to make room. When delta < 0,
@@ -7438,6 +7859,103 @@ function rebalanceWideSlicesByDelta(pool, delta) {
   const lastIdx = pool.distribution.length - 1;
   const newVal = Number(pool.distribution[lastIdx].sharePercent || 0) - delta;
   pool.distribution[lastIdx].sharePercent = Math.max(0, Number(newVal.toFixed(4)));
+}
+
+function refreshPositionSupplyHints(poolIdx) {
+  const pool = pools[poolIdx];
+  if (!pool) return;
+  const node = poolList.children[poolIdx];
+  if (!node) return;
+
+  node.querySelectorAll('[data-position-total-hint="slice"]').forEach((el, i) => {
+    const slice = pool.distribution && pool.distribution[i];
+    el.textContent = slice ? formatPositionSupplyHint(pool, slice.sharePercent) : '';
+  });
+  node.querySelectorAll('[data-position-total-hint="band"]').forEach((el, i) => {
+    const band = pool.ladderConfig?.bands && pool.ladderConfig.bands[i];
+    el.textContent = band ? formatPositionSupplyHint(pool, band.supplyPercent) : '';
+  });
+}
+
+function fitPoolPositionsTo100(poolIdx, { quiet = false } = {}) {
+  const pool = pools[poolIdx];
+  if (!pool) return;
+  if (!Array.isArray(pool.distribution) || pool.distribution.length === 0) {
+    pool.distribution = [{ sharePercent: 0, recipient: null, useExternalRecipient: false }];
+  }
+
+  const total = computePoolPositionsTotal(pool);
+  const delta = Number((100 - total).toFixed(4));
+  if (Math.abs(delta) <= 0.0001) {
+    if (!quiet) log(`Pool ${poolIdx + 1} positions already total 100%.`, 'info');
+    return;
+  }
+
+  const lastIdx = pool.distribution.length - 1;
+  const current = Number(pool.distribution[lastIdx].sharePercent) || 0;
+  const next = Number((current + delta).toFixed(4));
+  if (next < 0) {
+    log(`Pool ${poolIdx + 1}: can't fit positions to 100% by shrinking the last main LP slice. Reduce ladder or bootstrap first.`, 'warning');
+    return;
+  }
+
+  pool.distribution[lastIdx].sharePercent = next;
+  refreshWideSliceInputs(poolIdx);
+  updatePoolPositionsTotal(poolIdx);
+  if (!quiet) {
+    log(`Pool ${poolIdx + 1}: adjusted last main LP slice by ${formatPercentCompact(delta)}% of pool.`, 'info');
+  }
+}
+
+function roundPoolPositionsToWholeSupply(poolIdx) {
+  const pool = pools[poolIdx];
+  const poolPct = Number(pool?.supplyPercent) || 0;
+  if (!pool || poolPct <= 0) return;
+
+  const refs = [];
+  (pool.distribution || []).forEach((slice) => {
+    if ((Number(slice.sharePercent) || 0) > 0) {
+      refs.push({
+        get: () => Number(slice.sharePercent) || 0,
+        set: (v) => { slice.sharePercent = v; },
+      });
+    }
+  });
+  if (pool.ladderConfig?.mode === 'manual' && Array.isArray(pool.ladderConfig.bands)) {
+    pool.ladderConfig.bands.forEach((band) => {
+      if ((Number(band.supplyPercent) || 0) > 0) {
+        refs.push({
+          get: () => Number(band.supplyPercent) || 0,
+          set: (v) => { band.supplyPercent = v; },
+        });
+      }
+    });
+  }
+
+  if (refs.length === 0) return;
+
+  const exactSupplyPcts = refs.map((ref) => positionSupplyPct(pool, ref.get()));
+  const roundedSupplyPcts = exactSupplyPcts.map((pct) => Math.round(pct));
+  let anchorIdx = 0;
+  for (let i = 1; i < exactSupplyPcts.length; i++) {
+    if (exactSupplyPcts[i] > exactSupplyPcts[anchorIdx]) anchorIdx = i;
+  }
+
+  const roundedSum = roundedSupplyPcts.reduce((s, v) => s + v, 0);
+  const remainder = Number((poolPct - roundedSum).toFixed(4));
+  roundedSupplyPcts[anchorIdx] = Number((roundedSupplyPcts[anchorIdx] + remainder).toFixed(4));
+
+  if (roundedSupplyPcts.some((pct) => pct <= 0)) {
+    log(`Pool ${poolIdx + 1}: at least one position is too small to round to a whole supply percent. Increase it or adjust manually.`, 'warning');
+    return;
+  }
+
+  refs.forEach((ref, i) => {
+    ref.set(Number(((roundedSupplyPcts[i] / poolPct) * 100).toFixed(4)));
+  });
+  fitPoolPositionsTo100(poolIdx, { quiet: true });
+  renderPools();
+  log(`Pool ${poolIdx + 1}: rounded position sizes to whole-token-supply percentages.`, 'info');
 }
 
 // Update one pool's title in place.
@@ -8432,13 +8950,31 @@ function buildPoolNode(pool, idx) {
 
   // Positions total indicator. Under unified semantics, bootstrap
   // (if custom) + sum(slice sharePercents) + sum(band supplyPercents)
-  // must equal 100% of the pool's allocation. Rendered as a paragraph
-  // at the bottom of the pool body with a stable data-attribute so
-  // updatePoolPositionsTotal() can find and update it in place.
+  // must equal 100% of the pool's allocation. Rendered with a stable
+  // data-attribute so updatePoolPositionsTotal() can refresh it in place.
+  const positionsFooter = document.createElement('div');
+  positionsFooter.className = 'position-total-actions mt-3';
   const positionsTotal = document.createElement('p');
-  positionsTotal.className = 'has-text-weight-semibold mt-3';
+  positionsTotal.className = 'has-text-weight-semibold mb-0';
   positionsTotal.dataset.positionsTotal = '';
-  body.appendChild(positionsTotal);
+  positionsFooter.appendChild(positionsTotal);
+
+  const fitPositionsBtn = document.createElement('button');
+  fitPositionsBtn.type = 'button';
+  fitPositionsBtn.className = 'button is-small is-light';
+  fitPositionsBtn.textContent = 'Fit 100%';
+  fitPositionsBtn.title = 'Add or subtract the remainder from the last main LP slice';
+  fitPositionsBtn.addEventListener('click', () => fitPoolPositionsTo100(idx));
+  positionsFooter.appendChild(fitPositionsBtn);
+
+  const roundSupplyBtn = document.createElement('button');
+  roundSupplyBtn.type = 'button';
+  roundSupplyBtn.className = 'button is-small is-light';
+  roundSupplyBtn.textContent = 'Round Supply %';
+  roundSupplyBtn.title = 'Snap position sizes to whole percentages of total token supply';
+  roundSupplyBtn.addEventListener('click', () => roundPoolPositionsToWholeSupply(idx));
+  positionsFooter.appendChild(roundSupplyBtn);
+  body.appendChild(positionsFooter);
 
   // Paint the initial state.
   refreshPoolPositionsTotalNode(positionsTotal, pool);
@@ -8474,6 +9010,7 @@ function updatePoolPositionsTotal(poolIdx) {
   const el = poolNode.querySelector('[data-positions-total]');
   if (!el) return;
   refreshPoolPositionsTotalNode(el, pool);
+  refreshPositionSupplyHints(poolIdx);
   // The positions-total state also drives the pool's "needs attention"
   // affordance, so refresh that. updatePoolTitle paints the title
   // + affordance together.
@@ -8525,6 +9062,7 @@ function refreshWideSliceInputs(poolIdx) {
       inp.value = pool.distribution[i].sharePercent;
     }
   });
+  refreshPositionSupplyHints(poolIdx);
 }
 
 // Build the per-pool support section shown in customize mode. Mirrors
@@ -9335,6 +9873,7 @@ function buildBandRow(pool, poolIdx, band, bandIdx, rerenderBands, updateWarning
     <input class="input is-small slice-share" type="number" min="0" max="100" step="0.01"
            data-field="supplyPercent" value="${Number(band.supplyPercent)}">
     <span style="line-height:30px;">% of pool</span>
+    <span class="is-size-7 has-text-grey position-total-hint" data-position-total-hint="band">${escapeHtml(formatPositionSupplyHint(pool, band.supplyPercent))}</span>
     <span class="is-size-7 has-text-grey" style="line-height:30px;">Range:</span>
     <input class="input is-small" type="number" min="1" step="0.01"
            data-field="lowerMultiplier" value="${formatBandMultiplierValue(band.lowerMultiplier)}" style="width: 5rem;">
@@ -9455,6 +9994,7 @@ function buildSliceNode(pool, poolIdx, slice, sliceIdx) {
     <span class="slice-label">${labelText}</span>
     <input class="input is-small slice-share" type="number" min="0" max="100" step="0.01" value="${slice.sharePercent}">
     <span style="line-height:30px;">% of pool</span>
+    <span class="is-size-7 has-text-grey position-total-hint" data-position-total-hint="slice">${escapeHtml(formatPositionSupplyHint(pool, slice.sharePercent))}</span>
     <label class="checkbox is-small" style="line-height:30px;">
       <input type="checkbox" data-field="useExternal" ${slice.useExternalRecipient ? 'checked' : ''}>
       &nbsp;Send to a different wallet
@@ -11124,7 +11664,6 @@ function resetForNewLaunch() {
 }
 
 bind('startOverBtn', 'click', resetForNewLaunch);
-
 // ===========================================================================
 // Tokenomics Preview Modal
 // ===========================================================================
@@ -14053,11 +14592,18 @@ function attachRowLogoFallbacks(root) {
 
 function renderFundingRequirements() {
   document.getElementById('step3WalletAddr').textContent = tempWallet.publicKey;
-  // The QR data URL was generated server-side when the wallet was created
-  // and stashed on tempWallet alongside publicKey/secretKey. Reuse it here
-  // so users on mobile can scan rather than copy-paste the address.
-  const step3Qr = document.getElementById('step3QrCode');
-  if (step3Qr && tempWallet.qrCode) step3Qr.src = tempWallet.qrCode;
+  // The QR data URL is usually generated server-side with the wallet, but
+  // recovered wallets from a prior session only have the public key. In that
+  // case regenerate the QR lazily so the funding panel doesn't show a broken
+  // image icon.
+  if (tempWallet.qrCode) {
+    setWalletQrImages(tempWallet.qrCode);
+  } else {
+    setWalletQrImages(null);
+    ensureWalletQrCode(tempWallet).catch((e) => {
+      log(`Couldn't render wallet QR: ${e.message}`, 'warning');
+    });
+  }
 
   // ---- Section 1: things the user must send themselves ------------------
   // SOL is always present. Manual-prefund tokens (no auto-swap route, or
@@ -15264,7 +15810,6 @@ bind('continueToTokenBtn', 'click', () => {
   setStepSummary(3, `funded`);
   activateStep(4);
 });
-
 // ===========================================================================
 // STEP 4: Create token
 // ===========================================================================
@@ -15295,16 +15840,24 @@ bind('createTokenBtn', 'click', async () => {
       // Vanity CA: if we pre-ground a keypair, send it. Otherwise
       // fall back to prefix/suffix for server-side grinding.
       if (selectedVanityCA !== null && vanityCAKeypairs[selectedVanityCA]) {
-        formData.append('vanityCAKeypair', JSON.stringify(vanityCAKeypairs[selectedVanityCA].secretKey));
+        const selected = vanityCAKeypairs[selectedVanityCA];
+        if (Array.isArray(selected.secretKey)) {
+          formData.append('vanityCAKeypair', JSON.stringify(selected.secretKey));
+        } else if (selected.publicKey) {
+          formData.append('vanityCAPublicKey', selected.publicKey);
+        }
       } else {
-        const vanityTarget = document.getElementById('vanityCATarget')?.value.trim();
-        if (vanityTarget) {
-          const vanityMode = document.getElementById('vanityCAMode')?.value || 'suffix';
-          if (vanityMode === 'prefix') {
-            formData.append('vanityPrefix', vanityTarget);
-          } else {
-            formData.append('vanitySuffix', vanityTarget);
+        const vanityMode = document.getElementById('vanityCAMode')?.value || 'suffix';
+        const vanityStart = document.getElementById('vanityCATarget')?.value.trim() || '';
+        const vanityEnd = document.getElementById('vanityCAEndTarget')?.value.trim() || '';
+        if (vanityMode === 'both') {
+          if (vanityStart && vanityEnd) {
+            formData.append('vanityPrefix', vanityStart);
+            formData.append('vanitySuffix', vanityEnd);
           }
+        } else if (vanityStart) {
+          if (vanityMode === 'prefix') formData.append('vanityPrefix', vanityStart);
+          else formData.append('vanitySuffix', vanityStart);
         }
       }
       const logoFile = document.getElementById('tokenLogo').files[0];
@@ -16084,16 +16637,16 @@ bind('createLpBtn', 'click', async () => {
           } else {
             // Main-positions failure: at least one pool was created but
             // its main positions couldn't be opened (or the next pool
-            // couldn't be created). The resume endpoint can pick up
-            // from where the failure happened — completed pools are
-            // skipped, only the missing work is retried.
+            // couldn't be created). Complete prior pools are resumable,
+            // but a pool that was created without a completed allocation
+            // result is not safe to auto-resume yet.
             document.getElementById('lpFailReassurance').innerHTML =
               `<strong>Your assets are safe</strong> — they're still in the ephemeral wallet ` +
               `(SOL, any auto-swapped quote tokens, and the LP NFTs from pools that did succeed). ` +
-              `Click <strong>Resume launch</strong> to retry just the missing pools — already-` +
-              `created pools will be skipped. If retrying keeps failing, you can sweep the wallet ` +
-              `back to your destination as a last resort; the pools that succeeded above are ` +
-              `permanent on-chain.`;
+              `Click <strong>Resume launch</strong> to continue only if Trebuchet has enough ` +
+              `journaled state to skip completed pools safely. If the journal shows a pool was ` +
+              `created before a completed LP result was recorded, automatic resume will stop and ` +
+              `you should sweep the wallet or recover the existing LP positions manually.`;
           }
           // Continue/sweep button label. For 'bootstrap' and 'locks',
           // the user has unfinished work that retry can fix in place,
@@ -16912,6 +17465,47 @@ bind('retryBootstrapsBtn', 'click', async () => {
         return;
       }
 
+      if (data.manualRecoveryRequired || data.code === 'UNSAFE_PARTIAL_POOL_STATE') {
+        lpResult = { results: data.partialResults || [] };
+        (data.partialResults || []).forEach((r) => {
+          markPoolDone(r.allocationIndex, r);
+          if (r.bootstrap) markBootstrapDoneForPool(r.allocationIndex, r.bootstrap);
+        });
+        (data.unsafePoolEvents || []).forEach((event) => {
+          if (event.allocationIndex != null) {
+            markPoolFailed(event.allocationIndex, data.error);
+          }
+        });
+
+        document.getElementById('lpFailInfo').classList.remove('hidden');
+        document.getElementById('lpFailHeading').textContent =
+          'Automatic resume is unavailable.';
+        document.getElementById('lpFailSummary').textContent = data.error;
+
+        const lpFailCtr = document.getElementById('lpFailInfo').querySelector('.notification');
+        if (lpFailCtr) {
+          const prevB = lpFailCtr.querySelector('.error-banner');
+          if (prevB) prevB.remove();
+          renderStructuredError(lpFailCtr, data.error, categorizeError(data.error));
+        }
+
+        const successCount = (data.partialResults || []).length;
+        const totalCount = allocations.length;
+        document.getElementById('lpFailSucceededCount').innerHTML =
+          `<strong>${successCount}</strong> of ${totalCount} pool${totalCount === 1 ? '' : 's'} ` +
+          `have completed LP results in the journal. A later pool was created before its ` +
+          `completed position state was recorded, so retrying automatically could duplicate work.`;
+        document.getElementById('lpFailReassurance').innerHTML =
+          `<strong>Your assets are still recoverable by the launch wallet.</strong> ` +
+          `Use the sweep/recovery path to move remaining SOL, quote tokens, and LP NFTs back to ` +
+          `your destination wallet, then handle any already-created positions manually in Raydium.`;
+        document.getElementById('continueToTransferAfterFailBtnLabel').textContent =
+          'Skip to Transfer Assets';
+        btn.classList.add('hidden');
+        markLaunchActiveForRpcHealth(false);
+        return;
+      }
+
       // Partial: at least one allocation still couldn't be completed.
       // The data has the same shape as a fresh create-lp failure:
       // partialResults, failedAllocationIndex, failedPhase, bootstrapFailures.
@@ -17029,10 +17623,10 @@ bind('retryBootstrapsBtn', 'click', async () => {
         document.getElementById('lpFailReassurance').innerHTML =
           `<strong>Your assets are safe</strong> — they're still in the ephemeral wallet ` +
           `(SOL, any auto-swapped quote tokens, and the LP NFTs from pools that did succeed). ` +
-          `Click <strong>Resume launch</strong> to retry just the missing pools — already-` +
-          `created pools will be skipped. If retrying keeps failing, you can sweep the wallet ` +
-          `back to your destination as a last resort; the pools that succeeded above are ` +
-          `permanent on-chain.`;
+          `Click <strong>Resume launch</strong> to continue only if Trebuchet has enough ` +
+          `journaled state to skip completed pools safely. If the journal shows a pool was ` +
+          `created before a completed LP result was recorded, automatic resume will stop and ` +
+          `you should sweep the wallet or recover the existing LP positions manually.`;
         document.getElementById('continueToTransferAfterFailBtnLabel').textContent =
           'Skip to Transfer Assets';
       }
@@ -17062,7 +17656,7 @@ function prefillDestinationFromFunder() {
 
 
 // Vanity CA grind — pre-grinds the token mint address before token creation
-let vanityCAKeypairs = []; // [{ publicKey, secretKey, rarity, epochs, attempts }]
+let vanityCAKeypairs = []; // [{ publicKey, secretKey, rarity, epochs, attempts, target, prefix, suffix, mode }]
 let selectedVanityCA = null; // index into vanityCAKeypairs
 
 // ---- Vanity CA epoch tiers (authoritative from C binary) ----
@@ -17148,6 +17742,41 @@ const MATCH_COLORS = [
 let _keyDisplayTarget = '';
 let _lastKeyShown = '';
 
+function vanityCandidateTargetLabel(candidate) {
+  const prefix = candidate.prefix || (candidate.mode === 'prefix' ? candidate.target : null);
+  const suffix = candidate.suffix || (candidate.mode === 'suffix' ? candidate.target : null);
+  if (prefix && suffix) return `starts ${prefix} / ends ${suffix}`;
+  if (prefix) return `starts ${prefix}`;
+  if (suffix) return `ends ${suffix}`;
+  if (candidate.target) return candidate.target;
+  return candidate.rarity || '';
+}
+
+function isVanityBothMode(mode) {
+  return mode === 'both';
+}
+
+function applyVanityModeUi() {
+  const mode = document.getElementById('vanityCAMode')?.value || 'suffix';
+  const target = document.getElementById('vanityCATarget');
+  const endControl = document.getElementById('vanityCAEndControl');
+  const endTarget = document.getElementById('vanityCAEndTarget');
+  const btn = document.getElementById('grindCABtn');
+  const isBoth = isVanityBothMode(mode);
+  const isIdle = !btn || (btn.dataset.mode || 'grind') === 'grind';
+  if (target) {
+    target.disabled = !isIdle;
+    target.placeholder = isBoth ? 'start' : 'e.g. RATi';
+  }
+  if (endControl) {
+    endControl.classList.toggle('hidden', !isBoth);
+  }
+  if (endTarget) {
+    endTarget.disabled = !isBoth || !isIdle;
+    endTarget.placeholder = 'end';
+  }
+}
+
 function countMatchChars(key, target) {
   // Count how many distinct chars of target appear anywhere in key.
   if (!target || !key) return 0;
@@ -17217,6 +17846,7 @@ function setGrindButtonState(state) {
   const icon = btn.querySelector('i');
   const label = btn.querySelector('span:last-child');
   const target = document.getElementById('vanityCATarget');
+  const endTarget = document.getElementById('vanityCAEndTarget');
   const mode = document.getElementById('vanityCAMode');
 
   if (state === 'grind') {
@@ -17227,6 +17857,7 @@ function setGrindButtonState(state) {
     if (icon) icon.className = 'fas fa-star';
     if (label) label.textContent = 'Grind';
     if (target) target.disabled = false;
+    if (endTarget) endTarget.disabled = !isVanityBothMode(mode?.value || 'suffix');
     if (mode) mode.disabled = false;
   } else if (state === 'cancel') {
     btn.dataset.mode = 'cancel';
@@ -17241,6 +17872,7 @@ function setGrindButtonState(state) {
     // mismatch between the visible target and what's actually being
     // ground.
     if (target) target.disabled = true;
+    if (endTarget) endTarget.disabled = true;
     if (mode) mode.disabled = true;
   } else if (state === 'cancelling') {
     btn.dataset.mode = 'cancelling';
@@ -17249,8 +17881,44 @@ function setGrindButtonState(state) {
     btn.classList.add('is-danger', 'is-loading');
     if (label) label.textContent = 'Cancelling...';
     if (target) target.disabled = true;
+    if (endTarget) endTarget.disabled = true;
     if (mode) mode.disabled = true;
   }
+  if (state === 'grind') applyVanityModeUi();
+}
+
+bind('vanityCAMode', 'change', applyVanityModeUi);
+applyVanityModeUi();
+
+function getVanityRequestFromInputs() {
+  const mode = document.getElementById('vanityCAMode')?.value || 'suffix';
+  const startTarget = document.getElementById('vanityCATarget')?.value.trim() || '';
+  const endTarget = document.getElementById('vanityCAEndTarget')?.value.trim() || '';
+  if (mode === 'both') {
+    return {
+      mode,
+      prefix: startTarget,
+      suffix: endTarget,
+      target: startTarget && endTarget ? `${startTarget}...${endTarget}` : '',
+      highlightTarget: `${startTarget}${endTarget}`,
+    };
+  }
+  if (mode === 'prefix') {
+    return {
+      mode,
+      prefix: startTarget,
+      suffix: '',
+      target: startTarget,
+      highlightTarget: startTarget,
+    };
+  }
+  return {
+    mode,
+    prefix: '',
+    suffix: startTarget,
+    target: startTarget,
+    highlightTarget: startTarget,
+  };
 }
 
 bind('grindCABtn', 'click', async () => {
@@ -17282,8 +17950,12 @@ bind('grindCABtn', 'click', async () => {
   }
 
   // GRIND branch: standard new-grind flow.
-  const target = document.getElementById('vanityCATarget').value.trim();
-  if (!target) {
+  const vanityRequest = getVanityRequestFromInputs();
+  if (vanityRequest.mode === 'both' && (!vanityRequest.prefix || !vanityRequest.suffix)) {
+    log('Enter both start and end vanity targets.', 'warn');
+    return;
+  }
+  if (!vanityRequest.prefix && !vanityRequest.suffix) {
     log('Enter a vanity target first.', 'warn');
     return;
   }
@@ -17291,22 +17963,9 @@ bind('grindCABtn', 'click', async () => {
   await withRunState(async () => {
     setGrindButtonState('cancel');
     try {
-      const mode = document.getElementById('vanityCAMode').value;
-      const isSuffix = mode === 'suffix';
-
       // Show single active progress bar
       const progressEl = document.getElementById('vanityCAProgress');
       if (progressEl) progressEl.classList.remove('hidden');
-
-      // Hide any previously-displayed result card while the new grind
-      // runs. The card re-appears via renderVanityCAList from either the
-      // done handler (with the new CA's data) or the finally block
-      // (restoring the previous CA if cancel/error left selection
-      // intact). Avoids the confusing "old result + new progress bar
-      // visible at the same time" state, especially when the previous
-      // result was in the yellow warning state.
-      const resultEl = document.getElementById('vanityCAResult');
-      if (resultEl) resultEl.classList.add('hidden');
 
       // Ensure original bar is visible, remove any old epoch bars
       const barContainer = progressEl?.querySelector('.vanity-progress-bar');
@@ -17314,11 +17973,11 @@ bind('grindCABtn', 'click', async () => {
       const oldEpochBars = document.getElementById('vanityCAEpochBars');
       if (oldEpochBars) oldEpochBars.remove();
       setupGrindBar();
-      setupKeyDisplay(target);
+      setupKeyDisplay(vanityRequest.highlightTarget);
 
       const params = new URLSearchParams();
-      if (isSuffix) params.set('suffix', target);
-      else params.set('prefix', target);
+      if (vanityRequest.prefix) params.set('prefix', vanityRequest.prefix);
+      if (vanityRequest.suffix) params.set('suffix', vanityRequest.suffix);
       // Pass the session token as a query param — EventSource can't set
       // custom headers, so the SSE endpoint validates it inline.
       try {
@@ -17348,15 +18007,17 @@ bind('grindCABtn', 'click', async () => {
               epochs: data.wallet.epochs,
               attempts: data.wallet.attempts,
               seed: data.wallet.seed,
+              target: data.wallet.target || vanityRequest.target,
+              prefix: data.wallet.prefix || vanityRequest.prefix || null,
+              suffix: data.wallet.suffix || vanityRequest.suffix || null,
+              mode: data.wallet.mode || vanityRequest.mode,
+              persisted: data.wallet.persisted === true,
             };
-            // Replace any previous grind with this one and auto-select
-            // it. Without selectedVanityCA being set here, the launch
-            // flow at the "vanityCAKeypair" form-append site would
-            // silently skip the keypair and the pre-grind would be a
-            // no-op. Most-recent-successful-grind wins; the user can
-            // discard via the clear button on the result block.
-            vanityCAKeypairs = [entry];
-            selectedVanityCA = 0;
+            // Keep prior grinds as candidates and auto-select the new
+            // one. The launch flow reads selectedVanityCA at submit time,
+            // so the newest successful grind still wins by default while
+            // earlier CAs remain one click away.
+            addVanityCAEntry(entry);
             if (progressEl) progressEl.classList.add('hidden');
             renderVanityCAList();
             log('Vanity CA: ' + data.wallet.publicKey + ' (' + data.wallet.rarity + ', ' + data.wallet.attempts.toLocaleString() + ' attempts)', 'success');
@@ -17393,38 +18054,73 @@ bind('grindCABtn', 'click', async () => {
       if (epochBars) epochBars.remove();
     } finally {
       setGrindButtonState('grind');
-      // Re-render the result card after every grind exit path so it
-      // reflects the current state: the new CA on success (harmless
-      // double-call after the done handler), the previously-selected
-      // CA restored after cancel/error (if any), or stays hidden if no
-      // selection persists. Without this the card stays hidden after
-      // cancel even when there's a previous result the user expects
-      // to see again.
+      // Re-render after every exit path so the selected CA and candidate
+      // list stay in sync after success, cancellation, or failure.
       renderVanityCAList();
     }
   });
 });
 
-// Discard the active vanity CA (the result block's X button). Wipes
-// the array and the selection, then re-renders the block so it hides.
-// The user can then grind again from scratch. Uses the existing
-// clearVanityCAs helper defined further down so wipe logic lives in
-// one place.
+// Discard only the selected vanity CA. Other successful grinds stay available
+// as launch candidates until a full wallet/session reset calls clearVanityCAs().
 bind('clearVanityCAResultBtn', 'click', () => {
-  if (typeof clearVanityCAs === 'function') clearVanityCAs();
+  if (typeof discardSelectedVanityCA === 'function') discardSelectedVanityCA();
   log('Vanity CA discarded.', 'info');
 });
 
-// Render the active vanity CA into the result block in index.html.
-//
-// History: this used to be a multi-result list renderer, but the matching
-// list elements (vanityCAList, vanityCAListContainer) were never added to
-// the HTML — so the function ran no-ops every time and the user never saw
-// their grind result. The function now updates the single-result block
-// (vanityCAResult / vanityCAResultAddr / vanityCARarity) that DOES exist
-// in the HTML and was sitting unused. The "list" semantics are preserved
-// in the underlying array, but in practice we replace-on-success so the
-// array has at most one entry at a time.
+function addVanityCAEntry(entry, { select = true } = {}) {
+  const existingIdx = vanityCAKeypairs.findIndex((ca) => ca.publicKey === entry.publicKey);
+  if (existingIdx >= 0) {
+    vanityCAKeypairs[existingIdx] = { ...vanityCAKeypairs[existingIdx], ...entry };
+    if (select) selectedVanityCA = existingIdx;
+    return;
+  }
+  vanityCAKeypairs.push(entry);
+  if (select) selectedVanityCA = vanityCAKeypairs.length - 1;
+}
+
+function discardSelectedVanityCA() {
+  if (selectedVanityCA === null || !vanityCAKeypairs[selectedVanityCA]) return;
+  const removed = vanityCAKeypairs[selectedVanityCA];
+  const oldIdx = selectedVanityCA;
+  vanityCAKeypairs.splice(oldIdx, 1);
+  selectedVanityCA = vanityCAKeypairs.length
+    ? Math.min(oldIdx, vanityCAKeypairs.length - 1)
+    : null;
+  renderVanityCAList();
+  if (removed?.publicKey) {
+    fetch('/api/vanity-ca-candidates/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ publicKey: removed.publicKey }),
+    }).catch((err) => {
+      console.warn('Failed to remove saved Vanity CA:', err);
+    });
+  }
+}
+
+async function loadSavedVanityCAs() {
+  try {
+    const resp = await fetch('/api/vanity-ca-candidates');
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || `HTTP ${resp.status}`);
+    const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+    candidates.forEach((candidate) => {
+      if (candidate && candidate.publicKey && !candidate.decryptionFailed) {
+        addVanityCAEntry(candidate, { select: false });
+      }
+    });
+    if (selectedVanityCA === null && vanityCAKeypairs.length > 0) {
+      selectedVanityCA = vanityCAKeypairs.length - 1;
+    }
+    renderVanityCAList();
+  } catch (e) {
+    console.warn('Failed to load saved Vanity CAs:', e);
+  }
+}
+
+// Render the selected vanity CA and the optional candidate history. The launch
+// submit path uses selectedVanityCA, so the selected row here is authoritative.
 function renderVanityCAList() {
   const resultEl = document.getElementById('vanityCAResult');
   const addrEl = document.getElementById('vanityCAResultAddr');
@@ -17432,11 +18128,16 @@ function renderVanityCAList() {
   const metaEl = document.getElementById('vanityCAResultMeta');
   const iconEl = document.getElementById('vanityCAResultIcon');
   const headlineEl = document.getElementById('vanityCAResultHeadline');
+  const optionsEl = document.getElementById('vanityCAOptions');
   if (!resultEl) return;
 
   // No active CA → hide the block and we're done.
   if (selectedVanityCA === null || !vanityCAKeypairs[selectedVanityCA]) {
     resultEl.classList.add('hidden');
+    if (optionsEl) {
+      optionsEl.innerHTML = '';
+      optionsEl.classList.add('hidden');
+    }
     return;
   }
 
@@ -17460,9 +18161,11 @@ function renderVanityCAList() {
     rarityEl.textContent = ca.rarity;
   }
   if (metaEl) {
-    metaEl.textContent =
-      `${ca.attempts.toLocaleString()} attempts`
-      + (typeof ca.epochs === 'number' ? ` · ${ca.epochs.toFixed(1)}× epoch` : '');
+    metaEl.textContent = [
+      vanityCandidateTargetLabel(ca),
+      `${ca.attempts.toLocaleString()} attempts`,
+      typeof ca.epochs === 'number' ? `${ca.epochs.toFixed(1)}× epoch` : '',
+    ].filter(Boolean).join(' · ');
   }
 
   // The vanity CA is always usable — there is no pre-flight constraint
@@ -17477,6 +18180,30 @@ function renderVanityCAList() {
       + '<span class="has-text-grey">&mdash; will be used as the token mint address</span>';
   }
 
+  if (optionsEl) {
+    if (vanityCAKeypairs.length <= 1) {
+      optionsEl.innerHTML = '';
+      optionsEl.classList.add('hidden');
+    } else {
+      optionsEl.classList.remove('hidden');
+      optionsEl.innerHTML = vanityCAKeypairs.map((candidate, idx) => {
+        const selected = idx === selectedVanityCA;
+        const label = shortAddress(candidate.publicKey, 5, 5);
+        const targetLabel = vanityCandidateTargetLabel(candidate) || candidate.rarity;
+        return `<button type="button" class="button is-small vanity-ca-option ${selected ? 'is-primary' : 'is-light'}" data-vanity-ca-index="${idx}" title="${escapeAttr(candidate.publicKey)}">`
+          + `<span>${escapeHtml(label)}</span>`
+          + `<span class="has-text-grey ml-1">${escapeHtml(targetLabel)}</span>`
+          + `</button>`;
+      }).join('');
+      optionsEl.querySelectorAll('[data-vanity-ca-index]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          selectedVanityCA = Number(btn.dataset.vanityCaIndex);
+          renderVanityCAList();
+        });
+      });
+    }
+  }
+
   resultEl.classList.remove('hidden');
 }
 
@@ -17487,6 +18214,7 @@ function clearVanityCAs() {
   renderVanityCAList();
 }
 
+renderVanityCAList();
 // ===========================================================================
 // STEP 6: Transfer assets
 // ===========================================================================
@@ -18263,7 +18991,7 @@ async function runAirdropRetry() {
     log('Cannot retry airdrop: token info missing.', 'warning');
     return;
   }
-  if (!tempWallet || !tempWallet.secretKey) {
+  if (!tempWallet || !tempWallet.publicKey || (demoModeActive && !tempWallet.secretKey)) {
     log('Cannot retry airdrop: launch wallet key not available.', 'warning');
     return;
   }
@@ -18363,7 +19091,6 @@ function downloadFailedAirdropRecipientsCsv() {
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
 // ===========================================================================
 // Launch-journal recovery panel
 // ---------------------------------------------------------------------------
@@ -18571,7 +19298,7 @@ function canResumeLaunchJournal(journal, wallet) {
     journal.poolPlan?.targetMarketCapUsd &&
     Array.isArray(journal.poolPlan?.allocations) &&
     wallet &&
-    Array.isArray(wallet.secretKey) &&
+    wallet.hasSecretKey &&
     unsafeCreatedPoolEvents(journal).length === 0
   );
 }
@@ -18579,9 +19306,9 @@ function canResumeLaunchJournal(journal, wallet) {
 function prepareRecoveredSessionFromJournal(journal, wallet) {
   tempWallet = {
     publicKey: wallet.publicKey,
-    secretKey: wallet.secretKey,
-    secretKeyB58: wallet.secretKeyB58,
-    mnemonic: wallet.mnemonic,
+    ...(wallet.secretKey ? { secretKey: wallet.secretKey } : {}),
+    ...(wallet.secretKeyB58 ? { secretKeyB58: wallet.secretKeyB58 } : {}),
+    ...(wallet.mnemonic ? { mnemonic: wallet.mnemonic } : {}),
   };
   fundingWallet = null;
   fundingDetectionExhausted = false;
@@ -18662,6 +19389,19 @@ function prepareRecoveredSessionFromJournal(journal, wallet) {
   setStepSummary(5, count > 0 ? `${count} pool${count === 1 ? '' : 's'} recorded` : 'ready to resume');
 }
 
+async function revealPendingWalletSecret(publicKey) {
+  const resp = await fetch('/api/pending-wallets/reveal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ publicKey }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data.success || !data.wallet) {
+    throw new Error(data.error || `Reveal failed with HTTP ${resp.status}`);
+  }
+  return data.wallet;
+}
+
 async function resumeLaunchJournal(journal, wallet, btn) {
   const completedLp = journalHasCompletedLp(journal);
   const actionLabel = completedLp ? 'Continue transfer' : 'Resume launch';
@@ -18731,7 +19471,7 @@ function buildLaunchJournalRow(journal, wallet) {
   const canResume = canResumeLaunchJournal(journal, wallet);
   const resumeLabel = journalHasCompletedLp(journal) ? 'Continue transfer' : 'Resume launch';
   const resumeHelp = !canResume && journal.token?.mint && journal.poolPlan?.allocations
-    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafeCreatedPoolEvents(journal).length > 0 ? ': unsafe partial pool state recorded' : ': matching recoverable wallet is missing'}.</div>`
+    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.secretPinLocked ? ': unlock the Recovery PIN first' : wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafeCreatedPoolEvents(journal).length > 0 ? ': unsafe partial pool state recorded' : ': matching recoverable wallet is missing'}.</div>`
     : '';
 
   // Recovery material from the matching wallet, folded into this card so the
@@ -18740,8 +19480,8 @@ function buildLaunchJournalRow(journal, wallet) {
   // secret decrypted; secretIsMnemonic picks the recovery-phrase vs raw-key
   // wording. When a wallet is attached but can't be decrypted we show a note
   // instead of a copy button.
-  const hasSecret = !!(wallet && !wallet.decryptionFailed && (wallet.mnemonic || wallet.secretKeyB58));
-  const secretIsMnemonic = hasSecret && !!wallet.mnemonic;
+  const hasSecret = !!(wallet && !wallet.decryptionFailed && (wallet.hasMnemonic || wallet.hasSecretKey));
+  const secretIsMnemonic = hasSecret && !!wallet.hasMnemonic;
   const recoverBtnHtml = hasSecret ? `
         <div class="control">
           <button class="button is-small is-info" data-action="copy-recovery">
@@ -18749,13 +19489,25 @@ function buildLaunchJournalRow(journal, wallet) {
             <span>${secretIsMnemonic ? 'Copy recovery phrase' : 'Copy secret key'}</span>
           </button>
         </div>` : '';
-  const decryptNoteHtml = (wallet && wallet.decryptionFailed) ? `
+  const pinLockedNoteHtml = (wallet && wallet.secretPinLocked) ? `
+    <div class="notification is-info is-light is-size-7 py-2 px-3 my-2">
+      The recoverable wallet for this launch is locked behind your Recovery
+      PIN. Unlock it to resume, copy the recovery phrase, or use the wallet.
+    </div>` : '';
+  const decryptNoteHtml = (wallet && wallet.decryptionFailed && !wallet.secretPinLocked) ? `
     <div class="notification is-danger is-light is-size-7 py-2 px-3 my-2">
       The recoverable wallet for this launch can't be decrypted — the OS
       keychain key has likely changed (file copied to another account or
       machine, or the keychain was reset). If you backed up the recovery
       phrase elsewhere, use that.
     </div>` : '';
+  const unlockPinBtnHtml = (wallet && wallet.secretPinLocked) ? `
+        <div class="control">
+          <button class="button is-small is-info" data-action="unlock-pin">
+            <span class="icon is-small"><i class="fas fa-unlock"></i></span>
+            <span>Unlock PIN</span>
+          </button>
+        </div>` : '';
   // The removal action also discards the wallet secret when one is attached,
   // so the label and confirmation make that consequence explicit.
   const removeLabel = hasSecret ? 'Dismiss &amp; discard wallet' : 'Dismiss journal';
@@ -18772,6 +19524,7 @@ function buildLaunchJournalRow(journal, wallet) {
     <div class="notification is-warning is-light is-size-7 py-2 px-3 my-2">
       ${escapeHtml(launchJournalRecoveryText(journal))}
     </div>
+    ${pinLockedNoteHtml}
     ${decryptNoteHtml}
     ${launchJournalPoolRows(journal)}
     ${launchJournalTxRows(journal)}
@@ -18794,6 +19547,7 @@ function buildLaunchJournalRow(journal, wallet) {
         </div>
       ` : ''}
       ${recoverBtnHtml}
+      ${unlockPinBtnHtml}
       ${journal.token?.mint ? `
         <div class="control">
           <button class="button is-small" data-action="copy-token">
@@ -18832,10 +19586,17 @@ function buildLaunchJournalRow(journal, wallet) {
   wrap.querySelector('[data-action="copy-wallet"]').addEventListener('click', async () => {
     await copyText(journal.walletPublicKey, 'Launch wallet public key');
   });
+  wrap.querySelector('[data-action="unlock-pin"]')?.addEventListener('click', async () => {
+    if (typeof showSecretPinModal === 'function') {
+      await showSecretPinModal('unlock');
+      await loadLaunchJournals();
+      if (typeof loadPendingWallets === 'function') await loadPendingWallets();
+    }
+  });
 
   // Use-wallet button: load this wallet as active tempWallet for a fresh launch
   wrap.querySelector('[data-action="use-wallet"]')?.addEventListener('click', async () => {
-    if (!wallet || !wallet.secretKey) return;
+    if (!wallet || !wallet.hasSecretKey) return;
     if (tempWallet) {
       const ok = await confirmDialog({
         title: 'Switch wallet?',
@@ -18851,18 +19612,17 @@ function buildLaunchJournalRow(journal, wallet) {
     createdTokenInfo = null;
     lpResult = null;
     fundingRequirement = { solLamports: 0, byQuote: {}, autoSwapPlan: [] };
-    if (typeof clearVanityCAs === 'function') clearVanityCAs();
 
     tempWallet = {
       publicKey: wallet.publicKey,
-      secretKey: wallet.secretKey,
-      secretKeyB58: wallet.secretKeyB58,
-      mnemonic: wallet.mnemonic || null,
     };
 
     document.getElementById('walletInfo').classList.remove('hidden');
     document.getElementById('walletAddress').value = wallet.publicKey;
-    document.getElementById('qrCode').src = '';
+    setWalletQrImages(null);
+    ensureWalletQrCode(tempWallet).catch((e) => {
+      log(`Couldn't render wallet QR: ${e.message}`, 'warning');
+    });
     document.getElementById('privateKeyContainer').classList.add('hidden');
     document.getElementById('tokenCreatedInfo').classList.add('hidden');
     document.getElementById('createTokenBtn').classList.remove('hidden');
@@ -18888,12 +19648,17 @@ function buildLaunchJournalRow(journal, wallet) {
     if (typeof updateCancelButtonState === 'function') updateCancelButtonState();
   });
   wrap.querySelector('[data-action="copy-recovery"]')?.addEventListener('click', async () => {
-    const text = wallet && (wallet.mnemonic || wallet.secretKeyB58);
-    if (!text) {
-      log(`No recovery secret available for ${walletShort}`, 'warning');
-      return;
+    try {
+      const revealed = await revealPendingWalletSecret(wallet.publicKey);
+      const text = revealed.mnemonic || revealed.secretKeyB58;
+      if (!text) {
+        log(`No recovery secret available for ${walletShort}`, 'warning');
+        return;
+      }
+      await copyText(text, revealed.mnemonic ? 'Recovery phrase' : 'Secret key');
+    } catch (e) {
+      log(`Couldn't reveal recovery secret for ${walletShort}: ${e.message}`, 'warning');
     }
-    await copyText(text, wallet.mnemonic ? 'Recovery phrase' : 'Secret key');
   });
   wrap.querySelector('[data-action="resume"]')?.addEventListener('click', async (event) => {
     await resumeLaunchJournal(journal, wallet, event.currentTarget);
@@ -18942,7 +19707,6 @@ function buildLaunchJournalRow(journal, wallet) {
 
   return wrap;
 }
-
 // ===========================================================================
 // Pending-wallet recovery panel
 // ---------------------------------------------------------------------------
@@ -19032,6 +19796,43 @@ function buildPendingWalletRow(wallet) {
   const pubShort = `${wallet.publicKey.slice(0, 6)}…${wallet.publicKey.slice(-6)}`;
   const ageStr = formatAge(wallet.createdAt);
 
+  // Locked-PIN branch: the file is fine, but the in-memory PIN key has not
+  // been unlocked yet. Keep this visually softer than real decryption failure.
+  if (wallet.secretPinLocked) {
+    wrap.innerHTML = `
+      <div class="mb-2">
+        <strong>Public key:</strong>
+        <span class="is-family-monospace">${pubShort}</span>
+        &nbsp;<span class="has-text-grey">(${ageStr})</span>
+      </div>
+      <div class="notification is-info is-light is-size-7 py-2 px-3 mb-2">
+        <strong>Recovery PIN locked.</strong> Unlock it to reveal this wallet's recovery phrase or secret key.
+      </div>
+      <div class="field is-grouped">
+        <div class="control">
+          <button class="button is-small is-info" data-action="unlock-pin">
+            <span class="icon is-small"><i class="fas fa-unlock"></i></span>
+            <span>Unlock PIN</span>
+          </button>
+        </div>
+        <div class="control">
+          <button class="button is-small" data-action="copy-pubkey">
+            <span class="icon is-small"><i class="fas fa-copy"></i></span>
+            <span>Copy public key</span>
+          </button>
+        </div>
+        <div class="control">
+          <button class="button is-small is-danger is-light" data-action="dismiss">
+            <span class="icon is-small"><i class="fas fa-trash"></i></span>
+            <span>Discard</span>
+          </button>
+        </div>
+      </div>
+    `;
+    wireRowButtons(wrap, wallet, pubShort);
+    return wrap;
+  }
+
   // Decryption-failed branch: the file is on disk but we can't read the
   // secret material. Most common cause is the OS keychain has rotated
   // (e.g. file was copied from another machine, user account changed).
@@ -19066,14 +19867,14 @@ function buildPendingWalletRow(wallet) {
         </div>
       </div>
     `;
-    wireRowButtons(wrap, wallet, pubShort, /*hasMnemonic=*/false);
+    wireRowButtons(wrap, wallet, pubShort);
     return wrap;
   }
 
   // Prefer the recovery phrase if this wallet was generated with one.
   // Older cached entries from before mnemonic support fall back to the
   // base58 secret key.
-  const hasMnemonic = !!wallet.mnemonic;
+  const hasMnemonic = !!wallet.hasMnemonic;
   const copyLabel = hasMnemonic ? 'Copy recovery phrase' : 'Copy secret key';
   const copyIcon = hasMnemonic ? 'fa-list-ol' : 'fa-key';
 
@@ -19104,13 +19905,13 @@ function buildPendingWalletRow(wallet) {
       </div>
     </div>
   `;
-  wireRowButtons(wrap, wallet, pubShort, hasMnemonic);
+  wireRowButtons(wrap, wallet, pubShort, { hasMnemonic });
   return wrap;
 }
 
 // Wire the per-row buttons. Extracted so both the normal and the
 // decryption-failed render paths share the same handler logic.
-function wireRowButtons(wrap, wallet, pubShort, hasMnemonic) {
+function wireRowButtons(wrap, wallet, pubShort, { hasMnemonic = false } = {}) {
   // Centralised clipboard helper so we don't duplicate the try/catch
   // every time. navigator.clipboard.writeText can throw in non-secure
   // contexts (older Electron, http://), if the page doesn't have focus,
@@ -19134,15 +19935,28 @@ function wireRowButtons(wrap, wallet, pubShort, hasMnemonic) {
   const copySecretBtn = wrap.querySelector('[data-action="copy-secret"]');
   if (copySecretBtn) {
     copySecretBtn.addEventListener('click', async () => {
-      const text = hasMnemonic ? wallet.mnemonic : wallet.secretKeyB58;
-      if (!text) {
-        log(`No secret available for ${pubShort}`, 'warning');
-        return;
+      try {
+        const revealed = await revealPendingWalletSecret(wallet.publicKey);
+        const text = hasMnemonic ? revealed.mnemonic : revealed.secretKeyB58;
+        if (!text) {
+          log(`No secret available for ${pubShort}`, 'warning');
+          return;
+        }
+        const what = hasMnemonic ? 'Recovery phrase' : 'Secret key';
+        await copyToClipboard(text, `${what} for ${pubShort}`);
+      } catch (e) {
+        log(`Couldn't reveal recovery secret for ${pubShort}: ${e.message}`, 'warning');
       }
-      const what = hasMnemonic ? 'Recovery phrase' : 'Secret key';
-      await copyToClipboard(text, `${what} for ${pubShort}`);
     });
   }
+
+  wrap.querySelector('[data-action="unlock-pin"]')?.addEventListener('click', async () => {
+    if (typeof showSecretPinModal === 'function') {
+      await showSecretPinModal('unlock');
+      await loadPendingWallets();
+      if (typeof loadLaunchJournals === 'function') await loadLaunchJournals();
+    }
+  });
 
   wrap.querySelector('[data-action="copy-pubkey"]').addEventListener('click', async () => {
     await copyToClipboard(wallet.publicKey, `Public key ${pubShort}`);
@@ -19184,15 +19998,12 @@ function formatAge(isoString) {
   if (seconds < 86400 * 7) return `${Math.floor(seconds / 86400)} days ago`;
   return new Date(isoString).toLocaleDateString();
 }
-
 // ===========================================================================
 // Initial state
 // ===========================================================================
 log('Trebuchet is ready. Click "Generate Wallet" to begin.');
 loadRpcConfig();
 startRpcHealthPolling();
-loadLaunchJournals();
-loadPendingWallets();
 loadFeeTiers();
 bindStepHeaders();
 updateCancelButtonState();
@@ -19273,6 +20084,7 @@ window.addEventListener('beforeunload', (e) => {
 const _startupGates = {
   splash: true,
   disclaimer: true,
+  secretPin: true,
 };
 let _startupTriggerFired = false;
 
@@ -19287,7 +20099,7 @@ function _releaseStartupGate(name) {
 
 function _evaluateStartupGates() {
   if (_startupTriggerFired) return;
-  if (!_startupGates.splash || !_startupGates.disclaimer) return;
+  if (!_startupGates.splash || !_startupGates.disclaimer || !_startupGates.secretPin) return;
   _startupTriggerFired = true;
   // Fire-and-forget. The server endpoint is local so this should
   // never fail in practice; if it somehow does, the user can still
@@ -19407,6 +20219,243 @@ function setupDisclaimer() {
   }
 }
 setupDisclaimer();
+
+// ---------------------------------------------------------------------------
+// Recovery PIN gate
+// ---------------------------------------------------------------------------
+//
+// Saved launch wallets and Vanity CAs are encrypted behind a 4-digit Recovery
+// PIN. On first run we require setup before any new real launch can persist
+// secrets; on later launches we require unlock before recovery panels and
+// saved Vanity CAs are loaded.
+let _secretPinStatus = null;
+
+function secretPinEls() {
+  return {
+    modal: document.getElementById('secretPinModal'),
+    title: document.getElementById('secretPinTitle'),
+    description: document.getElementById('secretPinDescription'),
+    input: document.getElementById('secretPinInput'),
+    confirmField: document.getElementById('secretPinConfirmField'),
+    confirmInput: document.getElementById('secretPinConfirmInput'),
+    submitBtn: document.getElementById('secretPinSubmitBtn'),
+    statusLine: document.getElementById('secretPinModalStatus'),
+    statusText: document.getElementById('secretPinStatusText'),
+    unlockBtn: document.getElementById('secretPinUnlockBtn'),
+    lockBtn: document.getElementById('secretPinLockBtn'),
+  };
+}
+
+function normalizePinField(input) {
+  if (!input) return '';
+  input.value = input.value.replace(/\D/g, '').slice(0, 4);
+  return input.value;
+}
+
+function waitForModalInactive(modal) {
+  if (!modal || !modal.classList.contains('is-active')) return Promise.resolve();
+  return new Promise((resolve) => {
+    const observer = new MutationObserver(() => {
+      if (!modal.classList.contains('is-active')) {
+        observer.disconnect();
+        resolve();
+      }
+    });
+    observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+  });
+}
+
+async function fetchSecretPinStatus() {
+  const resp = await fetch('/api/secret-pin/status');
+  const data = await resp.json();
+  if (!resp.ok || !data.success) throw new Error(data.error || 'Could not read Recovery PIN status');
+  _secretPinStatus = data.status || { configured: false, unlocked: false, locked: false };
+  refreshSecretPinUi(_secretPinStatus);
+  return _secretPinStatus;
+}
+
+function refreshSecretPinUi(status = _secretPinStatus) {
+  const { statusText, unlockBtn, lockBtn } = secretPinEls();
+  const configured = !!status?.configured;
+  const unlocked = !!status?.unlocked;
+  const locked = !!status?.locked;
+  const protectionLabel = status?.deviceSecretProtected
+    ? 'device-bound'
+    : 'local fallback';
+
+  if (statusText) {
+    statusText.textContent = !configured
+      ? 'PIN not set'
+      : (unlocked
+        ? `Unlocked for this session (${protectionLabel})`
+        : (locked ? `Locked (${protectionLabel})` : `Configured (${protectionLabel})`));
+  }
+  if (unlockBtn) {
+    unlockBtn.style.display = unlocked ? 'none' : '';
+    const label = unlockBtn.querySelector('span:last-child');
+    if (label) label.textContent = configured ? 'Unlock' : 'Set PIN';
+  }
+  if (lockBtn) {
+    lockBtn.disabled = !unlocked;
+    lockBtn.style.display = configured ? '' : 'none';
+  }
+}
+
+function loadSecretDependentStartupState() {
+  loadLaunchJournals();
+  loadPendingWallets();
+  if (typeof loadSavedVanityCAs === 'function') {
+    loadSavedVanityCAs();
+  }
+}
+
+async function showSecretPinModal(mode) {
+  const els = secretPinEls();
+  if (!els.modal || !els.input || !els.submitBtn || !els.statusLine) {
+    _releaseStartupGate('secretPin');
+    return Promise.resolve(false);
+  }
+
+  await waitForModalInactive(document.getElementById('disclaimerModal'));
+
+  const setupMode = mode === 'setup';
+  _gateStartup('secretPin');
+  els.modal.classList.add('is-active');
+  if (els.title) els.title.textContent = setupMode ? 'Set Recovery PIN' : 'Unlock Recovery PIN';
+  if (els.description) {
+    els.description.textContent = setupMode
+      ? 'Choose a 4-digit PIN. Trebuchet combines it with this device to encrypt launch wallets and saved Vanity CAs.'
+      : 'Enter your 4-digit PIN on this device to unlock saved launch wallets and Vanity CAs.';
+  }
+  if (els.confirmField) els.confirmField.classList.toggle('hidden', !setupMode);
+  if (els.submitBtn) {
+    const label = els.submitBtn.querySelector('span:last-child');
+    if (label) label.textContent = setupMode ? 'Set PIN' : 'Unlock';
+  }
+  els.statusLine.textContent = '';
+  els.statusLine.className = 'help secret-pin-status-line';
+  els.input.value = '';
+  if (els.confirmInput) els.confirmInput.value = '';
+  setTimeout(() => els.input.focus(), 0);
+
+  return new Promise((resolve) => {
+    let submitting = false;
+
+    const setStatus = (message, kind = '') => {
+      els.statusLine.textContent = message || '';
+      els.statusLine.className = 'help secret-pin-status-line' + (kind ? ` ${kind}` : '');
+    };
+
+    const finish = async (status) => {
+      _secretPinStatus = status || await fetchSecretPinStatus();
+      refreshSecretPinUi(_secretPinStatus);
+      els.modal.classList.remove('is-active');
+      _releaseStartupGate('secretPin');
+      loadSecretDependentStartupState();
+      resolve(true);
+    };
+
+    const submit = async () => {
+      if (submitting) return;
+      const pin = normalizePinField(els.input);
+      const confirm = normalizePinField(els.confirmInput);
+      if (pin.length !== 4) {
+        setStatus('Enter exactly 4 digits.', 'is-danger');
+        return;
+      }
+      if (setupMode && pin !== confirm) {
+        setStatus('PINs do not match.', 'is-danger');
+        return;
+      }
+
+      submitting = true;
+      els.submitBtn.disabled = true;
+      setStatus(setupMode ? 'Setting PIN...' : 'Unlocking...', 'is-info');
+      try {
+        const resp = await fetch(setupMode ? '/api/secret-pin/setup' : '/api/secret-pin/unlock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success) {
+          throw new Error(data.error || `PIN request failed with HTTP ${resp.status}`);
+        }
+        await finish(data.status);
+      } catch (e) {
+        setStatus(e.message || 'PIN request failed.', 'is-danger');
+        els.input.value = '';
+        if (els.confirmInput) els.confirmInput.value = '';
+        els.input.focus();
+      } finally {
+        submitting = false;
+        els.submitBtn.disabled = false;
+      }
+    };
+
+    els.input.oninput = () => normalizePinField(els.input);
+    if (els.confirmInput) els.confirmInput.oninput = () => normalizePinField(els.confirmInput);
+    els.input.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        if (setupMode && els.confirmInput && normalizePinField(els.input).length === 4) {
+          els.confirmInput.focus();
+        } else {
+          submit();
+        }
+      }
+    };
+    if (els.confirmInput) {
+      els.confirmInput.onkeydown = (e) => {
+        if (e.key === 'Enter') submit();
+      };
+    }
+    els.submitBtn.onclick = submit;
+  });
+}
+
+async function setupSecretPinGate() {
+  const els = secretPinEls();
+  if (els.unlockBtn) {
+    els.unlockBtn.onclick = async () => {
+      const status = await fetchSecretPinStatus().catch(() => _secretPinStatus);
+      await showSecretPinModal(status?.configured ? 'unlock' : 'setup');
+    };
+  }
+  if (els.lockBtn) {
+    els.lockBtn.onclick = async () => {
+      try {
+        const resp = await fetch('/api/secret-pin/lock', { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success) throw new Error(data.error || 'Could not lock Recovery PIN');
+        _secretPinStatus = data.status;
+        refreshSecretPinUi(_secretPinStatus);
+        await showSecretPinModal('unlock');
+      } catch (e) {
+        log(`Could not lock Recovery PIN: ${e.message}`, 'warning');
+      }
+    };
+  }
+
+  _gateStartup('secretPin');
+  try {
+    const status = await fetchSecretPinStatus();
+    if (!status.configured) {
+      return showSecretPinModal('setup');
+    }
+    if (status.locked || !status.unlocked) {
+      return showSecretPinModal('unlock');
+    }
+    _releaseStartupGate('secretPin');
+    loadSecretDependentStartupState();
+    return true;
+  } catch (e) {
+    console.warn('Recovery PIN status unavailable:', e);
+    refreshSecretPinUi({ configured: false, unlocked: false, locked: false });
+    _releaseStartupGate('secretPin');
+    loadSecretDependentStartupState();
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Universal modal close affordances
@@ -19681,19 +20730,61 @@ setupSplashScreen();
 // ===========================================================================
 // User preferences (renderer side)
 // ---------------------------------------------------------------------------
-// The medieval gauntlet cursor theme and the 3D coin token preview are
-// always-on features — not user-toggleable. We apply the cursor theme
-// unconditionally here; the coin preview is gated by coinPreviewEnabled,
-// which defaults to true. (No settings UI and no persisted pref for either.)
+// The medieval gauntlet cursor theme is opt-in. It is fun as flavor, but
+// custom cursor images bypass OS accessibility sizing/contrast and can make
+// text entry feel imprecise, so fresh installs keep the native cursor.
 // ===========================================================================
 (function setupAppearance() {
-  // Cursor theme: always on.
-  document.body.classList.add('medieval-cursor');
+  const toggle = document.getElementById('medievalCursorToggle');
+
+  function applyCursorPreference(enabled) {
+    document.body.classList.toggle('medieval-cursor', enabled);
+    if (!enabled) document.body.classList.remove('cursor-clenched');
+    if (toggle) toggle.checked = enabled;
+  }
+
+  // Old builds wrote medievalCursor:true into userPrefs.json as part of the
+  // default-shaped prefs object even when the user only changed an unrelated
+  // setting. Require the new opt-in marker too so those migrated files open
+  // with the quieter native cursor.
+  function cursorEnabledFromPrefs(prefs) {
+    return !!(prefs && prefs.medievalCursor === true && prefs.medievalCursorOptIn === true);
+  }
+
+  applyCursorPreference(false);
+
+  fetch('/api/user-prefs')
+    .then((r) => r.json())
+    .then((data) => {
+      applyCursorPreference(cursorEnabledFromPrefs(data && data.prefs));
+    })
+    .catch((err) => {
+      console.warn('Failed to read cursor preference:', err);
+      applyCursorPreference(false);
+    });
+
+  if (toggle) {
+    toggle.addEventListener('change', () => {
+      const enabled = toggle.checked;
+      applyCursorPreference(enabled);
+      fetch('/api/user-prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          medievalCursor: enabled,
+          medievalCursorOptIn: enabled,
+        }),
+      }).catch((err) => {
+        console.warn('Failed to persist cursor preference:', err);
+      });
+    });
+  }
 
   // Global mousedown clench: a click ANYWHERE adds .cursor-clenched so the
   // gauntlet shows the fist even over non-interactive space, then relaxes on
   // release. Listeners are passive — we never preventDefault.
   document.addEventListener('mousedown', () => {
+    if (!document.body.classList.contains('medieval-cursor')) return;
     document.body.classList.add('cursor-clenched');
   }, { passive: true });
   document.addEventListener('mouseup', () => {
@@ -20093,6 +21184,7 @@ function syncDemoChrome() {
 function applyVanityAvailabilityUi(vanity) {
   const available = vanity && vanity.available;
   const target = document.getElementById('vanityCATarget');
+  const endTarget = document.getElementById('vanityCAEndTarget');
   const mode = document.getElementById('vanityCAMode');
   const btn = document.getElementById('grindCABtn');
   if (available) {
@@ -20100,6 +21192,7 @@ function applyVanityAvailabilityUi(vanity) {
     // and a later status check showed the feature came back). Rare but
     // cheap to handle.
     if (target) { target.disabled = false; target.title = ''; }
+    if (endTarget) { endTarget.disabled = false; endTarget.title = ''; }
     if (mode) { mode.disabled = false; }
     if (btn) { btn.disabled = false; btn.title = ''; }
     const note = document.getElementById('vanityCAUnavailableNote');
@@ -20110,6 +21203,7 @@ function applyVanityAvailabilityUi(vanity) {
   // why the button is dead. Reason comes from the server when available.
   const reason = (vanity && vanity.reason) || 'vanity address generation is not available in this build';
   if (target) { target.disabled = true; target.title = reason; }
+  if (endTarget) { endTarget.disabled = true; endTarget.title = reason; }
   if (mode) { mode.disabled = true; }
   if (btn) { btn.disabled = true; btn.title = reason; }
   // Insert a help line below the existing description, so the user sees
@@ -20136,15 +21230,12 @@ function applyVanityAvailabilityUi(vanity) {
   }
 }
 
-// Final gate evaluation. Both setupDisclaimer() and setupSplashScreen()
-// have run by this point. If either gated itself (showed a modal or
-// played the splash), the gate is currently false and this call is a
-// no-op — the trigger will fire later when the user dismisses
-// whichever is still blocking. If NEITHER gated (returning user +
-// splash element missing), both gates are still default-true and this
-// is the only place the trigger ever fires.
-_evaluateStartupGates();
+setupSecretPinGate();
 
+// Final gate evaluation. setupDisclaimer(), setupSplashScreen(), and the
+// Recovery PIN gate have run by this point. If any of them gated itself,
+// this call is a no-op; the trigger will fire when the last blocker clears.
+_evaluateStartupGates();
 // audio.js — sound effects and looping background music
 //
 // All sound here is built on plain HTMLAudioElement. There is deliberately NO
@@ -20222,10 +21313,10 @@ _evaluateStartupGates();
   const MUSIC_FADE_MS = 1500;   // fade-in (and fade-out on toggle/hide)
 
   // ---- State -------------------------------------------------------------
-  // Preference flags. Default ON; we only flip them off when the persisted
-  // value is explicitly false (mirrors how the intro-video pref is read).
+  // Preference flags. Sound effects default on. Background music defaults off
+  // and only starts when the persisted value is explicitly true.
   let sfxEnabled = true;
-  let musicEnabled = true;
+  let musicEnabled = false;
 
   // name -> { pool: [HTMLAudioElement], index: roundRobinCursor }
   const sfxBank = {};
@@ -20467,16 +21558,15 @@ _evaluateStartupGates();
   }
 
   // ---- Preference wiring -------------------------------------------------
-  // Read persisted prefs once on load. Default-on: a value is only treated as
-  // off when it's explicitly false. On any read error we keep the defaults,
-  // matching the rest of the renderer's "fail toward the nice behaviour" style.
+  // Read persisted prefs once on load. On any read error we keep the quiet
+  // music default while leaving sound effects on.
   function loadPrefs() {
     fetch('/api/user-prefs')
       .then((r) => r.json())
       .then((data) => {
         if (data && data.prefs) {
           sfxEnabled = data.prefs.playSoundEffects !== false;
-          musicEnabled = data.prefs.playBackgroundMusic !== false;
+          musicEnabled = data.prefs.playBackgroundMusic === true;
         }
         const sfxToggle = document.getElementById('soundEffectsToggle');
         if (sfxToggle) sfxToggle.checked = sfxEnabled;
@@ -20571,8 +21661,8 @@ _evaluateStartupGates();
   watchDetailsPanels();
   watchStepCards();
   watchLaunchSuccessModal();
-  // Start music as early as possible. In Electron this begins immediately,
-  // under the first startup dialog; in a browser it's a no-op until a gesture.
+  // If the loaded preference allows music, loadPrefs() starts it. This early
+  // call stays harmless because musicEnabled defaults to false until then.
   tryStartMusic();
   loadPrefs();
   wireSettingsToggles();
