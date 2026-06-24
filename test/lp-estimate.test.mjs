@@ -220,6 +220,31 @@ test('custom-mode bootstrap — uses supplyPercent × targetMarketCapUsd', async
   assert.ok(targetWhole > 1000 && targetWhole < 1300, `targetWhole ~1150, got ${targetWhole}`);
 });
 
+test('custom-mode bootstrap without targetMarketCapUsd - refuses rather than under-budgeting', async () => {
+  lpEstimate.setPriceOracleForTests(makePriceOracle({
+    [WSOL_MINT]: 150,
+    [USDC_MINT]: 1,
+  }));
+  lpEstimate.setRouteDiscoveryForTests(makeRouteDiscovery(1));
+
+  // A custom bootstrap with real launched-side supply cannot be sized without a
+  // target market cap. The estimator must reject so the user fixes it up front,
+  // rather than returning a $1-minimal-budget estimate that under-funds the
+  // launch and surfaces a confusing "insufficient funds" at deposit time.
+  await assert.rejects(
+    () => lpEstimate.estimateRequiredFunding({
+      allocations: [{
+        quoteToken: 'USDC',
+        distribution: [{ sharePercent: 100 }],
+        bootstrap: { mode: 'custom', supplyPercent: 10 },
+        ladder: { mode: 'off' },
+      }],
+      // targetMarketCapUsd intentionally omitted
+    }),
+    /target market cap/i,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Table: safety buffer is applied to final total
 // ---------------------------------------------------------------------------

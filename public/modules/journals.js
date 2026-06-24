@@ -86,14 +86,21 @@ function launchJournalStageLabel(journal) {
     support_open_recovered: 'Support position recovered',
     support_open_failed: 'Support position failed',
     bootstrap_open_done: 'Bootstrap opened',
+    bootstrap_open_recovered: 'Bootstrap recovered',
     main_lock_done: 'LP position locked',
+    main_lock_recovered: 'LP position lock recovered',
     main_lock_failed: 'LP position lock failed',
     ladder_lock_done: 'Ladder position locked',
+    ladder_lock_recovered: 'Ladder position lock recovered',
     ladder_lock_failed: 'Ladder position lock failed',
+    support_lock_done: 'Support position locked',
+    support_lock_recovered: 'Support position lock recovered',
     bootstrap_lock_done: 'Bootstrap locked',
+    bootstrap_lock_recovered: 'Bootstrap lock recovered',
     bootstrap_lock_failed: 'Bootstrap lock failed',
     phase3_done: 'Lock phase completed',
     main_transfer_done: 'Fee Key transferred',
+    main_transfer_recovered: 'Fee Key transfer recovered',
     main_transfer_failed: 'Fee Key transfer failed',
     phase4_done: 'Fee Key transfer phase completed',
     bootstrap_failed: 'Bootstrap failed',
@@ -130,6 +137,9 @@ function launchJournalRecoveryText(journal) {
   }
   if (journal.lp?.partialResults?.length > 0) {
     return 'Some pool work landed on-chain before the launch stopped. Created pools are permanent; the launch wallet controls any unswept tokens and LP NFTs.';
+  }
+  if (journal.token?.mint && journal.token.mintAuthorityRenounced !== true && !journalHasCompletedLp(journal)) {
+    return 'The token mint exists, but creating it didn\u2019t finish \u2014 some of metadata, supply, or authority-renounce didn\u2019t land. Use "Finish token creation" to complete only those steps for this mint; it will not create a new token.';
   }
   if (journal.token?.mint) {
     return 'The token mint was recorded. If the launch stopped before pools or transfer, the minted supply should still be controlled by the launch wallet.';
@@ -205,6 +215,19 @@ function unsafeCreatedPoolEvents(journal) {
     (event) =>
       event.stage === 'pool_create_done' &&
       !completedAllocations.has(event.allocationIndex),
+  );
+}
+
+function canFinishTokenJournal(journal) {
+  // The mint exists but its mint authority was never renounced: token creation
+  // stopped after the mint was created. Offer to finish it in place rather than
+  // mint a brand-new token (which would waste a vanity address). A journal that
+  // has moved on to LP already has its mint authority renounced, so this
+  // naturally excludes LP-stage entries.
+  return !!(
+    journal.token?.mint &&
+    journal.token.mintAuthorityRenounced !== true &&
+    !journalHasCompletedLp(journal)
   );
 }
 
@@ -386,6 +409,7 @@ function buildLaunchJournalRow(journal, wallet) {
     ? `<div class="notification is-danger is-light is-size-7 py-2 px-3 my-2">${escapeHtml(journal.error)}</div>`
     : '';
   const canResume = canResumeLaunchJournal(journal, wallet);
+  const canFinish = canFinishTokenJournal(journal);
   const resumeLabel = journalHasCompletedLp(journal) ? 'Continue transfer' : 'Resume launch';
   const resumeHelp = !canResume && journal.token?.mint && journal.poolPlan?.allocations
     ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.secretPinLocked ? ': unlock the Recovery PIN first' : wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafeCreatedPoolEvents(journal).length > 0 ? ': unsafe partial pool state recorded' : ': matching recoverable wallet is missing'}.</div>`
@@ -455,6 +479,14 @@ function buildLaunchJournalRow(journal, wallet) {
           </button>
         </div>
       ` : ''}
+      ${canFinish ? `
+        <div class="control">
+          <button class="button is-small is-warning" data-action="finish-token">
+            <span class="icon is-small"><i class="fas fa-flag-checkered"></i></span>
+            <span>Finish token creation</span>
+          </button>
+        </div>
+      ` : ''}
       ${hasSecret ? `
         <div class="control">
           <button class="button is-small is-success" data-action="use-wallet">
@@ -508,6 +540,45 @@ function buildLaunchJournalRow(journal, wallet) {
       await showSecretPinModal('unlock');
       await loadLaunchJournals();
       if (typeof loadPendingWallets === 'function') await loadPendingWallets();
+    }
+  });
+
+  // Finish-token button: complete an interrupted token creation (the mint
+  // exists but post-mint steps did not all land). The server reads the recorded
+  // token params + on-chain state and completes only what is missing.
+  wrap.querySelector('[data-action="finish-token"]')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const ok = await confirmDialog({
+      title: 'Finish token creation?',
+      body: `<p>Complete the interrupted creation of <strong>${escapeHtml(journal.token?.symbol || 'this token')}</strong>? This finishes only the steps that did not land (metadata, supply, authority renounce) for the existing mint \u2014 it will not create a new token.</p>`,
+      confirmLabel: 'Finish',
+    });
+    if (!ok) return;
+    btn.classList.add('is-loading');
+    btn.disabled = true;
+    try {
+      const resp = await fetch('/api/finish-token-creation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletPublicKey: journal.walletPublicKey }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        throw new Error(data.error || `Finish failed with HTTP ${resp.status}`);
+      }
+      if (data.steps?.length) log(`Token finish: ${data.steps.join('; ')}`, 'info');
+      if (data.sanity?.length) data.sanity.forEach((msg) => log(`Token finish sanity: ${msg}`, 'warning'));
+      log(
+        data.isSafe
+          ? 'Token creation finished \u2014 token is safe (authorities renounced)'
+          : 'Token creation finished, but the metadata update authority could not be revoked; verify on Solscan',
+        data.isSafe ? 'success' : 'warning',
+      );
+      await loadLaunchJournals();
+    } catch (err) {
+      log(`Finish token creation failed: ${err.message}`, 'error');
+      btn.classList.remove('is-loading');
+      btn.disabled = false;
     }
   });
 

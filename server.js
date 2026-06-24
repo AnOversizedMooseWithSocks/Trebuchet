@@ -7,6 +7,7 @@ import dnsPromises from 'node:dns/promises';
 
 import {
   createTokenWithMetaplex,
+  finishTokenCreation,
   generateTemporaryWallet,
   getWalletQRCode,
   checkWalletBalance,
@@ -1535,7 +1536,7 @@ function applyLpEventToResults(results, event) {
   const result = resultForEvent(results, event);
   if (!result) return false;
 
-  if (event.stage === 'bootstrap_open_done') {
+  if (event.stage === 'bootstrap_open_done' || event.stage === 'bootstrap_open_recovered') {
     result.bootstrap = {
       nftMint: event.nftMint || null,
       locked: false,
@@ -1549,7 +1550,7 @@ function applyLpEventToResults(results, event) {
     return true;
   }
 
-  if (event.stage === 'main_lock_done') {
+  if (event.stage === 'main_lock_done' || event.stage === 'main_lock_recovered') {
     const pos = result.mainPositions?.[event.sliceIndex];
     if (!pos) return false;
     pos.locked = true;
@@ -1558,7 +1559,7 @@ function applyLpEventToResults(results, event) {
     return true;
   }
 
-  if (event.stage === 'ladder_lock_done') {
+  if (event.stage === 'ladder_lock_done' || event.stage === 'ladder_lock_recovered') {
     const pos = result.ladderPositions?.[event.bandIndex];
     if (!pos) return false;
     pos.locked = true;
@@ -1572,7 +1573,7 @@ function applyLpEventToResults(results, event) {
   // journal showing locked: false, so a resume re-attempted the lock
   // against a position NFT already in the lock program's escrow (spurious
   // lockFailures) and the report misstated the lock state.
-  if (event.stage === 'support_lock_done') {
+  if (event.stage === 'support_lock_done' || event.stage === 'support_lock_recovered') {
     const pos = result.supportPositions?.[event.supportIndex];
     if (!pos) return false;
     pos.locked = true;
@@ -1581,7 +1582,7 @@ function applyLpEventToResults(results, event) {
     return true;
   }
 
-  if (event.stage === 'bootstrap_lock_done') {
+  if (event.stage === 'bootstrap_lock_done' || event.stage === 'bootstrap_lock_recovered') {
     if (!result.bootstrap) return false;
     result.bootstrap.locked = true;
     result.bootstrap.feeKeyNftMint = event.feeKeyNftMint || result.bootstrap.feeKeyNftMint || null;
@@ -1589,7 +1590,7 @@ function applyLpEventToResults(results, event) {
     return true;
   }
 
-  if (event.stage === 'main_transfer_done') {
+  if (event.stage === 'main_transfer_done' || event.stage === 'main_transfer_recovered') {
     const pos = result.mainPositions?.[event.sliceIndex];
     if (!pos) return false;
     pos.transferredTo = event.recipient || pos.recipient || null;
@@ -1794,6 +1795,74 @@ function materializePhase1RecoveryResults(journal, priorResults, allocations) {
 
   return { recoveredResults, blockedEvents };
 }
+
+app.post('/api/finish-token-creation', async (req, res) => {
+  try {
+    const { secretKeyArr, walletPublicKey } = resolveSigner({
+      tempWalletSecretKey: req.body.tempWalletSecretKey,
+      walletPublicKey: req.body.walletPublicKey,
+    });
+    if (!walletPublicKey) {
+      return res.status(400).json({ success: false, error: 'walletPublicKey or tempWalletSecretKey required' });
+    }
+
+    const journal = launchJournal.activeForWallet(walletPublicKey);
+    if (!journal || !journal.token || !journal.token.mint) {
+      return res.status(409).json({
+        success: false,
+        error: 'No interrupted token creation found for this wallet (no recorded mint).',
+      });
+    }
+    const { mint, name, symbol, totalSupply, metadataUri } = journal.token;
+    if (totalSupply == null) {
+      return res.status(409).json({
+        success: false,
+        error: 'The recorded token entry is missing its supply; cannot safely finish it.',
+      });
+    }
+
+    const status = await finishTokenCreation({
+      tempWalletSecretKey: secretKeyArr,
+      tokenMint: mint,
+      name,
+      symbol,
+      totalSupply,
+      metadataUri,
+      journalEvents: journal.events || [],
+      onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
+    });
+
+    // Reflect the finished state back into the journal. Merge onto the existing
+    // token record so the name/symbol/uri already there are preserved. Once the
+    // mint authority is renounced the token is usable, so we move the stage back
+    // to 'token_created' and let the normal flow continue.
+    launchJournal.upsertForWallet(
+      walletPublicKey,
+      {
+        status: 'active',
+        stage: status.mintAuthorityRenounced ? 'token_created' : 'token_create_finished',
+        error: null,
+        token: {
+          ...journal.token,
+          mintAuthorityRenounced: status.mintAuthorityRenounced,
+          metadataUpdateAuthorityRevoked: status.updateAuthorityRevoked,
+          isSafe: status.isSafe,
+        },
+      },
+      {
+        stage: 'token_create_finished',
+        isSafe: status.isSafe,
+        steps: status.steps,
+        sanity: status.sanity,
+      },
+    );
+
+    res.json({ success: true, ...status });
+  } catch (error) {
+    console.error('Error finishing token creation:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 app.post('/api/create-token', uploadLogo, async (req, res) => {
   // uploadLogo (multer) has already parsed req.body / req.file by the time

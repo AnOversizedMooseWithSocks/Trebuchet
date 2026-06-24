@@ -8,7 +8,12 @@
 // Per-account rent costs (in SOL). These are reasonably stable on-chain
 // rents for the account types involved.
 export const COST_POOL_RENT_SOL    = 0.062;
-export const COST_TICK_ARRAY_SOL   = 0.072;
+// Rent to initialise one CLMM tick array measures 0.07216 SOL on-chain. A
+// full-preset funding audit showed the prior flat 0.072 left the per-array
+// budget a hair under actual, leaning on the 20% safety buffer to cover the
+// gap. Rounding up to 0.0722 covers the measured rent with a sliver of margin,
+// so the buffer stays pure margin rather than load-bearing.
+export const COST_TICK_ARRAY_SOL   = 0.0722;
 export const COST_POSITION_SOL     = 0.022;
 export const COST_LOCK_SOL         = 0.005;
 export const COST_TRANSFER_SOL     = 0.005;

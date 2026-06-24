@@ -12,6 +12,8 @@ import {
   MAX_TICK,
   MIN_TICK,
   SUPPORT_DEPTH_PCT_DEFAULT,
+  TICK_ARRAY_SIZE,
+  tickArrayStartIndex,
 } from '../lpMath.js';
 
 test('snaps ticks to Raydium spacing in both directions', () => {
@@ -249,4 +251,79 @@ test('support range snaps to spacing on non-zero currentTick', () => {
   assert.equal(Math.abs(ticks.tickUpper % 60), 0);
   // Must stay below currentTick so the position is single-sided in quote.
   assert.ok(ticks.tickUpper < 12345);
+});
+
+// --- tick-array start index (drives the funding estimator's rent count) ---
+
+// Independent re-implementation of the SDK's getTickArrayStartIndexByTick,
+// used here purely as a test oracle so the helper can't silently drift.
+function sdkTickArrayStart(tick, tickSpacing) {
+  const span = TICK_ARRAY_SIZE * tickSpacing;
+  let bitIndex = tick / span;
+  if (tick < 0 && tick % span !== 0) bitIndex = Math.ceil(bitIndex) - 1;
+  else bitIndex = Math.floor(bitIndex);
+  return bitIndex * span;
+}
+
+test('tickArrayStartIndex matches the SDK formula across signs and spacings', () => {
+  for (const tickSpacing of [1, 10, 60, 120]) {
+    for (const tick of [MIN_TICK, -154257, -120000, -901, -1, 0, 1, 901, 99040, MAX_TICK]) {
+      assert.equal(
+        tickArrayStartIndex(tick, tickSpacing),
+        sdkTickArrayStart(tick, tickSpacing),
+        `mismatch at tick=${tick} spacing=${tickSpacing}`,
+      );
+    }
+  }
+});
+
+test('ticks within one array share a start; crossing the boundary advances it', () => {
+  const tickSpacing = 60;
+  const span = TICK_ARRAY_SIZE * tickSpacing; // 3600
+  // Start index is always a multiple of the array span.
+  assert.equal(tickArrayStartIndex(0, tickSpacing) % span, 0);
+  // First and last tick of the array at [0, span) share the same start.
+  assert.equal(tickArrayStartIndex(0, tickSpacing), 0);
+  assert.equal(tickArrayStartIndex(span - tickSpacing, tickSpacing), 0);
+  // One array up.
+  assert.equal(tickArrayStartIndex(span, tickSpacing), span);
+  // Negative side floors toward -inf, not toward zero.
+  assert.equal(tickArrayStartIndex(-1, tickSpacing), -span);
+});
+
+test('a laddered launch spans many distinct tick arrays, not two', () => {
+  // The bug this guards: budgeting a flat two tick arrays per pool. A wide
+  // main + bootstrap + several ladder bands + support land in many distinct
+  // arrays, each one rent the launch wallet must pay. Assert the distinct
+  // count is well above two so a regression to the flat-two budget is caught.
+  const currentTick = -154257;
+  const tickSpacing = 60;
+  const launchedIsMintA = true;
+  const bounds = [];
+  const main = computeMainTicks({ currentTick, tickSpacing, launchedIsMintA });
+  bounds.push(main.tickLower, main.tickUpper);
+  const boot = computeBootstrapTicks({ currentTick, tickSpacing, mode: 'minimal' });
+  bounds.push(boot.tickLower, boot.tickUpper);
+  const bands = computeLadderTicksManual({
+    currentTick,
+    tickSpacing,
+    bands: [
+      { lowerMultiplier: 4, upperMultiplier: 8 },
+      { lowerMultiplier: 8, upperMultiplier: 40 },
+      { lowerMultiplier: 40, upperMultiplier: 200 },
+      { lowerMultiplier: 200, upperMultiplier: 1200 },
+      { lowerMultiplier: 1200, upperMultiplier: 33333 },
+    ],
+    launchedIsMintA,
+  });
+  bands.forEach((b) => bounds.push(b.tickLower, b.tickUpper));
+  const sup = computeSupportTicks({
+    currentTick, tickSpacing, launchedIsMintA, depthPct: SUPPORT_DEPTH_PCT_DEFAULT,
+  });
+  bounds.push(sup.tickLower, sup.tickUpper);
+  const distinct = new Set(bounds.map((t) => tickArrayStartIndex(t, tickSpacing)));
+  assert.ok(
+    distinct.size >= 6,
+    `expected many distinct arrays, got ${distinct.size}`,
+  );
 });

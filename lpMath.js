@@ -19,6 +19,28 @@ export function ceilToSpacing(tick, tickSpacing) {
   return Math.ceil(tick / tickSpacing) * tickSpacing;
 }
 
+// CLMM tick arrays span TICK_ARRAY_SIZE * tickSpacing ticks each. A position
+// open only touches the two arrays its bounds fall in (lower, upper); arrays
+// in between are initialized lazily by swaps, not at open time. Matches the
+// pinned SDK (clmm utils: TICK_ARRAY_SIZE = 60, getTickArrayStartIndexByTick).
+export const TICK_ARRAY_SIZE = 60;
+
+// Start tick of the tick array a given tick belongs to. Integer math copied
+// verbatim from the SDK's getTickArrayBitIndex/getTickArrayStartIndexByTick:
+// negatives floor toward -inf via the ceil(i)-1 branch, not JS truncation.
+// Used by the funding estimator to count how many distinct arrays a launch
+// will initialize (each one is rent the launch wallet pays).
+export function tickArrayStartIndex(tick, tickSpacing) {
+  const span = TICK_ARRAY_SIZE * tickSpacing;
+  let bitIndex = tick / span;
+  if (tick < 0 && tick % span !== 0) {
+    bitIndex = Math.ceil(bitIndex) - 1;
+  } else {
+    bitIndex = Math.floor(bitIndex);
+  }
+  return bitIndex * span;
+}
+
 /**
  * Compute the main position's tick range, asymmetric based on which side the
  * launched token sorted to. The position starts 100% launched-token.

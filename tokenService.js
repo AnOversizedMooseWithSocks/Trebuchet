@@ -10,6 +10,7 @@ import {
 import { 
   createMint,
   mintTo,
+  getMint,
   getAccount,
   getOrCreateAssociatedTokenAccount,
   transfer,
@@ -38,6 +39,7 @@ import {
   createTokenMetadataUmi,
   uploadTokenMetadata,
 } from './metadataUploadService.js';
+import { landTxWithRetry } from './chainRetry.js';
 
 // The RPC URL is sourced from rpcConfig.js, which seeds itself with a
 // public-mainnet default on first run and persists user-selected RPCs to
@@ -612,6 +614,235 @@ export async function createTokenWithMetaplex({
     console.error('Error in createTokenWithMetaplex:', error);
     throw error;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Metaplex Token Metadata program id + metadata-PDA derivation. Used by the
+// finish-token resume path to detect whether an existing mint already has a
+// metadata account and whether its update authority has been revoked.
+// ---------------------------------------------------------------------------
+const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
+  'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',
+);
+// PublicKey.default ('111...111', 32 zero bytes) is the System Program address
+// — the value the metadata update authority is set to when it is revoked.
+const SYSTEM_PROGRAM_ADDRESS = PublicKey.default.toBase58();
+
+function deriveMetadataPda(mint) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('metadata'), TOKEN_METADATA_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    TOKEN_METADATA_PROGRAM_ID,
+  )[0];
+}
+
+// Resume a token creation that was interrupted AFTER the mint already existed.
+//
+// createTokenWithMetaplex's per-step retries absorb transient blips, but a
+// genuinely non-transient failure (an RPC outage that outlasts the retry
+// window, say) can leave a paid-for mint stranded with some post-mint steps
+// undone: metadata account, supply, mint-authority renounce, update-authority
+// revoke. Re-running createTokenWithMetaplex would mint a brand-new token and
+// waste the vanity address, so instead we finish THIS mint.
+//
+// On-chain state is the source of truth for WHAT STILL NEEDS DOING — we read
+// the mint and the metadata account and perform only the steps that have not
+// landed. The journal's recorded txIds are used as a cross-check: if the
+// journal records a step as completed but on-chain state disagrees, that
+// recorded transaction never actually landed (or is unconfirmed); we surface
+// the discrepancy and trust the chain. Every step reuses the same bounded
+// retry + idempotency guard as the original flow, so calling this more than
+// once is safe.
+export async function finishTokenCreation({
+  tempWalletSecretKey,
+  tokenMint,
+  name,
+  symbol,
+  totalSupply,
+  metadataUri,
+  onProgress,
+  journalEvents,
+}) {
+  const progress = (event) => {
+    if (!onProgress) return;
+    try { onProgress(event); } catch (e) { console.warn('finish-token progress callback failed:', e.message); }
+  };
+
+  const tempWallet = Keypair.fromSecretKey(Uint8Array.from(tempWalletSecretKey));
+  const umi = _umiFactory(tempWallet);
+  const mint = new PublicKey(tokenMint);
+  const mintPubkey = umiPublicKey(tokenMint);
+  const totalTokens = BigInt(totalSupply) * (10n ** 9n);
+
+  const status = {
+    mint: tokenMint,
+    metadataExists: false,
+    supplyMinted: false,
+    mintAuthorityRenounced: false,
+    updateAuthorityRevoked: false,
+    steps: [],   // what THIS call actually did
+    sanity: [],  // journal-vs-chain discrepancies (informational)
+  };
+
+  // --- Detect existing on-chain state (authoritative for what remains) ---
+  let mintInfo;
+  try {
+    mintInfo = await getMint(connection, mint, 'finalized', TOKEN_PROGRAM_ID);
+  } catch (e) {
+    throw new Error(`finish-token: cannot read mint ${tokenMint} on-chain: ${e.message}`);
+  }
+  status.supplyMinted = mintInfo.supply >= totalTokens;
+  status.mintAuthorityRenounced = mintInfo.mintAuthority === null;
+
+  const metadataPda = deriveMetadataPda(mint);
+  let metaAccount = null;
+  try { metaAccount = await connection.getAccountInfo(metadataPda, 'finalized'); } catch (_) { /* treat as absent */ }
+  status.metadataExists = !!(metaAccount && metaAccount.data && metaAccount.data.length > 0);
+  if (status.metadataExists && metaAccount.data.length >= 33) {
+    // Metadata layout: byte 0 is the account key; bytes 1..33 are the update
+    // authority pubkey. Revoked == set to the System Program (all-zero) address.
+    try {
+      const ua = new PublicKey(metaAccount.data.subarray(1, 33)).toBase58();
+      status.updateAuthorityRevoked = ua === SYSTEM_PROGRAM_ADDRESS;
+    } catch (_) { /* unparseable -> treat as not revoked, we'll try below */ }
+  }
+
+  // --- Cross-check the journal's recorded steps against on-chain reality ---
+  if (Array.isArray(journalEvents)) {
+    const claim = (stage) => journalEvents.find((e) => e && e.stage === stage);
+    const flag = (label, stage, chainSays) => {
+      const ev = claim(stage);
+      if (ev && !chainSays) {
+        const tx = ev.txId && !String(ev.txId).startsWith('(') ? ` (recorded tx ${ev.txId})` : '';
+        status.sanity.push(
+          `${label}: the journal records this step as completed${tx}, but on-chain ` +
+          'state does not reflect it; redoing it',
+        );
+      }
+    };
+    flag('supply mint', 'supply_minted', status.supplyMinted);
+    flag('mint authority renounce', 'mint_authority_revoked', status.mintAuthorityRenounced);
+    flag('metadata update-authority revoke', 'metadata_update_authority_revoked', status.updateAuthorityRevoked);
+  }
+  for (const s of status.sanity) console.warn('finish-token sanity:', s);
+
+  // --- 1. Metadata account ---
+  if (!status.metadataExists) {
+    if (!metadataUri) {
+      throw new Error('finish-token: metadata account is missing and no metadataUri was provided to recreate it');
+    }
+    await landTxWithRetry({
+      label: 'finish: metadata account',
+      alreadyDone: async () => {
+        const a = await connection.getAccountInfo(metadataPda, 'finalized');
+        return !!(a && a.data && a.data.length > 0);
+      },
+      send: () => createV1(umi, {
+        mint: mintPubkey,
+        authority: umi.identity,
+        name,
+        symbol,
+        uri: metadataUri,
+        sellerFeeBasisPoints: percentAmount(0),
+        decimals: 9,
+        tokenStandard: TokenStandard.Fungible,
+      }).sendAndConfirm(umi),
+    });
+    status.metadataExists = true;
+    status.steps.push('created metadata account');
+    progress({ stage: 'metadata_account_created', tokenMint, metadataUri });
+  }
+
+  // --- 2. ATA + supply (hard idempotency guard: never double-mint) ---
+  if (!status.supplyMinted) {
+    const tokenAccount = await withRpcRetry(() => getOrCreateAssociatedTokenAccount(
+      connection,
+      tempWallet,
+      mint,
+      tempWallet.publicKey,
+      false,
+      'finalized',
+      { commitment: 'finalized' },
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+    ));
+    const r = await landTxWithRetry({
+      label: 'finish: mint supply',
+      alreadyDone: async () => {
+        const info = await getMint(connection, mint, 'finalized', TOKEN_PROGRAM_ID);
+        return info.supply >= totalTokens;
+      },
+      send: () => mintTo(
+        connection,
+        tempWallet,
+        mint,
+        tokenAccount.address,
+        tempWallet.publicKey,
+        totalTokens,
+        [],
+        { commitment: 'finalized' },
+        TOKEN_PROGRAM_ID,
+      ),
+    });
+    status.supplyMinted = true;
+    status.steps.push(r.skipped ? 'supply already minted (adopted)' : 'minted supply');
+    progress({ stage: 'supply_minted', tokenMint, txId: r.skipped ? '(supply already minted)' : r.value });
+  }
+
+  // --- 3. Renounce mint authority (the critical safety step) ---
+  if (!status.mintAuthorityRenounced) {
+    const r = await landTxWithRetry({
+      label: 'finish: renounce mint authority',
+      alreadyDone: async () => {
+        const info = await getMint(connection, mint, 'finalized', TOKEN_PROGRAM_ID);
+        return info.mintAuthority === null;
+      },
+      send: () => setAuthority(
+        connection,
+        tempWallet,
+        mint,
+        tempWallet.publicKey,
+        AuthorityType.MintTokens,
+        null,
+        [],
+        { commitment: 'finalized' },
+        TOKEN_PROGRAM_ID,
+      ),
+    });
+    status.mintAuthorityRenounced = true;
+    status.steps.push(r.skipped ? 'mint authority already renounced (adopted)' : 'renounced mint authority');
+    progress({ stage: 'mint_authority_revoked', tokenMint, txId: r.skipped ? '(already renounced)' : r.value });
+  }
+
+  // --- 4. Revoke metadata update authority (best-effort, mirrors creation) ---
+  // Non-fatal: the decisive safety property is the mint-authority renounce
+  // above. If this can't complete we surface it but still return a status.
+  if (!status.updateAuthorityRevoked) {
+    try {
+      const systemProgramAddress = umiPublicKey(SYSTEM_PROGRAM_ADDRESS);
+      await landTxWithRetry({
+        label: 'finish: revoke update authority',
+        alreadyDone: async () => {
+          const a = await connection.getAccountInfo(metadataPda, 'finalized');
+          if (!a || !a.data || a.data.length < 33) return false;
+          try { return new PublicKey(a.data.subarray(1, 33)).toBase58() === SYSTEM_PROGRAM_ADDRESS; } catch (_) { return false; }
+        },
+        send: () => updateV1(umi, {
+          mint: mintPubkey,
+          authority: umi.identity,
+          newUpdateAuthority: some(systemProgramAddress),
+        }).sendAndConfirm(umi, { send: { commitment: 'finalized' }, confirm: { commitment: 'finalized' } }),
+      });
+      status.updateAuthorityRevoked = true;
+      status.steps.push('revoked metadata update authority');
+      progress({ stage: 'metadata_update_authority_revoked', tokenMint });
+    } catch (e) {
+      status.steps.push(`could not revoke metadata update authority: ${e.message}`);
+    }
+  }
+
+  status.isSafe = status.mintAuthorityRenounced && status.updateAuthorityRevoked;
+  progress({ stage: 'token_finish_done', tokenMint, isSafe: status.isSafe });
+  return status;
 }
 
 // Transfer tokens and remaining SOL
