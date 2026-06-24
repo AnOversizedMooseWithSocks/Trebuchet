@@ -9,8 +9,8 @@ import {
 } from '@solana/web3.js';
 import { 
   createMint,
-  getMint,
   mintTo,
+  getMint,
   getAccount,
   getOrCreateAssociatedTokenAccount,
   transfer,
@@ -325,22 +325,16 @@ export async function createTokenWithMetaplex({
     const mintPubkey = umiPublicKey(mint.toString());
     
     // Create metadata for the existing token
-    // Bounded retry on transient RPC/confirm failures so a blip here doesn't
-    // strand a freshly-created mint without a metadata account. The common
-    // failure (the transaction simply didn't land) now recovers in place.
-    await landTxWithRetry({
-      label: 'metadata account',
-      send: () => createV1(umi, {
-        mint: mintPubkey,
-        authority: umi.identity,
-        name,
-        symbol,
-        uri: metadataUri,
-        sellerFeeBasisPoints: percentAmount(0), // 0% royalty for fungible tokens
-        decimals: 9,
-        tokenStandard: TokenStandard.Fungible,
-      }).sendAndConfirm(umi),
-    });
+    await createV1(umi, {
+      mint: mintPubkey,
+      authority: umi.identity,
+      name,
+      symbol,
+      uri: metadataUri,
+      sellerFeeBasisPoints: percentAmount(0), // 0% royalty for fungible tokens
+      decimals: 9,
+      tokenStandard: TokenStandard.Fungible,
+    }).sendAndConfirm(umi);
     
     console.log('Metadata account created successfully');
     progress({ stage: 'metadata_account_created', tokenMint: mint.toString(), metadataUri, imageUri });
@@ -367,31 +361,17 @@ export async function createTokenWithMetaplex({
     console.log('Minting total supply...');
     const totalTokens = BigInt(totalSupply) * (10n ** 9n);
     
-    // Mint supply with a hard idempotency guard. mintTo is NOT idempotent, so
-    // before any retry we read the mint's on-chain supply and skip if it has
-    // already reached the target — a landed-but-unconfirmed mint must never be
-    // re-sent (that would double the supply). The guard is defensive: if the
-    // supply read can't run (e.g. a test's mock connection), it falls through
-    // and the mint proceeds exactly as before.
-    const mintToResult = await landTxWithRetry({
-      label: 'mint supply',
-      alreadyDone: async () => {
-        const info = await getMint(connection, mint, 'finalized', TOKEN_PROGRAM_ID);
-        return info.supply >= totalTokens;
-      },
-      send: () => mintTo(
-        connection,
-        tempWallet,
-        mint,
-        tokenAccount.address,
-        tempWallet.publicKey,
-        totalTokens,
-        [],
-        { commitment: 'finalized' },
-        TOKEN_PROGRAM_ID
-      ),
-    });
-    const mintSig = mintToResult.skipped ? '(supply already minted)' : mintToResult.value;
+    const mintSig = await mintTo(
+      connection,
+      tempWallet,
+      mint,
+      tokenAccount.address,
+      tempWallet.publicKey,
+      totalTokens,
+      [],
+      { commitment: 'finalized' },
+      TOKEN_PROGRAM_ID
+    );
     
     console.log('Mint transaction signature:', mintSig);
     progress({ stage: 'supply_minted', tokenMint: mint.toString(), txId: mintSig });
@@ -406,28 +386,17 @@ export async function createTokenWithMetaplex({
     // 1. Renounce mint authority (no more tokens can be minted)
     console.log('Renouncing mint authority...');
     try {
-      // Retry transient failures and skip if the authority is already null
-      // (a landed-but-unconfirmed renounce). Only a real, non-transient
-      // failure falls through to the abort below.
-      const renounceResult = await landTxWithRetry({
-        label: 'renounce mint authority',
-        alreadyDone: async () => {
-          const info = await getMint(connection, mint, 'finalized', TOKEN_PROGRAM_ID);
-          return info.mintAuthority === null;
-        },
-        send: () => setAuthority(
-          connection,
-          tempWallet,
-          mint,
-          tempWallet.publicKey, // Current authority
-          AuthorityType.MintTokens,
-          null, // New authority (null = renounce)
-          [],
-          { commitment: 'finalized' },
-          TOKEN_PROGRAM_ID
-        ),
-      });
-      const renounceMintAuthSig = renounceResult.skipped ? '(already renounced)' : renounceResult.value;
+      const renounceMintAuthSig = await setAuthority(
+        connection,
+        tempWallet,
+        mint,
+        tempWallet.publicKey, // Current authority
+        AuthorityType.MintTokens,
+        null, // New authority (null = renounce)
+        [],
+        { commitment: 'finalized' },
+        TOKEN_PROGRAM_ID
+      );
       console.log('Mint authority renounced:', renounceMintAuthSig);
       progress({
         stage: 'mint_authority_revoked',

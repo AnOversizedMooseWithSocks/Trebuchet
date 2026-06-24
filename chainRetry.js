@@ -15,11 +15,10 @@
 //                                'insufficient_funds' — the launch wallet ran
 //                                                       short. Retrying can
 //                                                       never help; the only
-//                                                       fix is more SOL. This
-//                                                       is the one launch-stop
-//                                                       we surface as an
-//                                                       actionable "add funds
-//                                                       and resume" state.
+//                                                       fix is more SOL, so
+//                                                       landTxWithRetry stops
+//                                                       immediately rather than
+//                                                       spending its retry budget.
 //                                'deterministic'      — anything else that a
 //                                                       blind retry won't fix
 //                                                       (bad config, an already
@@ -36,11 +35,12 @@
 //                              most for non-idempotent operations like minting
 //                              supply, where a blind re-send would double-mint.
 //
-// Why this exists: position opens already had bounded retry + landed-detection
-// (openPositionWithRetry). The bootstrap open and the token-creation steps did
-// not — a single transient blip there could strand a launch (worst case: a
-// freshly-minted vanity token left half-built). These primitives let those
-// call sites get the same treatment without each re-implementing the loop.
+// Why this exists: finishTokenCreation resumes a token whose mint exists but
+// whose post-mint steps (metadata, supply, mint-authority renounce) did not all
+// land. Each is a money- or state-changing transaction that a single transient
+// blip could strand — worst case, a freshly-minted vanity token left half-built.
+// landTxWithRetry gives those steps bounded retry plus an idempotency guard so a
+// re-run never re-applies a step that already landed.
 
 // Substring/regex signatures, matched case-insensitively against the error
 // message (and a few common nested fields). Kept as data so the classifier
@@ -110,19 +110,14 @@ function errorText(err) {
 
 // Classify a thrown transaction error into one of the three buckets above.
 // Insufficient-funds is checked first: it is the most consequential to get
-// right (it must never be retried, and it drives the add-funds UX), and its
-// signatures are specific enough not to collide with the transient set.
+// right (it must never be retried), and its signatures are specific enough
+// not to collide with the transient set.
 export function classifyChainError(err) {
   const text = errorText(err);
   if (!text) return 'deterministic';
   for (const re of INSUFFICIENT_FUNDS_SIGNS) if (re.test(text)) return 'insufficient_funds';
   for (const re of TRANSIENT_SIGNS) if (re.test(text)) return 'transient';
   return 'deterministic';
-}
-
-// Convenience predicate for call sites that only care about the funds case.
-export function isInsufficientFunds(err) {
-  return classifyChainError(err) === 'insufficient_funds';
 }
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -154,8 +149,8 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 //
 // On a non-transient failure (insufficient_funds / deterministic), or after
 // exhausting retries, the original error is rethrown with `err.kind` set to the
-// classification so callers can branch (surface "add funds", route to diagnose,
-// or fall through to the resume flow).
+// classification, and the failing attempt is logged with its bucket so a
+// stranded finish is easy to diagnose.
 export async function landTxWithRetry({
   send,
   alreadyDone = null,

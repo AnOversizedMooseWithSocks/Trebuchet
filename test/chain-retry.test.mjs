@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classifyChainError, isInsufficientFunds, landTxWithRetry } from '../chainRetry.js';
+import { classifyChainError, landTxWithRetry } from '../chainRetry.js';
 
 const noSleep = () => Promise.resolve();
 
@@ -20,7 +20,6 @@ test('classifies lamport shortfalls as insufficient_funds', () => {
     'custom program error: 0x1771',
   ]) {
     assert.equal(classifyChainError(new Error(msg)), 'insufficient_funds', msg);
-    assert.equal(isInsufficientFunds(new Error(msg)), true, msg);
   }
 });
 

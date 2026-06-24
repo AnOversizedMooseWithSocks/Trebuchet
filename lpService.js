@@ -4382,7 +4382,7 @@ export async function estimateRequiredFunding({
   //                     (rare; would error out at funding-estimate
   //                     time too for non-SOL non-override cases)
   const resolvedPrices = [];
-  // Buffered vs unbuffered cost tracking. The 10% safety buffer is there
+  // Buffered vs unbuffered cost tracking. The 20% safety buffer is there
   // to cover the things that can fluctuate between estimate time and
   // launch time:
   //   - swap slippage when buying quote tokens via auto-swap (price
@@ -4395,7 +4395,7 @@ export async function estimateRequiredFunding({
   // SOL deposit on SOL pools (a precise transfer of a known amount to
   // a single-sided position). Non-SOL support also gets excluded since
   // its auto-swap branch already builds in a 1.5x spend multiplier to
-  // cover slippage; layering another 10% on top is double-counting.
+  // cover slippage; layering another 20% on top is double-counting.
   let bufferedSubtotal = 0;
   let unbufferedSubtotal = 0;
 
@@ -4598,7 +4598,7 @@ export async function estimateRequiredFunding({
       //
       // Marked unbuffered: this is an exact deposit of a known SOL
       // amount into a single-sided position, no swap involved, no fee
-      // variance to insulate against. The 10% safety buffer would just
+      // variance to insulate against. The 20% safety buffer would just
       // pad the user's funding requirement without serving any real
       // protective purpose.
       if (supportEnabled) {
@@ -4760,7 +4760,7 @@ export async function estimateRequiredFunding({
         //
         // Marked unbuffered: the spendMultiplier (1.5x) already pads the
         // SOL spend to cover swap slippage on the SOL→quote conversion.
-        // Adding the 10% safety buffer on top would double-count
+        // Adding the 20% safety buffer on top would double-count
         // slippage protection. The bootstrap auto-swap line above stays
         // buffered because its multiplier is smaller and the bootstrap
         // amount is a hard floor (under-bootstrapping fails the launch).
