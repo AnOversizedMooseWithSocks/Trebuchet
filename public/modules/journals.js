@@ -102,9 +102,16 @@ function launchJournalStageLabel(journal) {
 }
 
 function launchJournalRecoveryText(journal) {
-  const unsafeEvents = unsafeCreatedPoolEvents(journal);
-  if (unsafeEvents.length > 0) {
-    return 'A pool was created before Trebuchet recorded completed LP positions for it. Automatic resume is blocked to avoid duplicate pool work; use this entry\u2019s recovery phrase to sweep or handle the pool manually.';
+  // A funds shortfall is the one launch-stop with a clean fix: top up the
+  // launch wallet and resume. Surface it ahead of the phase-specific messages
+  // since the remedy is the same regardless of which phase ran short, and
+  // resume adopts any already-created pool and continues from there.
+  if (journal.lp?.failedKind === 'insufficient_funds') {
+    return 'The launch stopped because the launch wallet ran low on SOL. Add SOL to the launch wallet (this entry shows its address), then use Resume \u2014 it will adopt any pool already created and continue from where it stopped.';
+  }
+  const orphanedPoolEvents = unsafeCreatedPoolEvents(journal);
+  if (orphanedPoolEvents.length > 0) {
+    return 'A pool was created and some positions opened before the launch stopped. The launch wallet still controls them \u2014 use Resume to adopt that pool and open the remaining positions automatically.';
   }
   if (journal.transfer?.walletEmpty === false || journal.stage === 'transfer_partial') {
     return 'Final sweep did not prove the launch wallet empty. Use this entry\u2019s recovery phrase to sweep or import the wallet manually.';
@@ -120,6 +127,9 @@ function launchJournalRecoveryText(journal) {
   }
   if (journal.lp?.partialResults?.length > 0) {
     return 'Some pool work landed on-chain before the launch stopped. Created pools are permanent; the launch wallet controls any unswept tokens and LP NFTs.';
+  }
+  if (journal.token?.mint && journal.token.mintAuthorityRenounced !== true && !journalHasCompletedLp(journal)) {
+    return 'The token mint exists, but creating it didn\u2019t finish \u2014 some of metadata, supply, or authority-renounce didn\u2019t land. Use "Finish token creation" to complete only those steps for this mint; it will not create a new token.';
   }
   if (journal.token?.mint) {
     return 'The token mint was recorded. If the launch stopped before pools or transfer, the minted supply should still be controlled by the launch wallet.';
@@ -171,12 +181,121 @@ function launchJournalTxRows(journal) {
   return `<div class="mt-2"><strong>Recorded txs:</strong> ${shown}${more}</div>`;
 }
 
-function journalPriorResults(journal) {
+// Stored, structured LP results from the journal — authoritative for any
+// allocation that finished Phase 1. Kept separate from the reconstructed view
+// below so callers that need "what the structured results already record" (the
+// orphaned-pool messaging) aren't confused by event-reconstructed entries.
+function journalStoredResults(journal) {
   const lp = journal.lp || {};
   const source = Array.isArray(lp.results) && lp.results.length > 0
     ? lp.results
     : (Array.isArray(lp.partialResults) ? lp.partialResults : []);
   return source.filter((result) => result && result.poolId);
+}
+
+// Frontend mirror of launchRecovery.js (server). Reconstruct per-allocation LP
+// results from the journal's granular Phase-1 events so a launch that died
+// mid-Phase-1 (pool created, some positions open, no phase1_pool_done) still
+// presents a resumable result. Must stay in sync with the server module; see
+// its header for the full rationale.
+function journalReconstructFromEvents(journal) {
+  const events = Array.isArray(journal.events) ? journal.events : [];
+  const byAlloc = new Map();
+  const ensure = (ai) => {
+    if (!byAlloc.has(ai)) {
+      byAlloc.set(ai, {
+        allocationIndex: ai,
+        poolId: null,
+        txIds: { createPool: null },
+        mainPositions: [],
+        ladderPositions: [],
+        supportPositions: [],
+        bootstrap: null,
+      });
+    }
+    return byAlloc.get(ai);
+  };
+  const upsertIndexed = (list, key, value, nftMint, openTxId) => {
+    let entry = list.find((p) => p[key] === value);
+    if (!entry) {
+      entry = { [key]: value, nftMint: null, locked: false, txIds: { open: null } };
+      list.push(entry);
+    }
+    if (nftMint) entry.nftMint = nftMint;
+    entry.txIds.open = openTxId || entry.txIds.open || null;
+  };
+
+  for (const event of events) {
+    if (!event || typeof event.stage !== 'string') continue;
+    const ai = event.allocationIndex;
+    if (!Number.isInteger(ai)) continue;
+    if (event.stage === 'pool_create_done' || event.stage === 'pool_adopted') {
+      const a = ensure(ai);
+      if (event.poolId) a.poolId = event.poolId;
+      a.txIds.createPool = event.txId || a.txIds.createPool || null;
+    } else if (event.stage === 'main_open_done' || event.stage === 'main_open_skip') {
+      if (Number.isInteger(event.sliceIndex)) {
+        upsertIndexed(ensure(ai).mainPositions, 'sliceIndex', event.sliceIndex, event.nftMint, event.txId);
+      }
+    } else if (event.stage === 'ladder_open_done' || event.stage === 'ladder_open_skip') {
+      if (Number.isInteger(event.bandIndex)) {
+        upsertIndexed(ensure(ai).ladderPositions, 'bandIndex', event.bandIndex, event.nftMint, event.txId);
+      }
+    } else if (event.stage === 'support_open_done' || event.stage === 'support_open_skip') {
+      if (event.nftMint) {
+        const list = ensure(ai).supportPositions;
+        let entry = list.find((p) => p.nftMint === event.nftMint);
+        if (!entry) {
+          entry = { nftMint: event.nftMint, locked: false, txIds: { open: null } };
+          list.push(entry);
+        }
+        entry.txIds.open = event.txId || entry.txIds.open || null;
+      }
+    } else if (event.stage === 'bootstrap_open_done') {
+      ensure(ai).bootstrap = {
+        nftMint: event.nftMint || null,
+        locked: false,
+        tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+        tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+        txIds: { open: event.txId || null, lock: null },
+      };
+    }
+  }
+
+  const out = [];
+  for (const a of byAlloc.values()) {
+    if (!a.poolId) continue;
+    a.mainPositions.sort((x, y) => x.sliceIndex - y.sliceIndex);
+    a.ladderPositions.sort((x, y) => x.bandIndex - y.bandIndex);
+    out.push(a);
+  }
+  out.sort((x, y) => x.allocationIndex - y.allocationIndex);
+  return out;
+}
+
+// Stored results win per allocation; reconstruction only fills allocations the
+// stored results don't cover. Mirrors mergePriorResults in launchRecovery.js.
+function journalMergePriorResults(stored, reconstructed) {
+  const byAlloc = new Map();
+  for (const r of reconstructed) {
+    if (r && Number.isInteger(r.allocationIndex)) byAlloc.set(r.allocationIndex, r);
+  }
+  for (const r of stored) {
+    if (r && Number.isInteger(r.allocationIndex)) byAlloc.set(r.allocationIndex, r);
+  }
+  return [...byAlloc.values()]
+    .filter((r) => r && r.poolId)
+    .sort((x, y) => (x.allocationIndex ?? 0) - (y.allocationIndex ?? 0));
+}
+
+// The resume payload preview / step-5 summary view: stored results plus any
+// allocation reconstructed from events (the mid-Phase-1 failure case). Matches
+// what the server hands the orchestrator on resume.
+function journalPriorResults(journal) {
+  return journalMergePriorResults(
+    journalStoredResults(journal),
+    journalReconstructFromEvents(journal),
+  );
 }
 
 function journalHasCompletedLp(journal) {
@@ -189,24 +308,45 @@ function journalHasCompletedLp(journal) {
   );
 }
 
+// Pools the journal recorded as created whose allocation never made it into
+// the STORED structured results — i.e. a launch that died mid-Phase-1. This no
+// longer blocks resume (the server adopts such pools after verifying them
+// on-chain); it only drives the recovery guidance text below.
 function unsafeCreatedPoolEvents(journal) {
-  const completedAllocations = new Set(journalPriorResults(journal).map((r) => r.allocationIndex));
+  const stored = new Set(journalStoredResults(journal).map((r) => r.allocationIndex));
   return (journal.events || []).filter(
     (event) =>
       event.stage === 'pool_create_done' &&
-      !completedAllocations.has(event.allocationIndex),
+      !stored.has(event.allocationIndex),
+  );
+}
+
+function canFinishTokenJournal(journal) {
+  // The mint exists but its mint authority was never renounced: token creation
+  // stopped after the mint was created. Offer to finish it in place rather than
+  // mint a brand-new token (which would waste a vanity address). A journal that
+  // has moved on to LP already has its mint authority renounced, so this
+  // naturally excludes LP-stage entries.
+  return !!(
+    journal.token?.mint &&
+    journal.token.mintAuthorityRenounced !== true &&
+    !journalHasCompletedLp(journal)
   );
 }
 
 function canResumeLaunchJournal(journal, wallet) {
+  // Client-side preconditions only: the plan exists and a recoverable wallet
+  // secret is present. A pool created mid-Phase-1 is NO LONGER a block — the
+  // server reconstructs the orphaned pool from the event log, verifies it
+  // on-chain, and adopts it. The server stays the authority and refuses safely
+  // if verification fails, so offering the button here can't strand the user.
   return !!(
     journal.token?.mint &&
     journal.poolPlan?.tokenTotalSupply &&
     journal.poolPlan?.targetMarketCapUsd &&
     Array.isArray(journal.poolPlan?.allocations) &&
     wallet &&
-    Array.isArray(wallet.secretKey) &&
-    unsafeCreatedPoolEvents(journal).length === 0
+    Array.isArray(wallet.secretKey)
   );
 }
 
@@ -363,9 +503,10 @@ function buildLaunchJournalRow(journal, wallet) {
     ? `<div class="notification is-danger is-light is-size-7 py-2 px-3 my-2">${escapeHtml(journal.error)}</div>`
     : '';
   const canResume = canResumeLaunchJournal(journal, wallet);
+  const canFinish = canFinishTokenJournal(journal);
   const resumeLabel = journalHasCompletedLp(journal) ? 'Continue transfer' : 'Resume launch';
   const resumeHelp = !canResume && journal.token?.mint && journal.poolPlan?.allocations
-    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafeCreatedPoolEvents(journal).length > 0 ? ': unsafe partial pool state recorded' : ': matching recoverable wallet is missing'}.</div>`
+    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : ': matching recoverable wallet is missing'}.</div>`
     : '';
 
   // Recovery material from the matching wallet, folded into this card so the
@@ -419,6 +560,14 @@ function buildLaunchJournalRow(journal, wallet) {
           </button>
         </div>
       ` : ''}
+      ${canFinish ? `
+        <div class="control">
+          <button class="button is-small is-warning" data-action="finish-token">
+            <span class="icon is-small"><i class="fas fa-flag-checkered"></i></span>
+            <span>Finish token creation</span>
+          </button>
+        </div>
+      ` : ''}
       ${hasSecret ? `
         <div class="control">
           <button class="button is-small is-success" data-action="use-wallet">
@@ -465,6 +614,45 @@ function buildLaunchJournalRow(journal, wallet) {
   });
   wrap.querySelector('[data-action="copy-wallet"]').addEventListener('click', async () => {
     await copyText(journal.walletPublicKey, 'Launch wallet public key');
+  });
+
+  // Finish-token button: complete an interrupted token creation (the mint
+  // exists but post-mint steps did not all land). The server reads the recorded
+  // token params + on-chain state and completes only what is missing.
+  wrap.querySelector('[data-action="finish-token"]')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const ok = await confirmDialog({
+      title: 'Finish token creation?',
+      body: `<p>Complete the interrupted creation of <strong>${escapeHtml(journal.token?.symbol || 'this token')}</strong>? This finishes only the steps that did not land (metadata, supply, authority renounce) for the existing mint \u2014 it will not create a new token.</p>`,
+      confirmLabel: 'Finish',
+    });
+    if (!ok) return;
+    btn.classList.add('is-loading');
+    btn.disabled = true;
+    try {
+      const resp = await fetch('/api/finish-token-creation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletPublicKey: journal.walletPublicKey }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        throw new Error(data.error || `Finish failed with HTTP ${resp.status}`);
+      }
+      if (data.steps?.length) log(`Token finish: ${data.steps.join('; ')}`, 'info');
+      if (data.sanity?.length) data.sanity.forEach((msg) => log(`Token finish sanity: ${msg}`, 'warning'));
+      log(
+        data.isSafe
+          ? 'Token creation finished \u2014 token is safe (authorities renounced)'
+          : 'Token creation finished, but the metadata update authority could not be revoked; verify on Solscan',
+        data.isSafe ? 'success' : 'warning',
+      );
+      await loadLaunchJournals();
+    } catch (err) {
+      log(`Finish token creation failed: ${err.message}`, 'error');
+      btn.classList.remove('is-loading');
+      btn.disabled = false;
+    }
   });
 
   // Use-wallet button: load this wallet as active tempWallet for a fresh launch

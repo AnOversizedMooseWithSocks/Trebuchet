@@ -7,6 +7,7 @@ import dnsPromises from 'node:dns/promises';
 
 import {
   createTokenWithMetaplex,
+  finishTokenCreation,
   generateTemporaryWallet,
   getWalletQRCode,
   checkWalletBalance,
@@ -48,6 +49,11 @@ import {
 import * as pendingWallets from './pendingWallets.js';
 import { createLaunchReportUmi, publishLaunchReport } from './launchReportService.js';
 import * as launchJournal from './launchJournal.js';
+import { classifyChainError } from './chainRetry.js';
+import {
+  reconstructPartialResultsFromEvents,
+  mergePriorResults,
+} from './launchRecovery.js';
 import * as userPrefs from './userPrefs.js';
 import * as updateCheckBridge from './updateCheckBridge.js';
 import * as demoChainService from './demoChainService.js';
@@ -1445,10 +1451,22 @@ function recordLpJournalProgress(walletPublicKey, event) {
 
 function priorResultsFromJournal(journal) {
   const lp = journal?.lp || {};
-  const source = Array.isArray(lp.results) && lp.results.length > 0
+  // Stored, structured results are authoritative when present: they carry the
+  // complete Phase-1 result plus any lock/transfer state later phases wrote.
+  const stored = Array.isArray(lp.results) && lp.results.length > 0
     ? lp.results
     : (Array.isArray(lp.partialResults) ? lp.partialResults : []);
-  return cloneJson(source).filter((result) => result && result.poolId);
+  const storedClean = cloneJson(stored).filter((result) => result && result.poolId);
+  // Also reconstruct any allocation that has a pool on-chain but never made it
+  // into the structured results — a launch that died mid-Phase-1 (pool created,
+  // some positions open, but no phase1_pool_done emitted). Without this such a
+  // launch looks empty here and the resume tries to recreate the already-
+  // existing pool and fails. The merge lets stored results win and only fills
+  // the gaps (see launchRecovery.js). This is also what makes a recorded-but-
+  // orphaned pool a known prior, so the resume endpoint can adopt it instead of
+  // refusing.
+  const reconstructed = reconstructPartialResultsFromEvents(journal);
+  return mergePriorResults(storedClean, reconstructed);
 }
 
 function hasCompletedLpResults(journal) {
@@ -1467,13 +1485,88 @@ function hasCompletedLpResults(journal) {
   );
 }
 
-function unsafeCreatedPoolEvents(journal, priorResults) {
-  const completedAllocations = new Set(priorResults.map((r) => r.allocationIndex));
-  return (journal.events || []).filter(
-    (event) =>
-      event.stage === 'pool_create_done' &&
-      !completedAllocations.has(event.allocationIndex),
-  );
+// Best-effort on-chain verification that the pools a resume is about to ADOPT
+// actually exist. We reach here only for pools the journal recorded as created
+// but that never produced a completed structured result (orphaned by a
+// mid-Phase-1 failure). A recorded pool_create_done is not proof the pool
+// exists on the active cluster — the RPC may have changed, the journal may be
+// stale, or the create may have reverted — so before the orchestrator adopts
+// one (skipping pool creation entirely) we confirm it is a real CLMM pool
+// account. If it isn't, or if RPC is unreachable, stay conservative and refuse
+// the automatic resume with a clear sweep/recover message rather than failing
+// cryptically mid-adoption.
+//
+// Returns { ok: true } when every pool verifies, otherwise
+// { ok: false, message, unverified: [poolId, ...] }.
+async function verifyResumablePoolsOnChain(poolIds) {
+  const ids = Array.from(new Set((poolIds || []).filter(Boolean)));
+  if (ids.length === 0) return { ok: true };
+
+  // Dynamic imports mirror the existing in-file pattern (the diagnose endpoint
+  // does the same) and source the CLMM program id from the installed SDK
+  // rather than hardcoding a literal. PublicKey is already imported at module
+  // scope.
+  let Connection;
+  let clmmProgramId;
+  try {
+    ({ Connection } = await import('@solana/web3.js'));
+    const sdk = await import('@raydium-io/raydium-sdk-v2');
+    clmmProgramId = sdk.CLMM_PROGRAM_ID instanceof PublicKey
+      ? sdk.CLMM_PROGRAM_ID
+      : new PublicKey(sdk.CLMM_PROGRAM_ID);
+  } catch (e) {
+    return {
+      ok: false,
+      unverified: ids,
+      message:
+        `Couldn't load the on-chain libraries needed to verify the recorded ` +
+        `pool(s) before resuming (${e.message}). Recover or sweep the launch ` +
+        `wallet manually; recorded pool(s): ${ids.join(', ')}.`,
+    };
+  }
+
+  let connection;
+  try {
+    connection = new Connection(getRpcConfig().active, 'confirmed');
+  } catch (e) {
+    return {
+      ok: false,
+      unverified: ids,
+      message:
+        `Couldn't reach an RPC endpoint to verify the recorded pool(s) before ` +
+        `resuming (${e.message}). Check the RPC panel and retry, or recover/` +
+        `sweep the launch wallet manually; recorded pool(s): ${ids.join(', ')}.`,
+    };
+  }
+
+  const unverified = [];
+  for (const id of ids) {
+    try {
+      const info = await connection.getAccountInfo(new PublicKey(id));
+      // Missing account, or one not owned by the CLMM program, means the
+      // recorded pool isn't a live CLMM pool on this cluster.
+      if (!info || !info.owner || !info.owner.equals(clmmProgramId)) {
+        unverified.push(id);
+      }
+    } catch (e) {
+      // An RPC error for this id — treat as unverified (conservative).
+      unverified.push(id);
+    }
+  }
+
+  if (unverified.length > 0) {
+    return {
+      ok: false,
+      unverified,
+      message:
+        `Trebuchet recorded ${unverified.length === 1 ? 'a pool' : 'pools'} it ` +
+        `can't confirm on-chain right now, so it won't resume automatically ` +
+        `(adopting a pool that isn't really there could corrupt the launch). ` +
+        `Recover or sweep the launch wallet manually; unverified pool(s): ` +
+        `${unverified.join(', ')}.`,
+    };
+  }
+  return { ok: true };
 }
 
 app.post('/api/create-token', uploadLogo, async (req, res) => {
@@ -1828,6 +1921,82 @@ const compatCache = new Map();
 // for every non-SOL quote regardless of this cache.
 const step2ProbeCache = new Map();
 const STEP2_PROBE_TTL_MS = 3 * 60 * 1000;  // 3 minutes
+
+// Finish a token creation that stopped AFTER the mint already existed.
+// create-token's per-step retries cover transient blips; this covers the rare
+// non-transient stop (an outage longer than the retry window, say) that leaves
+// a paid-for mint with some post-mint steps undone. It reads the mint and the
+// journal's recorded token params, detects what's already on-chain, and
+// completes only the missing steps — never minting a new token or re-minting
+// supply. The journal's recorded txIds are cross-checked against on-chain state.
+// Body: { walletPublicKey, tempWalletSecretKey? }
+app.post('/api/finish-token-creation', async (req, res) => {
+  try {
+    const { secretKeyArr, walletPublicKey } = resolveSigner({
+      tempWalletSecretKey: req.body.tempWalletSecretKey,
+      walletPublicKey: req.body.walletPublicKey,
+    });
+    if (!walletPublicKey) {
+      return res.status(400).json({ success: false, error: 'walletPublicKey or tempWalletSecretKey required' });
+    }
+
+    const journal = launchJournal.activeForWallet(walletPublicKey);
+    if (!journal || !journal.token || !journal.token.mint) {
+      return res.status(409).json({
+        success: false,
+        error: 'No interrupted token creation found for this wallet (no recorded mint).',
+      });
+    }
+    const { mint, name, symbol, totalSupply, metadataUri } = journal.token;
+    if (totalSupply == null) {
+      return res.status(409).json({
+        success: false,
+        error: 'The recorded token entry is missing its supply; cannot safely finish it.',
+      });
+    }
+
+    const status = await finishTokenCreation({
+      tempWalletSecretKey: secretKeyArr,
+      tokenMint: mint,
+      name,
+      symbol,
+      totalSupply,
+      metadataUri,
+      journalEvents: journal.events || [],
+      onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
+    });
+
+    // Reflect the finished state back into the journal. Merge onto the existing
+    // token record so the name/symbol/uri already there are preserved. Once the
+    // mint authority is renounced the token is usable, so we move the stage back
+    // to 'token_created' and let the normal flow continue.
+    launchJournal.upsertForWallet(
+      walletPublicKey,
+      {
+        status: 'active',
+        stage: status.mintAuthorityRenounced ? 'token_created' : 'token_create_finished',
+        error: null,
+        token: {
+          ...journal.token,
+          mintAuthorityRenounced: status.mintAuthorityRenounced,
+          metadataUpdateAuthorityRevoked: status.updateAuthorityRevoked,
+          isSafe: status.isSafe,
+        },
+      },
+      {
+        stage: 'token_create_finished',
+        isSafe: status.isSafe,
+        steps: status.steps,
+        sanity: status.sanity,
+      },
+    );
+
+    res.json({ success: true, ...status });
+  } catch (error) {
+    console.error('Error finishing token creation:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // Quote-token info: when the user picks/enters a quote token in the UI,
 // we look up its symbol/decimals/USD price for inline display. For known
@@ -2722,6 +2891,10 @@ app.post('/api/create-lp', async (req, res) => {
           stage: `lp_${error.failedPhase || 'unknown'}_failed`,
           error: error.message,
           lp: {
+            // Classify the failure so the recovery UI can surface a funds
+            // shortfall as an actionable 'add SOL and resume' state. error.kind
+            // is set by the retry helpers; otherwise re-derive from error text.
+            failedKind: error.failedKind || error.kind || classifyChainError(error),
             partialResults: error.partialResults || [],
             failedAllocationIndex: error.failedAllocationIndex,
             failedAllocation: error.failedAllocation,
@@ -2749,9 +2922,10 @@ app.post('/api/create-lp', async (req, res) => {
       // tells the frontend which phase failed so it can render the progress
       // tree correctly and decide retry semantics:
       //   - pre_flight: nothing on-chain happened, fix config and retry
-      //   - main_positions: pool may have been created, current behaviour
-      //     is to require a sweep; mid-Phase-1 partial recovery is a
-      //     larger refactor for later
+      //   - main_positions: a pool may have been created and some positions
+      //     opened; resume now reconstructs that orphaned pool from the event
+      //     log, verifies it on-chain, adopts it, and opens only the still-
+      //     missing positions (see launchRecovery.js + createSinglePool resume)
       //   - bootstrap: main positions intact, retry bootstraps only
       //   - locks: positions all open, retry the lock phase only
       //   - transfers: positions locked, un-transferred Fee Keys will
@@ -2918,6 +3092,10 @@ app.post('/api/resume-launch', async (req, res) => {
           stage: `lp_${error.failedPhase || 'resume'}_failed`,
           error: error.message,
           lp: {
+            // Classify the failure so the recovery UI can surface a funds
+            // shortfall as an actionable 'add SOL and resume' state. error.kind
+            // is set by the retry helpers; otherwise re-derive from error text.
+            failedKind: error.failedKind || error.kind || classifyChainError(error),
             partialResults: error.partialResults || [],
             failedAllocationIndex: error.failedAllocationIndex,
             failedAllocation: error.failedAllocation,
@@ -3811,17 +3989,33 @@ app.post('/api/launch-journals/resume', async (req, res) => {
       return res.json({ success: true, recovered: true, results: priorResults });
     }
 
-    const unsafeEvents = unsafeCreatedPoolEvents(journal, priorResults);
-    if (unsafeEvents.length > 0) {
-      const pools = unsafeEvents.map((event) => event.poolId).filter(Boolean).join(', ');
-      return res.status(409).json({
-        success: false,
-        error:
-          'This journal recorded a pool creation before it recorded completed LP positions. ' +
-          'Trebuchet cannot safely resume automatically without risking duplicate pool work. ' +
-          `Recover or sweep the launch wallet manually${pools ? `; recorded pool(s): ${pools}` : ''}.`,
-        unsafePoolEvents: unsafeEvents,
-      });
+    // Any pool we're about to ADOPT — reconstructed from the event log because
+    // it never produced a completed structured result — must be verified to
+    // exist on-chain first. Pools already present in the stored results were
+    // proven good on a prior pass, so we don't re-verify those: this keeps the
+    // common transfer-retry resume free of an extra RPC round-trip and matches
+    // the pre-reconstruction behaviour for normal resumes.
+    const lpForResume = journal.lp || {};
+    const storedPoolIds = new Set(
+      [
+        ...(Array.isArray(lpForResume.results) ? lpForResume.results : []),
+        ...(Array.isArray(lpForResume.partialResults) ? lpForResume.partialResults : []),
+      ]
+        .filter((r) => r && r.poolId)
+        .map((r) => r.poolId),
+    );
+    const adoptedPoolIds = priorResults
+      .map((r) => r.poolId)
+      .filter((id) => id && !storedPoolIds.has(id));
+    if (adoptedPoolIds.length > 0) {
+      const verification = await verifyResumablePoolsOnChain(adoptedPoolIds);
+      if (!verification.ok) {
+        return res.status(409).json({
+          success: false,
+          error: verification.message,
+          unverifiedPools: verification.unverified || adoptedPoolIds,
+        });
+      }
     }
 
     launchJournal.upsertForWallet(
@@ -3905,6 +4099,10 @@ app.post('/api/launch-journals/resume', async (req, res) => {
           stage: `lp_${error.failedPhase || 'resume'}_failed`,
           error: error.message,
           lp: {
+            // Classify the failure so the recovery UI can surface a funds
+            // shortfall as an actionable 'add SOL and resume' state. error.kind
+            // is set by the retry helpers; otherwise re-derive from error text.
+            failedKind: error.failedKind || error.kind || classifyChainError(error),
             partialResults,
             failedAllocationIndex: error.failedAllocationIndex,
             failedAllocation: error.failedAllocation,
