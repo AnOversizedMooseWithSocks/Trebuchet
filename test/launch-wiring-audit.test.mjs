@@ -37,7 +37,7 @@ const poolEditorSrc = readFileSync(path.join(REPO, 'public', 'modules', 'pool-ed
 
 test('journal replay covers support locks (and keys on supportIndex)', () => {
   assert.ok(
-    /if \(event\.stage === 'support_lock_done'\) \{\r?\n\s*const pos = result\.supportPositions\?\.\[event\.supportIndex\];/.test(serverSrc),
+    /if \(event\.stage === 'support_lock_done'[^)]*\) \{\r?\n\s*const pos = result\.supportPositions\?\.\[event\.supportIndex\];/.test(serverSrc),
     'applyLpEventToResults must handle support_lock_done via supportIndex',
   );
 });

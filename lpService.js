@@ -101,10 +101,12 @@ import {
   Raydium,
   TxVersion,
   CLMM_PROGRAM_ID,
+  LockClPositionLayoutV2,
 } from '@raydium-io/raydium-sdk-v2';
 import {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
   unpackMint,
   getExtensionTypes,
   ExtensionType,
@@ -391,6 +393,43 @@ async function assertRecoveredPositionNftsOwned({
       );
     }
   }
+}
+
+// Enumerate the CLMM positions the launch wallet holds in one pool, read
+// straight from chain. getOwnerPositionInfo walks every position NFT the wallet
+// holds and decodes the personal-position account behind each; we keep only the
+// ones whose poolId matches. The resume path uses this to compare what the
+// journal believes was opened against what actually landed on-chain.
+async function fetchOwnerClmmPositionsForPool(raydium, poolId) {
+  const all = await raydium.clmm.getOwnerPositionInfo({ programId: CLMM_PROGRAM_ID });
+  const target = poolId.toString();
+  return (all || [])
+    .filter((p) => p && p.poolId && p.poolId.toString() === target)
+    .map((p) => ({
+      nftMint: p.nftMint.toString(),
+      tickLower: Number(p.tickLower),
+      tickUpper: Number(p.tickUpper),
+    }));
+}
+
+// From a pre-fetched list of on-chain positions, return those that sit at an
+// exact tick range and are NOT already accounted for by nftMint. This catches a
+// position that landed on-chain but never reached the journal: a tx whose
+// confirmation timed out (common under launch-time congestion) even though it
+// actually succeeded. A journal-only resume would open that slot AGAIN, making a
+// duplicate that wastes rent and splits liquidity, or failing outright because
+// the tokens were already deposited. Matching by tick range plus an nftMint
+// exclusion set lets the caller fold these into the recovered set so the open
+// loop skips them instead of reopening them.
+export function unrecordedPositionsAtRange(onChainPositions, tickLower, tickUpper, recordedNftMints) {
+  return (onChainPositions || []).filter(
+    (p) =>
+      p &&
+      p.nftMint &&
+      Number(p.tickLower) === Number(tickLower) &&
+      Number(p.tickUpper) === Number(tickUpper) &&
+      !recordedNftMints.has(p.nftMint),
+  );
 }
 
 // Maximum allowed ratio between the user-committed quote-token USD price
@@ -1320,6 +1359,95 @@ async function createSinglePool({
   const mainPositions = [];
   const ladderPositions = [];
   const supportPositions = [];
+  // --- On-chain reconciliation (resume safety) -----------------------------
+  // A position open can land on-chain even when execute() throws (a confirmation
+  // timeout under congestion is the classic case). That position is never
+  // written to the launch journal, so resuming purely from the journal would
+  // open the same slot again. Before trusting the journal, ask the chain what
+  // the wallet actually holds in this pool and fold any unrecorded positions
+  // into the recovered set so they are skipped, not duplicated. The scan is
+  // best-effort: if it fails we fall back to the journal-only view, which is no
+  // worse than the behaviour before this check existed.
+  let onChainPoolPositions = [];
+  if (recoveringPhase1) {
+    try {
+      onChainPoolPositions = await fetchOwnerClmmPositionsForPool(raydium, poolId);
+      console.log(
+        `  on-chain reconciliation: launch wallet holds ${onChainPoolPositions.length} ` +
+          `position(s) in pool ${poolId}`,
+      );
+    } catch (e) {
+      console.warn(`  on-chain reconciliation scan failed (non-fatal): ${e.message}`);
+      onChainPoolPositions = [];
+    }
+
+    // Main positions all share the same tick range, so reconcile by count: any
+    // main-range position on-chain that is not already recorded is assigned to
+    // the next free slice index. The index is cosmetic (the position already
+    // landed with its own amount); what matters is that the open loop skips the
+    // right NUMBER of slices and never reopens one.
+    const allKnownNfts = new Set(
+      [
+        ...clonePositionArray(existingPool?.mainPositions),
+        ...clonePositionArray(existingPool?.ladderPositions),
+        ...clonePositionArray(existingPool?.supportPositions),
+      ]
+        .map((p) => p && p.nftMint)
+        .filter(Boolean),
+    );
+    const unrecordedMain = unrecordedPositionsAtRange(
+      onChainPoolPositions,
+      mainTicks.tickLower,
+      mainTicks.tickUpper,
+      allKnownNfts,
+    );
+    if (unrecordedMain.length > 0) {
+      const usedIndexes = new Set(
+        clonePositionArray(existingPool?.mainPositions)
+          .map((p) => finiteNumberOr(p.sliceIndex, null))
+          .filter((i) => Number.isInteger(i)),
+      );
+      const injected = [];
+      for (const pos of unrecordedMain) {
+        let freeIndex = -1;
+        for (let i = 0; i < distribution.length; i++) {
+          if (!usedIndexes.has(i)) {
+            freeIndex = i;
+            break;
+          }
+        }
+        if (freeIndex < 0) break; // more on-chain positions than planned slices
+        usedIndexes.add(freeIndex);
+        injected.push({
+          sliceIndex: freeIndex,
+          sharePercent: distribution[freeIndex] ? distribution[freeIndex].sharePercent : null,
+          tickLower: pos.tickLower,
+          tickUpper: pos.tickUpper,
+          nftMint: pos.nftMint,
+          locked: false,
+          recipient: (distribution[freeIndex] && distribution[freeIndex].recipient) || null,
+        });
+      }
+      if (injected.length > 0) {
+        existingPool = {
+          ...existingPool,
+          mainPositions: [...clonePositionArray(existingPool?.mainPositions), ...injected],
+        };
+        console.log(
+          `  on-chain reconciliation: adopted ${injected.length} main position(s) that landed ` +
+            `on-chain but were absent from the journal`,
+        );
+        progress({
+          stage: 'phase1_recovery_reconciled',
+          poolId,
+          kind: 'main',
+          adopted: injected.length,
+          nftMints: injected.map((p) => p.nftMint),
+        });
+      }
+    }
+  }
+
   const recoveredMainByIndex = recoveringPhase1
     ? normalizeRecoveredMainPositions(existingPool, distribution, mainTicks)
     : new Map();
@@ -1583,6 +1711,68 @@ async function createSinglePool({
       ? `ceiling ${ladderCeiling}x`
       : 'manual band ranges';
     console.log(`  opening ${ladderBands.length} ladder bands (${ceilingLabel}):`);
+    // On-chain reconciliation for ladder bands: each band has a distinct tick
+    // range, so match by range. Adopt any band that landed on-chain but is
+    // missing from the journal so the loop below skips it. See the main-position
+    // reconciliation note earlier in this function.
+    if (recoveringPhase1 && onChainPoolPositions.length > 0) {
+      const allKnownNfts = new Set(
+        [
+          ...clonePositionArray(existingPool?.mainPositions),
+          ...clonePositionArray(existingPool?.ladderPositions),
+          ...clonePositionArray(existingPool?.supportPositions),
+        ]
+          .map((p) => p && p.nftMint)
+          .filter(Boolean),
+      );
+      const recordedBandIndexes = new Set(
+        clonePositionArray(existingPool?.ladderPositions)
+          .map((p) => finiteNumberOr(p.bandIndex, null))
+          .filter((i) => Number.isInteger(i)),
+      );
+      const injectedLadder = [];
+      for (let bi = 0; bi < bandTicks.length; bi++) {
+        if (recordedBandIndexes.has(bi)) continue;
+        const matches = unrecordedPositionsAtRange(
+          onChainPoolPositions,
+          bandTicks[bi].tickLower,
+          bandTicks[bi].tickUpper,
+          allKnownNfts,
+        );
+        if (matches.length > 0) {
+          const pos = matches[0];
+          allKnownNfts.add(pos.nftMint);
+          injectedLadder.push({
+            bandIndex: bi,
+            tickLower: pos.tickLower,
+            tickUpper: pos.tickUpper,
+            nftMint: pos.nftMint,
+            locked: false,
+          });
+        }
+      }
+      if (injectedLadder.length > 0) {
+        existingPool = {
+          ...existingPool,
+          ladderPositions: [
+            ...clonePositionArray(existingPool?.ladderPositions),
+            ...injectedLadder,
+          ],
+        };
+        console.log(
+          `  on-chain reconciliation: adopted ${injectedLadder.length} ladder band(s) that landed ` +
+            `on-chain but were absent from the journal`,
+        );
+        progress({
+          stage: 'phase1_recovery_reconciled',
+          poolId,
+          kind: 'ladder',
+          adopted: injectedLadder.length,
+          nftMints: injectedLadder.map((p) => p.nftMint),
+        });
+      }
+    }
+
     const recoveredLadderByIndex = recoveringPhase1
       ? normalizeRecoveredLadderPositions(existingPool, bandTicks)
       : new Map();
@@ -1797,6 +1987,55 @@ async function createSinglePool({
       depthPct,
     });
 
+    // On-chain reconciliation for the support position (single range). Adopt it
+    // if it landed on-chain but is missing from the journal. See the main note.
+    if (
+      recoveringPhase1 &&
+      onChainPoolPositions.length > 0 &&
+      clonePositionArray(existingPool?.supportPositions).length === 0
+    ) {
+      const allKnownNfts = new Set(
+        [
+          ...clonePositionArray(existingPool?.mainPositions),
+          ...clonePositionArray(existingPool?.ladderPositions),
+        ]
+          .map((p) => p && p.nftMint)
+          .filter(Boolean),
+      );
+      const matches = unrecordedPositionsAtRange(
+        onChainPoolPositions,
+        supportTicks.tickLower,
+        supportTicks.tickUpper,
+        allKnownNfts,
+      );
+      if (matches.length > 0) {
+        const pos = matches[0];
+        existingPool = {
+          ...existingPool,
+          supportPositions: [
+            {
+              tickLower: pos.tickLower,
+              tickUpper: pos.tickUpper,
+              depthPct,
+              nftMint: pos.nftMint,
+              locked: false,
+            },
+          ],
+        };
+        console.log(
+          `  on-chain reconciliation: adopted 1 support position that landed on-chain ` +
+            `but was absent from the journal`,
+        );
+        progress({
+          stage: 'phase1_recovery_reconciled',
+          poolId,
+          kind: 'support',
+          adopted: 1,
+          nftMints: [pos.nftMint],
+        });
+      }
+    }
+
     const recoveredSupportPositions = recoveringPhase1
       ? normalizeRecoveredSupportPositions(existingPool, supportTicks, depthPct)
       : [];
@@ -1971,6 +2210,11 @@ async function openBootstrapPosition({
   ctx,
   // NOTE: lockPositions no longer accepted; locking happens in the
   // dedicated Phase 3 (lockAllPositions). See createSinglePool's note.
+  //
+  // priorNftMints: the main/ladder/support position NFTs already known for this
+  // pool. Excluded from the bootstrap on-chain reconciliation match below
+  // (belt-and-suspenders; the straddling bootstrap range is unique anyway).
+  priorNftMints,
   onProgress,
 }) {
   const progress = (event) => onProgress && onProgress(event);
@@ -2017,6 +2261,50 @@ async function openBootstrapPosition({
     `  bootstrap range [${bsTicks.tickLower}, ${bsTicks.tickUpper}] ` +
       `(mode=${bootstrapMode})`,
   );
+
+  // --- On-chain reconciliation (resume safety) -----------------------------
+  // The bootstrap open can land on-chain even when execute() throws (a
+  // confirmation timeout under congestion). If that happened on a prior attempt
+  // the journal never recorded it, so item.existingBootstrap stays unset and we
+  // arrive here and would open a SECOND bootstrap. Before opening, ask the chain
+  // whether the wallet already holds a position at exactly this bootstrap range.
+  // The bootstrap straddles the current tick (or is full-range in custom mode),
+  // a shape no one-sided main, ladder, or support position can match, so a range
+  // hit here is unambiguously a previously-landed bootstrap. The scan runs on
+  // every attempt (not just resumes) so a late-landing duplicate is caught too.
+  // Best-effort: a scan failure falls back to opening, the pre-existing path.
+  try {
+    const onChainBoot = await fetchOwnerClmmPositionsForPool(raydium, poolId);
+    const adoptBoot = unrecordedPositionsAtRange(
+      onChainBoot,
+      bsTicks.tickLower,
+      bsTicks.tickUpper,
+      new Set((priorNftMints || []).filter(Boolean)),
+    );
+    if (adoptBoot.length > 0) {
+      const pos = adoptBoot[0];
+      console.log(
+        `  on-chain reconciliation: bootstrap already landed (nft=${pos.nftMint}); ` +
+          `adopting it instead of opening a duplicate`,
+      );
+      progress({
+        stage: 'bootstrap_open_recovered',
+        nftMint: pos.nftMint,
+        tickLower: pos.tickLower,
+        tickUpper: pos.tickUpper,
+      });
+      return {
+        nftMint: pos.nftMint,
+        locked: false,
+        tickLower: pos.tickLower,
+        tickUpper: pos.tickUpper,
+        txIds: { open: null, lock: null },
+      };
+    }
+  } catch (e) {
+    console.warn(`  bootstrap on-chain reconciliation scan failed (non-fatal): ${e.message}`);
+  }
+
   progress({ stage: 'bootstrap_open_start' });
 
   // Compute otherAmountMax for the bootstrap.
@@ -2165,6 +2453,101 @@ function feeKeyMintFromLockResult(lockRes) {
   }
 }
 
+// Raydium's CLMM lock program ("Burn & Earn"). A locked position's NFT is held
+// in this program's escrow; the program also stores a per-lock account that
+// maps the original position mint to the Fee Key (lock NFT) mint. The id is the
+// immutable deployed program address, taken from the SDK's constants.
+const CLMM_LOCK_PROGRAM_ID = new PublicKey('DLockwT7X7sxtLmGH9g5kmfcjaBtncdbUmi738m5bvQC');
+
+// Byte offset of the positionId field inside the lock program's
+// LockClPositionLayoutV2 account (8 discriminator + 1 bump + 32 lockOwner + 32
+// poolId = 73). Used ONLY to pre-filter the getProgramAccounts scan below, and
+// deliberately not load-bearing for correctness: if it were wrong the scan would
+// just return no match and the caller would record the original failure — it can
+// never produce a wrong Fee Key. The Fee Key itself is read with the SDK's own
+// decoder, not a hand-coded offset, and re-verified against positionId.
+const LOCK_ACCT_POSITION_ID_OFFSET = 73;
+
+// Look up the on-chain lock for a position directly from the lock program. A
+// lock account whose positionId matches means the position is already locked,
+// and that same account carries the Fee Key (lock NFT) mint — the value the
+// report needs and Phase 4 transfers. Returns the Fee Key mint as a base58
+// string, or null when no lock exists.
+//
+// Why look up by positionId (a getProgramAccounts memcmp) rather than the SDK's
+// getOwnerLockedPositionInfo: that method enumerates locks via the lock NFTs the
+// wallet currently holds, so it would miss a main position whose Fee Key has
+// already been transferred to a recipient. The lock account records the
+// immutable positionId, so looking up by it finds the lock no matter where the
+// Fee Key now lives. The matched account is decoded with the SDK's own
+// LockClPositionLayoutV2 — not hand-coded byte offsets — and its decoded
+// positionId is re-checked, so neither the filter offset nor any field offset is
+// load-bearing for correctness.
+//
+// This is only ever called from a lock failure path: a lock attempt threw, and
+// we are asking whether it nonetheless already happened (a confirmation timeout
+// throws even when the tx landed, and a resume re-locks a position whose prior
+// lock was never journaled). A throw or null here leaves the original failure
+// intact, so this can never invent a success — only reclassify a genuine
+// on-chain lock the journal missed. Cost is paid only when a lock fails, never
+// on the happy path.
+async function findLockFeeKeyForPosition(raydium, positionNftMint) {
+  const accounts = await raydium.connection.getProgramAccounts(CLMM_LOCK_PROGRAM_ID, {
+    filters: [
+      {
+        // Pre-filter to lock accounts whose positionId equals this position's
+        // mint; the decode below re-verifies, so this only narrows the scan.
+        memcmp: {
+          offset: LOCK_ACCT_POSITION_ID_OFFSET,
+          bytes: positionNftMint,
+          encoding: 'base58',
+        },
+      },
+    ],
+  });
+  for (const acct of accounts || []) {
+    let decoded;
+    try {
+      decoded = LockClPositionLayoutV2.decode(acct.account.data);
+    } catch (_) {
+      continue; // not a lock account we can read — ignore
+    }
+    if (
+      decoded &&
+      decoded.positionId &&
+      decoded.positionId.toString() === positionNftMint &&
+      decoded.lockNftMint
+    ) {
+      return decoded.lockNftMint.toString();
+    }
+  }
+  return null;
+}
+
+// Check whether a Fee Key (lock NFT) already sits in the recipient's wallet —
+// positive evidence that a prior transfer landed even though its confirmation
+// never reached the journal. Returns true only when the recipient's associated
+// token account for the mint holds the NFT; any RPC error or missing account
+// returns false (errors swallowed here). Like the lock check above, this is
+// only consulted on a transfer failure path, so it adds no happy-path cost and
+// can only reclassify a transfer that genuinely already landed. Lock NFTs are
+// standard SPL tokens, so the classic Token program ATA is the right
+// derivation.
+async function feeKeyIsAtRecipient(raydium, feeKeyMint, recipient) {
+  try {
+    const ata = getAssociatedTokenAddressSync(
+      new PublicKey(feeKeyMint),
+      new PublicKey(recipient),
+      true, // recipients may be PDAs or multisigs (owner off-curve)
+      TOKEN_PROGRAM_ID,
+    );
+    const bal = await raydium.connection.getTokenAccountBalance(ata);
+    return !!(bal && bal.value && Number(bal.value.amount) >= 1);
+  } catch (_) {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 3: Lock every position across every pool.
 //
@@ -2282,20 +2665,47 @@ async function lockAllPositions({ raydium, results, onProgress }) {
           feeKeyNftMint: pos.feeKeyNftMint,
         });
       } catch (e) {
-        console.error(`  lock FAILED: ${e.message}`);
-        lockFailures.push({
-          allocationIndex: allocIdx,
-          positionType: 'main',
-          sliceIndex: i,
-          nftMint: pos.nftMint,
-          error: e.message,
-        });
-        progress({
-          stage: 'main_lock_failed',
-          allocationIndex: allocIdx,
-          sliceIndex: i,
-          error: e.message,
-        });
+        // The lock may have actually landed despite this throw (a confirmation
+        // timeout under congestion), or this is a resume re-locking a position
+        // whose prior lock was never journaled — in which case re-locking
+        // throws because the position NFT is already in the lock escrow. Ask
+        // the lock program before recording a failure; if a lock exists, adopt
+        // its Fee Key and treat it as recovered. Any scan error leaves the
+        // failure intact.
+        let recoveredFeeKey = null;
+        try {
+          recoveredFeeKey = await findLockFeeKeyForPosition(raydium, pos.nftMint);
+        } catch (_) {
+          recoveredFeeKey = null;
+        }
+        if (recoveredFeeKey) {
+          pos.locked = true;
+          pos.feeKeyNftMint = recoveredFeeKey;
+          console.log(
+            `  lock already on-chain (Fee Key ${recoveredFeeKey}); recovered`,
+          );
+          progress({
+            stage: 'main_lock_recovered',
+            allocationIndex: allocIdx,
+            sliceIndex: i,
+            feeKeyNftMint: recoveredFeeKey,
+          });
+        } else {
+          console.error(`  lock FAILED: ${e.message}`);
+          lockFailures.push({
+            allocationIndex: allocIdx,
+            positionType: 'main',
+            sliceIndex: i,
+            nftMint: pos.nftMint,
+            error: e.message,
+          });
+          progress({
+            stage: 'main_lock_failed',
+            allocationIndex: allocIdx,
+            sliceIndex: i,
+            error: e.message,
+          });
+        }
       }
       // Inter-tx pacing — see LOCK_TX_PACING_MS rationale above.
       // Applies whether the lock succeeded or failed; the next lock
@@ -2341,20 +2751,41 @@ async function lockAllPositions({ raydium, results, onProgress }) {
           txId: lockTx.txId,
         });
       } catch (e) {
-        console.error(`  lock FAILED: ${e.message}`);
-        lockFailures.push({
-          allocationIndex: allocIdx,
-          positionType: 'ladder',
-          sliceIndex: bi,
-          nftMint: lp.nftMint,
-          error: e.message,
-        });
-        progress({
-          stage: 'ladder_lock_failed',
-          allocationIndex: allocIdx,
-          bandIndex: bi,
-          error: e.message,
-        });
+        // See the main-slice lock catch above for the rationale.
+        let recoveredFeeKey = null;
+        try {
+          recoveredFeeKey = await findLockFeeKeyForPosition(raydium, lp.nftMint);
+        } catch (_) {
+          recoveredFeeKey = null;
+        }
+        if (recoveredFeeKey) {
+          lp.locked = true;
+          lp.feeKeyNftMint = recoveredFeeKey;
+          console.log(
+            `  lock already on-chain (Fee Key ${recoveredFeeKey}); recovered`,
+          );
+          progress({
+            stage: 'ladder_lock_recovered',
+            allocationIndex: allocIdx,
+            bandIndex: bi,
+            feeKeyNftMint: recoveredFeeKey,
+          });
+        } else {
+          console.error(`  lock FAILED: ${e.message}`);
+          lockFailures.push({
+            allocationIndex: allocIdx,
+            positionType: 'ladder',
+            sliceIndex: bi,
+            nftMint: lp.nftMint,
+            error: e.message,
+          });
+          progress({
+            stage: 'ladder_lock_failed',
+            allocationIndex: allocIdx,
+            bandIndex: bi,
+            error: e.message,
+          });
+        }
       }
       // Inter-tx pacing — same rationale as the main-slice loop above.
       await sleepMs(LOCK_TX_PACING_MS);
@@ -2401,20 +2832,41 @@ async function lockAllPositions({ raydium, results, onProgress }) {
           txId: lockTx.txId,
         });
       } catch (e) {
-        console.error(`  lock FAILED: ${e.message}`);
-        lockFailures.push({
-          allocationIndex: allocIdx,
-          positionType: 'support',
-          sliceIndex: si,
-          nftMint: sp.nftMint,
-          error: e.message,
-        });
-        progress({
-          stage: 'support_lock_failed',
-          allocationIndex: allocIdx,
-          supportIndex: si,
-          error: e.message,
-        });
+        // See the main-slice lock catch above for the rationale.
+        let recoveredFeeKey = null;
+        try {
+          recoveredFeeKey = await findLockFeeKeyForPosition(raydium, sp.nftMint);
+        } catch (_) {
+          recoveredFeeKey = null;
+        }
+        if (recoveredFeeKey) {
+          sp.locked = true;
+          sp.feeKeyNftMint = recoveredFeeKey;
+          console.log(
+            `  lock already on-chain (Fee Key ${recoveredFeeKey}); recovered`,
+          );
+          progress({
+            stage: 'support_lock_recovered',
+            allocationIndex: allocIdx,
+            supportIndex: si,
+            feeKeyNftMint: recoveredFeeKey,
+          });
+        } else {
+          console.error(`  lock FAILED: ${e.message}`);
+          lockFailures.push({
+            allocationIndex: allocIdx,
+            positionType: 'support',
+            sliceIndex: si,
+            nftMint: sp.nftMint,
+            error: e.message,
+          });
+          progress({
+            stage: 'support_lock_failed',
+            allocationIndex: allocIdx,
+            supportIndex: si,
+            error: e.message,
+          });
+        }
       }
       // Inter-tx pacing — same rationale as the main-slice loop above.
       await sleepMs(LOCK_TX_PACING_MS);
@@ -2441,19 +2893,39 @@ async function lockAllPositions({ raydium, results, onProgress }) {
           txId: lockTx.txId,
         });
       } catch (e) {
-        console.error(`  bootstrap lock FAILED: ${e.message}`);
-        lockFailures.push({
-          allocationIndex: allocIdx,
-          positionType: 'bootstrap',
-          sliceIndex: null,
-          nftMint: bs.nftMint,
-          error: e.message,
-        });
-        progress({
-          stage: 'bootstrap_lock_failed',
-          allocationIndex: allocIdx,
-          error: e.message,
-        });
+        // See the main-slice lock catch above for the rationale.
+        let recoveredFeeKey = null;
+        try {
+          recoveredFeeKey = await findLockFeeKeyForPosition(raydium, bs.nftMint);
+        } catch (_) {
+          recoveredFeeKey = null;
+        }
+        if (recoveredFeeKey) {
+          bs.locked = true;
+          bs.feeKeyNftMint = recoveredFeeKey;
+          console.log(
+            `  bootstrap lock already on-chain (Fee Key ${recoveredFeeKey}); recovered`,
+          );
+          progress({
+            stage: 'bootstrap_lock_recovered',
+            allocationIndex: allocIdx,
+            feeKeyNftMint: recoveredFeeKey,
+          });
+        } else {
+          console.error(`  bootstrap lock FAILED: ${e.message}`);
+          lockFailures.push({
+            allocationIndex: allocIdx,
+            positionType: 'bootstrap',
+            sliceIndex: null,
+            nftMint: bs.nftMint,
+            error: e.message,
+          });
+          progress({
+            stage: 'bootstrap_lock_failed',
+            allocationIndex: allocIdx,
+            error: e.message,
+          });
+        }
       }
       // Inter-tx pacing — same rationale as the main-slice loop above.
       // This is also the last lock in this pool's iteration, so it paces
@@ -2562,20 +3034,37 @@ async function transferFeeKeys({ raydium, ownerKeypair, results, onProgress }) {
           txId,
         });
       } catch (e) {
-        console.error(`  transfer FAILED: ${e.message}`);
-        transferFailures.push({
-          allocationIndex: allocIdx,
-          sliceIndex: i,
-          nftMint: pos.nftMint,
-          recipient: pos.recipient,
-          error: e.message,
-        });
-        progress({
-          stage: 'main_transfer_failed',
-          allocationIndex: allocIdx,
-          sliceIndex: i,
-          error: e.message,
-        });
+        // The transfer may have actually landed despite this throw, or this is
+        // a resume re-transferring a Fee Key that already left this wallet — in
+        // which case re-transferring throws. Before recording a failure, check
+        // whether the Fee Key is already sitting at the recipient; if so, record
+        // it and treat it as recovered. feeKeyIsAtRecipient swallows scan errors
+        // and returns false, so any uncertainty leaves the failure intact.
+        if (await feeKeyIsAtRecipient(raydium, feeKeyMint, pos.recipient)) {
+          pos.transferredTo = pos.recipient;
+          console.log(`  Fee Key already at recipient on-chain; recovered`);
+          progress({
+            stage: 'main_transfer_recovered',
+            allocationIndex: allocIdx,
+            sliceIndex: i,
+            recipient: pos.recipient,
+          });
+        } else {
+          console.error(`  transfer FAILED: ${e.message}`);
+          transferFailures.push({
+            allocationIndex: allocIdx,
+            sliceIndex: i,
+            nftMint: pos.nftMint,
+            recipient: pos.recipient,
+            error: e.message,
+          });
+          progress({
+            stage: 'main_transfer_failed',
+            allocationIndex: allocIdx,
+            sliceIndex: i,
+            error: e.message,
+          });
+        }
       }
       // Inter-tx pacing — same rationale as Phase 3 locks. Phase 4 txs
       // are simpler (single SPL transfer, no Raydium SDK path) so the
@@ -3998,9 +4487,24 @@ export async function createPoolsAndPositions({
 
     console.log(`\n[${quoteSymbol}] bootstrap`);
     try {
+      // Gather the position NFTs already recorded for this pool so the
+      // bootstrap reconciliation can exclude them when matching its range
+      // (defensive; the straddling bootstrap range cannot collide with the
+      // one-sided main/ladder/support ranges).
+      const priorEntry = results.find((r) => r.allocationIndex === allocIdx);
+      const priorNftMints = priorEntry
+        ? [
+            ...(priorEntry.mainPositions || []),
+            ...(priorEntry.ladderPositions || []),
+            ...(priorEntry.supportPositions || []),
+          ]
+            .map((p) => p && p.nftMint)
+            .filter(Boolean)
+        : [];
       const bootstrap = await openBootstrapPosition({
         raydium,
         ctx,
+        priorNftMints,
         onProgress: (event) =>
           onProgress && onProgress({ allocationIndex: allocIdx, ...event }),
       });

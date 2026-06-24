@@ -1536,7 +1536,7 @@ function applyLpEventToResults(results, event) {
   const result = resultForEvent(results, event);
   if (!result) return false;
 
-  if (event.stage === 'bootstrap_open_done') {
+  if (event.stage === 'bootstrap_open_done' || event.stage === 'bootstrap_open_recovered') {
     result.bootstrap = {
       nftMint: event.nftMint || null,
       locked: false,
@@ -1550,7 +1550,7 @@ function applyLpEventToResults(results, event) {
     return true;
   }
 
-  if (event.stage === 'main_lock_done') {
+  if (event.stage === 'main_lock_done' || event.stage === 'main_lock_recovered') {
     const pos = result.mainPositions?.[event.sliceIndex];
     if (!pos) return false;
     pos.locked = true;
@@ -1559,7 +1559,7 @@ function applyLpEventToResults(results, event) {
     return true;
   }
 
-  if (event.stage === 'ladder_lock_done') {
+  if (event.stage === 'ladder_lock_done' || event.stage === 'ladder_lock_recovered') {
     const pos = result.ladderPositions?.[event.bandIndex];
     if (!pos) return false;
     pos.locked = true;
@@ -1573,7 +1573,7 @@ function applyLpEventToResults(results, event) {
   // journal showing locked: false, so a resume re-attempted the lock
   // against a position NFT already in the lock program's escrow (spurious
   // lockFailures) and the report misstated the lock state.
-  if (event.stage === 'support_lock_done') {
+  if (event.stage === 'support_lock_done' || event.stage === 'support_lock_recovered') {
     const pos = result.supportPositions?.[event.supportIndex];
     if (!pos) return false;
     pos.locked = true;
@@ -1582,7 +1582,7 @@ function applyLpEventToResults(results, event) {
     return true;
   }
 
-  if (event.stage === 'bootstrap_lock_done') {
+  if (event.stage === 'bootstrap_lock_done' || event.stage === 'bootstrap_lock_recovered') {
     if (!result.bootstrap) return false;
     result.bootstrap.locked = true;
     result.bootstrap.feeKeyNftMint = event.feeKeyNftMint || result.bootstrap.feeKeyNftMint || null;
@@ -1590,7 +1590,7 @@ function applyLpEventToResults(results, event) {
     return true;
   }
 
-  if (event.stage === 'main_transfer_done') {
+  if (event.stage === 'main_transfer_done' || event.stage === 'main_transfer_recovered') {
     const pos = result.mainPositions?.[event.sliceIndex];
     if (!pos) return false;
     pos.transferredTo = event.recipient || pos.recipient || null;
