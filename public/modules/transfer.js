@@ -196,9 +196,13 @@ function _lpEventToRow(event) {
   switch (event.stage) {
     // Success events.
     case 'pool_create_done':       stage = 'pool'; break;
+    case 'phase1_pool_recovery_start': stage = 'pool'; break;
     case 'main_open_done':         stage = `slice-${event.sliceIndex}`; break;
+    case 'main_open_recovered':    stage = `slice-${event.sliceIndex}`; break;
     case 'ladder_open_done':       stage = `ladder-${event.bandIndex}`; break;
+    case 'ladder_open_recovered':  stage = `ladder-${event.bandIndex}`; break;
     case 'support_open_done':      stage = 'support-open'; break;
+    case 'support_open_recovered': stage = 'support-open'; break;
     case 'bootstrap_open_done':    stage = 'bs-open'; break;
     case 'main_lock_done':         stage = `lock-${event.sliceIndex}`; break;
     case 'ladder_lock_done':       stage = `ladder-lock-${event.bandIndex}`; break;
@@ -774,7 +778,7 @@ async function runAirdropRetry() {
     log('Cannot retry airdrop: token info missing.', 'warning');
     return;
   }
-  if (!tempWallet || !tempWallet.secretKey) {
+  if (!tempWallet || !tempWallet.publicKey || (demoModeActive && !tempWallet.secretKey)) {
     log('Cannot retry airdrop: launch wallet key not available.', 'warning');
     return;
   }
@@ -874,4 +878,3 @@ function downloadFailedAirdropRecipientsCsv() {
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-

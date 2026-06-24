@@ -375,6 +375,25 @@ function computePoolPositionsTotal(pool) {
   return bsPct + slicePct + bandPct;
 }
 
+function formatPercentCompact(value, maxDecimals = 4) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '0';
+  return Number(n.toFixed(maxDecimals)).toString();
+}
+
+function positionSupplyPct(pool, positionPctOfPool) {
+  const poolPct = Number(pool?.supplyPercent) || 0;
+  const posPct = Number(positionPctOfPool) || 0;
+  return (poolPct * posPct) / 100;
+}
+
+function formatPositionSupplyHint(pool, positionPctOfPool) {
+  const poolPct = Number(pool?.supplyPercent) || 0;
+  const supplyPct = positionSupplyPct(pool, positionPctOfPool);
+  if (!Number.isFinite(poolPct) || !Number.isFinite(supplyPct) || poolPct <= 0) return '';
+  return `= ${formatPercentCompact(supplyPct)}% of supply`;
+}
+
 // Absorb a delta into the wide-slices bucket to keep positions total
 // at 100% after a structural toggle (bs on/off, ladder on/off). When
 // delta > 0, slices need to shrink to make room. When delta < 0,
@@ -393,6 +412,103 @@ function rebalanceWideSlicesByDelta(pool, delta) {
   const lastIdx = pool.distribution.length - 1;
   const newVal = Number(pool.distribution[lastIdx].sharePercent || 0) - delta;
   pool.distribution[lastIdx].sharePercent = Math.max(0, Number(newVal.toFixed(4)));
+}
+
+function refreshPositionSupplyHints(poolIdx) {
+  const pool = pools[poolIdx];
+  if (!pool) return;
+  const node = poolList.children[poolIdx];
+  if (!node) return;
+
+  node.querySelectorAll('[data-position-total-hint="slice"]').forEach((el, i) => {
+    const slice = pool.distribution && pool.distribution[i];
+    el.textContent = slice ? formatPositionSupplyHint(pool, slice.sharePercent) : '';
+  });
+  node.querySelectorAll('[data-position-total-hint="band"]').forEach((el, i) => {
+    const band = pool.ladderConfig?.bands && pool.ladderConfig.bands[i];
+    el.textContent = band ? formatPositionSupplyHint(pool, band.supplyPercent) : '';
+  });
+}
+
+function fitPoolPositionsTo100(poolIdx, { quiet = false } = {}) {
+  const pool = pools[poolIdx];
+  if (!pool) return;
+  if (!Array.isArray(pool.distribution) || pool.distribution.length === 0) {
+    pool.distribution = [{ sharePercent: 0, recipient: null, useExternalRecipient: false }];
+  }
+
+  const total = computePoolPositionsTotal(pool);
+  const delta = Number((100 - total).toFixed(4));
+  if (Math.abs(delta) <= 0.0001) {
+    if (!quiet) log(`Pool ${poolIdx + 1} positions already total 100%.`, 'info');
+    return;
+  }
+
+  const lastIdx = pool.distribution.length - 1;
+  const current = Number(pool.distribution[lastIdx].sharePercent) || 0;
+  const next = Number((current + delta).toFixed(4));
+  if (next < 0) {
+    log(`Pool ${poolIdx + 1}: can't fit positions to 100% by shrinking the last main LP slice. Reduce ladder or bootstrap first.`, 'warning');
+    return;
+  }
+
+  pool.distribution[lastIdx].sharePercent = next;
+  refreshWideSliceInputs(poolIdx);
+  updatePoolPositionsTotal(poolIdx);
+  if (!quiet) {
+    log(`Pool ${poolIdx + 1}: adjusted last main LP slice by ${formatPercentCompact(delta)}% of pool.`, 'info');
+  }
+}
+
+function roundPoolPositionsToWholeSupply(poolIdx) {
+  const pool = pools[poolIdx];
+  const poolPct = Number(pool?.supplyPercent) || 0;
+  if (!pool || poolPct <= 0) return;
+
+  const refs = [];
+  (pool.distribution || []).forEach((slice) => {
+    if ((Number(slice.sharePercent) || 0) > 0) {
+      refs.push({
+        get: () => Number(slice.sharePercent) || 0,
+        set: (v) => { slice.sharePercent = v; },
+      });
+    }
+  });
+  if (pool.ladderConfig?.mode === 'manual' && Array.isArray(pool.ladderConfig.bands)) {
+    pool.ladderConfig.bands.forEach((band) => {
+      if ((Number(band.supplyPercent) || 0) > 0) {
+        refs.push({
+          get: () => Number(band.supplyPercent) || 0,
+          set: (v) => { band.supplyPercent = v; },
+        });
+      }
+    });
+  }
+
+  if (refs.length === 0) return;
+
+  const exactSupplyPcts = refs.map((ref) => positionSupplyPct(pool, ref.get()));
+  const roundedSupplyPcts = exactSupplyPcts.map((pct) => Math.round(pct));
+  let anchorIdx = 0;
+  for (let i = 1; i < exactSupplyPcts.length; i++) {
+    if (exactSupplyPcts[i] > exactSupplyPcts[anchorIdx]) anchorIdx = i;
+  }
+
+  const roundedSum = roundedSupplyPcts.reduce((s, v) => s + v, 0);
+  const remainder = Number((poolPct - roundedSum).toFixed(4));
+  roundedSupplyPcts[anchorIdx] = Number((roundedSupplyPcts[anchorIdx] + remainder).toFixed(4));
+
+  if (roundedSupplyPcts.some((pct) => pct <= 0)) {
+    log(`Pool ${poolIdx + 1}: at least one position is too small to round to a whole supply percent. Increase it or adjust manually.`, 'warning');
+    return;
+  }
+
+  refs.forEach((ref, i) => {
+    ref.set(Number(((roundedSupplyPcts[i] / poolPct) * 100).toFixed(4)));
+  });
+  fitPoolPositionsTo100(poolIdx, { quiet: true });
+  renderPools();
+  log(`Pool ${poolIdx + 1}: rounded position sizes to whole-token-supply percentages.`, 'info');
 }
 
 // Update one pool's title in place.
@@ -1387,13 +1503,31 @@ function buildPoolNode(pool, idx) {
 
   // Positions total indicator. Under unified semantics, bootstrap
   // (if custom) + sum(slice sharePercents) + sum(band supplyPercents)
-  // must equal 100% of the pool's allocation. Rendered as a paragraph
-  // at the bottom of the pool body with a stable data-attribute so
-  // updatePoolPositionsTotal() can find and update it in place.
+  // must equal 100% of the pool's allocation. Rendered with a stable
+  // data-attribute so updatePoolPositionsTotal() can refresh it in place.
+  const positionsFooter = document.createElement('div');
+  positionsFooter.className = 'position-total-actions mt-3';
   const positionsTotal = document.createElement('p');
-  positionsTotal.className = 'has-text-weight-semibold mt-3';
+  positionsTotal.className = 'has-text-weight-semibold mb-0';
   positionsTotal.dataset.positionsTotal = '';
-  body.appendChild(positionsTotal);
+  positionsFooter.appendChild(positionsTotal);
+
+  const fitPositionsBtn = document.createElement('button');
+  fitPositionsBtn.type = 'button';
+  fitPositionsBtn.className = 'button is-small is-light';
+  fitPositionsBtn.textContent = 'Fit 100%';
+  fitPositionsBtn.title = 'Add or subtract the remainder from the last main LP slice';
+  fitPositionsBtn.addEventListener('click', () => fitPoolPositionsTo100(idx));
+  positionsFooter.appendChild(fitPositionsBtn);
+
+  const roundSupplyBtn = document.createElement('button');
+  roundSupplyBtn.type = 'button';
+  roundSupplyBtn.className = 'button is-small is-light';
+  roundSupplyBtn.textContent = 'Round Supply %';
+  roundSupplyBtn.title = 'Snap position sizes to whole percentages of total token supply';
+  roundSupplyBtn.addEventListener('click', () => roundPoolPositionsToWholeSupply(idx));
+  positionsFooter.appendChild(roundSupplyBtn);
+  body.appendChild(positionsFooter);
 
   // Paint the initial state.
   refreshPoolPositionsTotalNode(positionsTotal, pool);
@@ -1429,6 +1563,7 @@ function updatePoolPositionsTotal(poolIdx) {
   const el = poolNode.querySelector('[data-positions-total]');
   if (!el) return;
   refreshPoolPositionsTotalNode(el, pool);
+  refreshPositionSupplyHints(poolIdx);
   // The positions-total state also drives the pool's "needs attention"
   // affordance, so refresh that. updatePoolTitle paints the title
   // + affordance together.
@@ -1480,6 +1615,7 @@ function refreshWideSliceInputs(poolIdx) {
       inp.value = pool.distribution[i].sharePercent;
     }
   });
+  refreshPositionSupplyHints(poolIdx);
 }
 
 // Build the per-pool support section shown in customize mode. Mirrors
@@ -2290,6 +2426,7 @@ function buildBandRow(pool, poolIdx, band, bandIdx, rerenderBands, updateWarning
     <input class="input is-small slice-share" type="number" min="0" max="100" step="0.01"
            data-field="supplyPercent" value="${Number(band.supplyPercent)}">
     <span style="line-height:30px;">% of pool</span>
+    <span class="is-size-7 has-text-grey position-total-hint" data-position-total-hint="band">${escapeHtml(formatPositionSupplyHint(pool, band.supplyPercent))}</span>
     <span class="is-size-7 has-text-grey" style="line-height:30px;">Range:</span>
     <input class="input is-small" type="number" min="1" step="0.01"
            data-field="lowerMultiplier" value="${formatBandMultiplierValue(band.lowerMultiplier)}" style="width: 5rem;">
@@ -2410,6 +2547,7 @@ function buildSliceNode(pool, poolIdx, slice, sliceIdx) {
     <span class="slice-label">${labelText}</span>
     <input class="input is-small slice-share" type="number" min="0" max="100" step="0.01" value="${slice.sharePercent}">
     <span style="line-height:30px;">% of pool</span>
+    <span class="is-size-7 has-text-grey position-total-hint" data-position-total-hint="slice">${escapeHtml(formatPositionSupplyHint(pool, slice.sharePercent))}</span>
     <label class="checkbox is-small" style="line-height:30px;">
       <input type="checkbox" data-field="useExternal" ${slice.useExternalRecipient ? 'checked' : ''}>
       &nbsp;Send to a different wallet
@@ -4079,4 +4217,3 @@ function resetForNewLaunch() {
 }
 
 bind('startOverBtn', 'click', resetForNewLaunch);
-

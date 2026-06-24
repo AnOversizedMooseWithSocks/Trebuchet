@@ -103,6 +103,23 @@ const URLS = {
   github:          'https://github.com/AnOversizedMooseWithSocks/trebuchet',
 };
 
+function openExternalSafe(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    console.warn(`Blocked invalid external URL: ${rawUrl}`);
+    return;
+  }
+
+  if (url.protocol !== 'https:') {
+    console.warn(`Blocked external URL with disallowed protocol: ${url.protocol}`);
+    return;
+  }
+
+  shell.openExternal(url.toString());
+}
+
 // ---------------------------------------------------------------------------
 // Update checking.
 //
@@ -478,14 +495,14 @@ ${body}
     // Open any links inside the README in the user's default browser
     // rather than navigating the README window away from the README.
     readmeWindow.webContents.setWindowOpenHandler(({ url }) => {
-      shell.openExternal(url);
+      openExternalSafe(url);
       return { action: 'deny' };
     });
     readmeWindow.webContents.on('will-navigate', (event, url) => {
       // Allow only the initial file:// load; redirect everything else.
       if (!url.startsWith('file://')) {
         event.preventDefault();
-        shell.openExternal(url);
+        openExternalSafe(url);
       }
     });
 
@@ -528,7 +545,7 @@ function setAppMenu() {
     { type: 'separator' },
     {
       label: 'Official website',
-      click: () => shell.openExternal(URLS.website),
+      click: () => openExternalSafe(URLS.website),
     },
     {
       label: 'View README',
@@ -537,22 +554,22 @@ function setAppMenu() {
     { type: 'separator' },
     {
       label: 'Raydium CLMM Pools (docs)',
-      click: () => shell.openExternal(URLS.raydiumClmm),
+      click: () => openExternalSafe(URLS.raydiumClmm),
     },
     {
       // && escapes the Alt-mnemonic underscore so users see "Burn & Earn"
       // rather than "Burn _Earn" with E underlined as an accelerator.
       label: 'Raydium Burn && Earn (docs)',
-      click: () => shell.openExternal(URLS.raydiumBurnEarn),
+      click: () => openExternalSafe(URLS.raydiumBurnEarn),
     },
     {
       label: 'Helius RPC',
-      click: () => shell.openExternal(URLS.helius),
+      click: () => openExternalSafe(URLS.helius),
     },
     { type: 'separator' },
     {
       label: 'GitHub Repository',
-      click: () => shell.openExternal(URLS.github),
+      click: () => openExternalSafe(URLS.github),
     },
   ];
 
@@ -740,14 +757,14 @@ function createWindow() {
   attachContextMenu(win.webContents);
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    openExternalSafe(url);
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (event, url) => {
     const appOrigin = `http://127.0.0.1:${serverPort}`;
     if (!url.startsWith(`${appOrigin}/`)) {
       event.preventDefault();
-      shell.openExternal(url);
+      openExternalSafe(url);
     }
   });
 

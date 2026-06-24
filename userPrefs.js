@@ -48,12 +48,18 @@ function configFile() {
 // disk is filled in from here on get().
 const DEFAULTS = Object.freeze({
   checkForUpdatesOnStartup: true,
-  // Medieval gauntlet cursor theme. On by default — covers every
+  // Medieval gauntlet cursor theme. Off by default — covers every
   // cursor state (idle, pointer, active, text, wait, resize, etc.)
   // with hand-and-quill artwork. Can be turned off in settings for
   // users who rely on OS cursor-size / high-contrast accessibility
   // overrides, since custom cursors bypass those.
-  medievalCursor: true,
+  medievalCursor: false,
+  // Migration guard for the cursor theme. Older builds persisted the full
+  // default-shaped prefs object whenever any setting changed, so many users
+  // have medievalCursor:true on disk even though they never opted in. The
+  // renderer only enables the theme when both fields are true; the settings
+  // checkbox writes both fields together from now on.
+  medievalCursorOptIn: false,
   // 3D spinning coin in the token preview card. On by default; can be
   // turned off (falls back to the flat logo) for weak hardware or
   // personal preference.
@@ -76,9 +82,9 @@ const DEFAULTS = Object.freeze({
   // stores the flag.
   playSoundEffects: true,
   // Looping background music. Starts once the intro splash is gone and the
-  // user has interacted with the page. On by default; toggled in settings.
+  // user has interacted with the page. Off by default; toggled in settings.
   // Like the sound effect, this is renderer-side only.
-  playBackgroundMusic: true,
+  playBackgroundMusic: false,
   // Publish a permanent launch report to Arweave (a machine-readable JSON
   // plus the rendered HTML) after a launch completes, tagged so anyone can
   // find it from the token mint — without writing anything onto the token's

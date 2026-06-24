@@ -160,6 +160,71 @@ test('airdrop plan is journaled at create-lp and restored on resume', () => {
   );
 });
 
+test('classic resume materializes recoverable Phase 1 pool events before retrying', () => {
+  const resumeStart = serverSrc.indexOf("app.post('/api/resume-launch'");
+  assert.ok(resumeStart >= 0, 'resume-launch route must exist');
+  const resumeSrc = serverSrc.slice(resumeStart, resumeStart + 6500);
+  assert.ok(
+    /const activeJournal = launchJournal\.activeForWallet\(walletPublicKey\);/.test(resumeSrc),
+    'resume-launch must inspect the active journal before starting another attempt',
+  );
+  assert.ok(
+    /materializePhase1RecoveryResults\(\s*activeJournal \|\| \{\},\s*priorResults,\s*allocations,\s*\)/.test(resumeSrc),
+    'resume-launch must materialize incomplete Phase 1 pool state from journal events',
+  );
+  assert.ok(
+    /effectivePriorResults = mergePriorResults\(priorResults, phase1Recovery\.recoveredResults\)/.test(resumeSrc),
+    'resume-launch must pass recovered Phase 1 entries as priorResults',
+  );
+  assert.ok(
+    /lp_phase1_recovery_prepared/.test(resumeSrc),
+    'resume-launch must journal that Phase 1 recovery was prepared',
+  );
+  assert.ok(
+    /code: 'UNSAFE_PARTIAL_POOL_STATE'/.test(resumeSrc) &&
+      /manualRecoveryRequired: true/.test(resumeSrc),
+    'ambiguous partial pool state must still produce a structured non-retryable response',
+  );
+});
+
+test('Phase 1 recovery materializer reconstructs opened slices and blocks duplicate pool ids', () => {
+  assert.ok(
+    /function materializePhase1RecoveryResults\(journal, priorResults, allocations\)/.test(serverSrc),
+    'server must have a journal-event materializer for legacy Phase 1 failures',
+  );
+  assert.ok(
+    /phase1Incomplete: true/.test(serverSrc) &&
+      /recoveredFrom: 'journal_events'/.test(serverSrc),
+    'materialized entries must be explicitly marked as incomplete Phase 1 recovery',
+  );
+  assert.ok(
+    /latestEventsByIndex\(\s*journal\.events,\s*'main_open_done',\s*'sliceIndex',\s*allocationIndex,\s*\)/.test(serverSrc),
+    'materializer must replay recorded main_open_done events by slice index',
+  );
+  assert.ok(
+    /multiple created pools recorded for one allocation/.test(serverSrc),
+    'materializer must block ambiguous duplicate pool creations',
+  );
+});
+
+test('active LP failure UI stops offering resume for unsafe partial pool state', () => {
+  assert.ok(
+    /data\.manualRecoveryRequired \|\| data\.code === 'UNSAFE_PARTIAL_POOL_STATE'/.test(lpExecSrc),
+    'resume handler must branch on the unsafe partial-pool response',
+  );
+  const unsafeBranchStart = lpExecSrc.indexOf("data.code === 'UNSAFE_PARTIAL_POOL_STATE'");
+  assert.ok(unsafeBranchStart >= 0, 'unsafe partial-pool branch must exist');
+  const unsafeBranch = lpExecSrc.slice(unsafeBranchStart, unsafeBranchStart + 2500);
+  assert.ok(
+    /btn\.classList\.add\('hidden'\)/.test(unsafeBranch),
+    'unsafe partial-pool branch must hide the resume button',
+  );
+  assert.ok(
+    /completed position state was recorded/.test(unsafeBranch),
+    'unsafe partial-pool copy must explain why automatic retry stopped',
+  );
+});
+
 test('report prefers result-recorded pool facts over live config', () => {
   const reportSrc = readFileSync(path.join(REPO, 'public', 'modules', 'launch-report.js'), 'utf8');
   assert.ok(

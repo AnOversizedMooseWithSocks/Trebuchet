@@ -4,8 +4,6 @@
 log('Trebuchet is ready. Click "Generate Wallet" to begin.');
 loadRpcConfig();
 startRpcHealthPolling();
-loadLaunchJournals();
-loadPendingWallets();
 loadFeeTiers();
 bindStepHeaders();
 updateCancelButtonState();
@@ -86,6 +84,7 @@ window.addEventListener('beforeunload', (e) => {
 const _startupGates = {
   splash: true,
   disclaimer: true,
+  secretPin: true,
 };
 let _startupTriggerFired = false;
 
@@ -100,7 +99,7 @@ function _releaseStartupGate(name) {
 
 function _evaluateStartupGates() {
   if (_startupTriggerFired) return;
-  if (!_startupGates.splash || !_startupGates.disclaimer) return;
+  if (!_startupGates.splash || !_startupGates.disclaimer || !_startupGates.secretPin) return;
   _startupTriggerFired = true;
   // Fire-and-forget. The server endpoint is local so this should
   // never fail in practice; if it somehow does, the user can still
@@ -220,6 +219,243 @@ function setupDisclaimer() {
   }
 }
 setupDisclaimer();
+
+// ---------------------------------------------------------------------------
+// Recovery PIN gate
+// ---------------------------------------------------------------------------
+//
+// Saved launch wallets and Vanity CAs are encrypted behind a 4-digit Recovery
+// PIN. On first run we require setup before any new real launch can persist
+// secrets; on later launches we require unlock before recovery panels and
+// saved Vanity CAs are loaded.
+let _secretPinStatus = null;
+
+function secretPinEls() {
+  return {
+    modal: document.getElementById('secretPinModal'),
+    title: document.getElementById('secretPinTitle'),
+    description: document.getElementById('secretPinDescription'),
+    input: document.getElementById('secretPinInput'),
+    confirmField: document.getElementById('secretPinConfirmField'),
+    confirmInput: document.getElementById('secretPinConfirmInput'),
+    submitBtn: document.getElementById('secretPinSubmitBtn'),
+    statusLine: document.getElementById('secretPinModalStatus'),
+    statusText: document.getElementById('secretPinStatusText'),
+    unlockBtn: document.getElementById('secretPinUnlockBtn'),
+    lockBtn: document.getElementById('secretPinLockBtn'),
+  };
+}
+
+function normalizePinField(input) {
+  if (!input) return '';
+  input.value = input.value.replace(/\D/g, '').slice(0, 4);
+  return input.value;
+}
+
+function waitForModalInactive(modal) {
+  if (!modal || !modal.classList.contains('is-active')) return Promise.resolve();
+  return new Promise((resolve) => {
+    const observer = new MutationObserver(() => {
+      if (!modal.classList.contains('is-active')) {
+        observer.disconnect();
+        resolve();
+      }
+    });
+    observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+  });
+}
+
+async function fetchSecretPinStatus() {
+  const resp = await fetch('/api/secret-pin/status');
+  const data = await resp.json();
+  if (!resp.ok || !data.success) throw new Error(data.error || 'Could not read Recovery PIN status');
+  _secretPinStatus = data.status || { configured: false, unlocked: false, locked: false };
+  refreshSecretPinUi(_secretPinStatus);
+  return _secretPinStatus;
+}
+
+function refreshSecretPinUi(status = _secretPinStatus) {
+  const { statusText, unlockBtn, lockBtn } = secretPinEls();
+  const configured = !!status?.configured;
+  const unlocked = !!status?.unlocked;
+  const locked = !!status?.locked;
+  const protectionLabel = status?.deviceSecretProtected
+    ? 'device-bound'
+    : 'local fallback';
+
+  if (statusText) {
+    statusText.textContent = !configured
+      ? 'PIN not set'
+      : (unlocked
+        ? `Unlocked for this session (${protectionLabel})`
+        : (locked ? `Locked (${protectionLabel})` : `Configured (${protectionLabel})`));
+  }
+  if (unlockBtn) {
+    unlockBtn.style.display = unlocked ? 'none' : '';
+    const label = unlockBtn.querySelector('span:last-child');
+    if (label) label.textContent = configured ? 'Unlock' : 'Set PIN';
+  }
+  if (lockBtn) {
+    lockBtn.disabled = !unlocked;
+    lockBtn.style.display = configured ? '' : 'none';
+  }
+}
+
+function loadSecretDependentStartupState() {
+  loadLaunchJournals();
+  loadPendingWallets();
+  if (typeof loadSavedVanityCAs === 'function') {
+    loadSavedVanityCAs();
+  }
+}
+
+async function showSecretPinModal(mode) {
+  const els = secretPinEls();
+  if (!els.modal || !els.input || !els.submitBtn || !els.statusLine) {
+    _releaseStartupGate('secretPin');
+    return Promise.resolve(false);
+  }
+
+  await waitForModalInactive(document.getElementById('disclaimerModal'));
+
+  const setupMode = mode === 'setup';
+  _gateStartup('secretPin');
+  els.modal.classList.add('is-active');
+  if (els.title) els.title.textContent = setupMode ? 'Set Recovery PIN' : 'Unlock Recovery PIN';
+  if (els.description) {
+    els.description.textContent = setupMode
+      ? 'Choose a 4-digit PIN. Trebuchet combines it with this device to encrypt launch wallets and saved Vanity CAs.'
+      : 'Enter your 4-digit PIN on this device to unlock saved launch wallets and Vanity CAs.';
+  }
+  if (els.confirmField) els.confirmField.classList.toggle('hidden', !setupMode);
+  if (els.submitBtn) {
+    const label = els.submitBtn.querySelector('span:last-child');
+    if (label) label.textContent = setupMode ? 'Set PIN' : 'Unlock';
+  }
+  els.statusLine.textContent = '';
+  els.statusLine.className = 'help secret-pin-status-line';
+  els.input.value = '';
+  if (els.confirmInput) els.confirmInput.value = '';
+  setTimeout(() => els.input.focus(), 0);
+
+  return new Promise((resolve) => {
+    let submitting = false;
+
+    const setStatus = (message, kind = '') => {
+      els.statusLine.textContent = message || '';
+      els.statusLine.className = 'help secret-pin-status-line' + (kind ? ` ${kind}` : '');
+    };
+
+    const finish = async (status) => {
+      _secretPinStatus = status || await fetchSecretPinStatus();
+      refreshSecretPinUi(_secretPinStatus);
+      els.modal.classList.remove('is-active');
+      _releaseStartupGate('secretPin');
+      loadSecretDependentStartupState();
+      resolve(true);
+    };
+
+    const submit = async () => {
+      if (submitting) return;
+      const pin = normalizePinField(els.input);
+      const confirm = normalizePinField(els.confirmInput);
+      if (pin.length !== 4) {
+        setStatus('Enter exactly 4 digits.', 'is-danger');
+        return;
+      }
+      if (setupMode && pin !== confirm) {
+        setStatus('PINs do not match.', 'is-danger');
+        return;
+      }
+
+      submitting = true;
+      els.submitBtn.disabled = true;
+      setStatus(setupMode ? 'Setting PIN...' : 'Unlocking...', 'is-info');
+      try {
+        const resp = await fetch(setupMode ? '/api/secret-pin/setup' : '/api/secret-pin/unlock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success) {
+          throw new Error(data.error || `PIN request failed with HTTP ${resp.status}`);
+        }
+        await finish(data.status);
+      } catch (e) {
+        setStatus(e.message || 'PIN request failed.', 'is-danger');
+        els.input.value = '';
+        if (els.confirmInput) els.confirmInput.value = '';
+        els.input.focus();
+      } finally {
+        submitting = false;
+        els.submitBtn.disabled = false;
+      }
+    };
+
+    els.input.oninput = () => normalizePinField(els.input);
+    if (els.confirmInput) els.confirmInput.oninput = () => normalizePinField(els.confirmInput);
+    els.input.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        if (setupMode && els.confirmInput && normalizePinField(els.input).length === 4) {
+          els.confirmInput.focus();
+        } else {
+          submit();
+        }
+      }
+    };
+    if (els.confirmInput) {
+      els.confirmInput.onkeydown = (e) => {
+        if (e.key === 'Enter') submit();
+      };
+    }
+    els.submitBtn.onclick = submit;
+  });
+}
+
+async function setupSecretPinGate() {
+  const els = secretPinEls();
+  if (els.unlockBtn) {
+    els.unlockBtn.onclick = async () => {
+      const status = await fetchSecretPinStatus().catch(() => _secretPinStatus);
+      await showSecretPinModal(status?.configured ? 'unlock' : 'setup');
+    };
+  }
+  if (els.lockBtn) {
+    els.lockBtn.onclick = async () => {
+      try {
+        const resp = await fetch('/api/secret-pin/lock', { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success) throw new Error(data.error || 'Could not lock Recovery PIN');
+        _secretPinStatus = data.status;
+        refreshSecretPinUi(_secretPinStatus);
+        await showSecretPinModal('unlock');
+      } catch (e) {
+        log(`Could not lock Recovery PIN: ${e.message}`, 'warning');
+      }
+    };
+  }
+
+  _gateStartup('secretPin');
+  try {
+    const status = await fetchSecretPinStatus();
+    if (!status.configured) {
+      return showSecretPinModal('setup');
+    }
+    if (status.locked || !status.unlocked) {
+      return showSecretPinModal('unlock');
+    }
+    _releaseStartupGate('secretPin');
+    loadSecretDependentStartupState();
+    return true;
+  } catch (e) {
+    console.warn('Recovery PIN status unavailable:', e);
+    refreshSecretPinUi({ configured: false, unlocked: false, locked: false });
+    _releaseStartupGate('secretPin');
+    loadSecretDependentStartupState();
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Universal modal close affordances
@@ -494,19 +730,61 @@ setupSplashScreen();
 // ===========================================================================
 // User preferences (renderer side)
 // ---------------------------------------------------------------------------
-// The medieval gauntlet cursor theme and the 3D coin token preview are
-// always-on features — not user-toggleable. We apply the cursor theme
-// unconditionally here; the coin preview is gated by coinPreviewEnabled,
-// which defaults to true. (No settings UI and no persisted pref for either.)
+// The medieval gauntlet cursor theme is opt-in. It is fun as flavor, but
+// custom cursor images bypass OS accessibility sizing/contrast and can make
+// text entry feel imprecise, so fresh installs keep the native cursor.
 // ===========================================================================
 (function setupAppearance() {
-  // Cursor theme: always on.
-  document.body.classList.add('medieval-cursor');
+  const toggle = document.getElementById('medievalCursorToggle');
+
+  function applyCursorPreference(enabled) {
+    document.body.classList.toggle('medieval-cursor', enabled);
+    if (!enabled) document.body.classList.remove('cursor-clenched');
+    if (toggle) toggle.checked = enabled;
+  }
+
+  // Old builds wrote medievalCursor:true into userPrefs.json as part of the
+  // default-shaped prefs object even when the user only changed an unrelated
+  // setting. Require the new opt-in marker too so those migrated files open
+  // with the quieter native cursor.
+  function cursorEnabledFromPrefs(prefs) {
+    return !!(prefs && prefs.medievalCursor === true && prefs.medievalCursorOptIn === true);
+  }
+
+  applyCursorPreference(false);
+
+  fetch('/api/user-prefs')
+    .then((r) => r.json())
+    .then((data) => {
+      applyCursorPreference(cursorEnabledFromPrefs(data && data.prefs));
+    })
+    .catch((err) => {
+      console.warn('Failed to read cursor preference:', err);
+      applyCursorPreference(false);
+    });
+
+  if (toggle) {
+    toggle.addEventListener('change', () => {
+      const enabled = toggle.checked;
+      applyCursorPreference(enabled);
+      fetch('/api/user-prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          medievalCursor: enabled,
+          medievalCursorOptIn: enabled,
+        }),
+      }).catch((err) => {
+        console.warn('Failed to persist cursor preference:', err);
+      });
+    });
+  }
 
   // Global mousedown clench: a click ANYWHERE adds .cursor-clenched so the
   // gauntlet shows the fist even over non-interactive space, then relaxes on
   // release. Listeners are passive — we never preventDefault.
   document.addEventListener('mousedown', () => {
+    if (!document.body.classList.contains('medieval-cursor')) return;
     document.body.classList.add('cursor-clenched');
   }, { passive: true });
   document.addEventListener('mouseup', () => {
@@ -906,6 +1184,7 @@ function syncDemoChrome() {
 function applyVanityAvailabilityUi(vanity) {
   const available = vanity && vanity.available;
   const target = document.getElementById('vanityCATarget');
+  const endTarget = document.getElementById('vanityCAEndTarget');
   const mode = document.getElementById('vanityCAMode');
   const btn = document.getElementById('grindCABtn');
   if (available) {
@@ -913,6 +1192,7 @@ function applyVanityAvailabilityUi(vanity) {
     // and a later status check showed the feature came back). Rare but
     // cheap to handle.
     if (target) { target.disabled = false; target.title = ''; }
+    if (endTarget) { endTarget.disabled = false; endTarget.title = ''; }
     if (mode) { mode.disabled = false; }
     if (btn) { btn.disabled = false; btn.title = ''; }
     const note = document.getElementById('vanityCAUnavailableNote');
@@ -923,6 +1203,7 @@ function applyVanityAvailabilityUi(vanity) {
   // why the button is dead. Reason comes from the server when available.
   const reason = (vanity && vanity.reason) || 'vanity address generation is not available in this build';
   if (target) { target.disabled = true; target.title = reason; }
+  if (endTarget) { endTarget.disabled = true; endTarget.title = reason; }
   if (mode) { mode.disabled = true; }
   if (btn) { btn.disabled = true; btn.title = reason; }
   // Insert a help line below the existing description, so the user sees
@@ -949,12 +1230,9 @@ function applyVanityAvailabilityUi(vanity) {
   }
 }
 
-// Final gate evaluation. Both setupDisclaimer() and setupSplashScreen()
-// have run by this point. If either gated itself (showed a modal or
-// played the splash), the gate is currently false and this call is a
-// no-op — the trigger will fire later when the user dismisses
-// whichever is still blocking. If NEITHER gated (returning user +
-// splash element missing), both gates are still default-true and this
-// is the only place the trigger ever fires.
-_evaluateStartupGates();
+setupSecretPinGate();
 
+// Final gate evaluation. setupDisclaimer(), setupSplashScreen(), and the
+// Recovery PIN gate have run by this point. If any of them gated itself,
+// this call is a no-op; the trigger will fire when the last blocker clears.
+_evaluateStartupGates();

@@ -1,13 +1,15 @@
 // secretStore.js
 //
-// Thin wrapper around Electron's safeStorage API for encrypting wallet
-// secrets before they go to disk. The encryption is delegated to
-// safeStorage, which uses the OS keychain — Keychain Services on macOS,
+// Thin wrapper around the active at-rest secret backend. When the user has
+// configured a recovery PIN, secrets are encrypted with a random data key that
+// is wrapped by PIN + device-secret material and kept only in memory after
+// unlock. Before a PIN exists, the desktop build falls back to Electron's
+// safeStorage API, which uses the OS keychain — Keychain Services on macOS,
 // DPAPI on Windows, libsecret/kwallet on Linux — to derive a per-user,
-// machine-bound encryption key. We never see or manage the key; that's
-// the OS's job.
+// machine-bound encryption key.
 //
 // Tokens look like:
+//   'pin:<base64>'    — encrypted via the in-memory PIN key
 //   'enc:<base64>'    — encrypted via safeStorage
 //   'plain:<value>'   — fallback when safeStorage isn't available
 //
@@ -18,6 +20,8 @@
 // net is more valuable than the encryption) and emit a loud warning
 // than silently drop the data.
 
+import * as secretPinStore from './secretPinStore.js';
+
 let _safeStorage = null;
 let _warned = false;
 
@@ -25,6 +29,7 @@ let _warned = false;
 // is called, encryptString falls through to the plaintext path.
 export function setSafeStorage(safeStorage) {
   _safeStorage = safeStorage;
+  secretPinStore.setSafeStorage(safeStorage);
 
   // On Linux, isEncryptionAvailable returns true even when the actual
   // backend is `basic_text` (i.e. unencrypted). That's effectively a
@@ -73,6 +78,9 @@ export function encryptString(plaintext) {
   if (typeof plaintext !== 'string') {
     throw new TypeError('secretStore.encryptString expects a string');
   }
+  if (secretPinStore.hasPin()) {
+    return secretPinStore.encryptString(plaintext);
+  }
   if (!isAvailable()) {
     warnOnce();
     return 'plain:' + plaintext;
@@ -96,6 +104,9 @@ export function encryptString(plaintext) {
 // rotation, machine change) isn't recoverable from inside the app.
 export function decryptString(token) {
   if (typeof token !== 'string' || token.length === 0) return null;
+  if (secretPinStore.isPinToken(token)) {
+    return secretPinStore.decryptString(token);
+  }
   if (token.startsWith('plain:')) return token.slice(6);
   if (token.startsWith('enc:')) {
     if (!isAvailable()) {
@@ -123,5 +134,45 @@ export function decryptString(token) {
 // status indicators in the UI ("encrypted at rest" / "stored in
 // plaintext"). Not used by the core encrypt/decrypt path.
 export function isEncrypting() {
+  if (secretPinStore.hasPin()) return secretPinStore.isUnlocked();
   return isAvailable();
+}
+
+export function shouldReencryptToken(token) {
+  if (typeof token !== 'string' || token.length === 0) return false;
+  if (secretPinStore.hasPin()) {
+    return secretPinStore.shouldReencryptToken(token);
+  }
+  if (!isAvailable()) return false;
+  return token.startsWith('plain:')
+    || (!token.startsWith('enc:') && !secretPinStore.isPinToken(token));
+}
+
+export function secretPinStatus() {
+  return secretPinStore.status();
+}
+
+export function setupSecretPin(pin) {
+  return secretPinStore.setPin(String(pin ?? ''));
+}
+
+export function unlockSecretPin(pin) {
+  return secretPinStore.unlock(String(pin ?? ''));
+}
+
+export function lockSecretPin() {
+  secretPinStore.lock();
+  return secretPinStore.status();
+}
+
+export function hasSecretPin() {
+  return secretPinStore.hasPin();
+}
+
+export function isSecretPinUnlocked() {
+  return secretPinStore.isUnlocked();
+}
+
+export function isSecretPinLocked() {
+  return secretPinStore.isLocked();
 }

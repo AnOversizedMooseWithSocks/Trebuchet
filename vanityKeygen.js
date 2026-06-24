@@ -167,13 +167,15 @@ export function generateVanityKeypair({ prefix, suffix, threads, blockhash, onPr
     }
 
     const args = [];
-    if (prefix) {
-      args.push('--prefix', prefix);
-    } else if (suffix) {
-      args.push('--suffix', suffix);
-    } else {
+    if (!prefix && !suffix) {
       safeReject(new Error('Must specify either prefix or suffix'));
       return;
+    }
+    if (prefix) {
+      args.push('--prefix', prefix);
+    }
+    if (suffix) {
+      args.push('--suffix', suffix);
     }
 
     if (threads && threads > 0) {
@@ -264,6 +266,10 @@ export function generateVanityKeypair({ prefix, suffix, threads, blockhash, onPr
           epochs: result.epochs,
           expectedAttempts: result.expectedAttempts,
           elapsedSec: result.elapsedSec,
+          target: result.target,
+          prefix: result.prefix,
+          suffix: result.suffix,
+          targetLen: result.targetLen,
           ...vrfFields,
         });
       } catch (err) {

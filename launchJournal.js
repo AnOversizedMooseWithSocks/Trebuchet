@@ -16,6 +16,8 @@ const __dirname = path.dirname(__filename);
 const CONFIG_DIR = process.env.TREBUCHET_CONFIG_DIR || __dirname;
 const FILE = path.join(CONFIG_DIR, 'launchJournals.json');
 const MAX_EVENTS = 200;
+const MAX_STRING_LENGTH = 8000;
+const MAX_STACK_LINES = 20;
 
 const TERMINAL_STATUSES = new Set(['completed', 'archived']);
 const SECRET_KEY_RE = /(secret|private|mnemonic)/i;
@@ -32,10 +34,15 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function truncateString(value, maxLength = MAX_STRING_LENGTH) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}...[truncated ${value.length - maxLength} chars]`;
+}
+
 function sanitizeForJournal(value, depth = 0) {
   if (depth > 10) return '[max depth]';
   if (value == null) return value;
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return truncateString(value);
   if (typeof value === 'number') return Number.isFinite(value) ? value : String(value);
   if (typeof value === 'boolean') return value;
   if (typeof value === 'bigint') return value.toString();
@@ -57,6 +64,56 @@ function sanitizeForJournal(value, depth = 0) {
   return undefined;
 }
 
+export function errorMessage(error) {
+  if (typeof error?.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error === 'string' && error.trim()) return error;
+  if (error == null) return 'Unknown error';
+  try {
+    const json = JSON.stringify(sanitizeForJournal(error));
+    if (json && json !== '{}') return json;
+  } catch (_) {
+    // Fall through to String(error).
+  }
+  return String(error || 'Unknown error');
+}
+
+export function errorDetails(error, context = {}) {
+  const details = {
+    ...context,
+    message: errorMessage(error),
+  };
+
+  if (error && typeof error === 'object') {
+    for (const key of [
+      'name',
+      'code',
+      'status',
+      'statusCode',
+      'failedPhase',
+      'failedAllocationIndex',
+      'probeCode',
+      'signature',
+      'transactionMessage',
+      'instructionError',
+      'logs',
+    ]) {
+      if (error[key] !== undefined) details[key] = error[key];
+    }
+    if (error.stack) {
+      details.stack = truncateString(
+        String(error.stack).split('\n').slice(0, MAX_STACK_LINES).join('\n'),
+      );
+    }
+    if (error.cause) {
+      details.cause = errorDetails(error.cause);
+    }
+  }
+
+  return sanitizeForJournal(details);
+}
+
 function normalizeJournal(raw) {
   const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : nowIso();
   const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : createdAt;
@@ -76,6 +133,7 @@ function normalizeJournal(raw) {
     airdrop: raw.airdrop && typeof raw.airdrop === 'object' ? raw.airdrop : null,
     reportPublish: raw.reportPublish && typeof raw.reportPublish === 'object' ? raw.reportPublish : null,
     error: typeof raw.error === 'string' ? raw.error : null,
+    errorDetails: raw.errorDetails && typeof raw.errorDetails === 'object' ? raw.errorDetails : null,
     events: Array.isArray(raw.events) ? raw.events.slice(-MAX_EVENTS) : [],
   };
 }
@@ -152,6 +210,7 @@ export function start({ walletPublicKey }) {
     lp: null,
     transfer: null,
     error: null,
+    errorDetails: null,
     events: [{ ts, stage: 'wallet_generated', walletPublicKey }],
   };
   list.push(journal);
@@ -193,6 +252,7 @@ export function upsertForWallet(walletPublicKey, patch = {}, event = null) {
       airdrop: null,
       reportPublish: null,
       error: null,
+      errorDetails: null,
       events: [],
     };
     list.push(journal);

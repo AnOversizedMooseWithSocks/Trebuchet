@@ -28,16 +28,24 @@ bind('createTokenBtn', 'click', async () => {
       // Vanity CA: if we pre-ground a keypair, send it. Otherwise
       // fall back to prefix/suffix for server-side grinding.
       if (selectedVanityCA !== null && vanityCAKeypairs[selectedVanityCA]) {
-        formData.append('vanityCAKeypair', JSON.stringify(vanityCAKeypairs[selectedVanityCA].secretKey));
+        const selected = vanityCAKeypairs[selectedVanityCA];
+        if (Array.isArray(selected.secretKey)) {
+          formData.append('vanityCAKeypair', JSON.stringify(selected.secretKey));
+        } else if (selected.publicKey) {
+          formData.append('vanityCAPublicKey', selected.publicKey);
+        }
       } else {
-        const vanityTarget = document.getElementById('vanityCATarget')?.value.trim();
-        if (vanityTarget) {
-          const vanityMode = document.getElementById('vanityCAMode')?.value || 'suffix';
-          if (vanityMode === 'prefix') {
-            formData.append('vanityPrefix', vanityTarget);
-          } else {
-            formData.append('vanitySuffix', vanityTarget);
+        const vanityMode = document.getElementById('vanityCAMode')?.value || 'suffix';
+        const vanityStart = document.getElementById('vanityCATarget')?.value.trim() || '';
+        const vanityEnd = document.getElementById('vanityCAEndTarget')?.value.trim() || '';
+        if (vanityMode === 'both') {
+          if (vanityStart && vanityEnd) {
+            formData.append('vanityPrefix', vanityStart);
+            formData.append('vanitySuffix', vanityEnd);
           }
+        } else if (vanityStart) {
+          if (vanityMode === 'prefix') formData.append('vanityPrefix', vanityStart);
+          else formData.append('vanitySuffix', vanityStart);
         }
       }
       const logoFile = document.getElementById('tokenLogo').files[0];
@@ -817,16 +825,16 @@ bind('createLpBtn', 'click', async () => {
           } else {
             // Main-positions failure: at least one pool was created but
             // its main positions couldn't be opened (or the next pool
-            // couldn't be created). The resume endpoint can pick up
-            // from where the failure happened — completed pools are
-            // skipped, only the missing work is retried.
+            // couldn't be created). Complete prior pools are resumable,
+            // but a pool that was created without a completed allocation
+            // result is not safe to auto-resume yet.
             document.getElementById('lpFailReassurance').innerHTML =
               `<strong>Your assets are safe</strong> — they're still in the ephemeral wallet ` +
               `(SOL, any auto-swapped quote tokens, and the LP NFTs from pools that did succeed). ` +
-              `Click <strong>Resume launch</strong> to retry just the missing pools — already-` +
-              `created pools will be skipped. If retrying keeps failing, you can sweep the wallet ` +
-              `back to your destination as a last resort; the pools that succeeded above are ` +
-              `permanent on-chain.`;
+              `Click <strong>Resume launch</strong> to continue only if Trebuchet has enough ` +
+              `journaled state to skip completed pools safely. If the journal shows a pool was ` +
+              `created before a completed LP result was recorded, automatic resume will stop and ` +
+              `you should sweep the wallet or recover the existing LP positions manually.`;
           }
           // Continue/sweep button label. For 'bootstrap' and 'locks',
           // the user has unfinished work that retry can fix in place,
@@ -1645,6 +1653,47 @@ bind('retryBootstrapsBtn', 'click', async () => {
         return;
       }
 
+      if (data.manualRecoveryRequired || data.code === 'UNSAFE_PARTIAL_POOL_STATE') {
+        lpResult = { results: data.partialResults || [] };
+        (data.partialResults || []).forEach((r) => {
+          markPoolDone(r.allocationIndex, r);
+          if (r.bootstrap) markBootstrapDoneForPool(r.allocationIndex, r.bootstrap);
+        });
+        (data.unsafePoolEvents || []).forEach((event) => {
+          if (event.allocationIndex != null) {
+            markPoolFailed(event.allocationIndex, data.error);
+          }
+        });
+
+        document.getElementById('lpFailInfo').classList.remove('hidden');
+        document.getElementById('lpFailHeading').textContent =
+          'Automatic resume is unavailable.';
+        document.getElementById('lpFailSummary').textContent = data.error;
+
+        const lpFailCtr = document.getElementById('lpFailInfo').querySelector('.notification');
+        if (lpFailCtr) {
+          const prevB = lpFailCtr.querySelector('.error-banner');
+          if (prevB) prevB.remove();
+          renderStructuredError(lpFailCtr, data.error, categorizeError(data.error));
+        }
+
+        const successCount = (data.partialResults || []).length;
+        const totalCount = allocations.length;
+        document.getElementById('lpFailSucceededCount').innerHTML =
+          `<strong>${successCount}</strong> of ${totalCount} pool${totalCount === 1 ? '' : 's'} ` +
+          `have completed LP results in the journal. A later pool was created before its ` +
+          `completed position state was recorded, so retrying automatically could duplicate work.`;
+        document.getElementById('lpFailReassurance').innerHTML =
+          `<strong>Your assets are still recoverable by the launch wallet.</strong> ` +
+          `Use the sweep/recovery path to move remaining SOL, quote tokens, and LP NFTs back to ` +
+          `your destination wallet, then handle any already-created positions manually in Raydium.`;
+        document.getElementById('continueToTransferAfterFailBtnLabel').textContent =
+          'Skip to Transfer Assets';
+        btn.classList.add('hidden');
+        markLaunchActiveForRpcHealth(false);
+        return;
+      }
+
       // Partial: at least one allocation still couldn't be completed.
       // The data has the same shape as a fresh create-lp failure:
       // partialResults, failedAllocationIndex, failedPhase, bootstrapFailures.
@@ -1762,10 +1811,10 @@ bind('retryBootstrapsBtn', 'click', async () => {
         document.getElementById('lpFailReassurance').innerHTML =
           `<strong>Your assets are safe</strong> — they're still in the ephemeral wallet ` +
           `(SOL, any auto-swapped quote tokens, and the LP NFTs from pools that did succeed). ` +
-          `Click <strong>Resume launch</strong> to retry just the missing pools — already-` +
-          `created pools will be skipped. If retrying keeps failing, you can sweep the wallet ` +
-          `back to your destination as a last resort; the pools that succeeded above are ` +
-          `permanent on-chain.`;
+          `Click <strong>Resume launch</strong> to continue only if Trebuchet has enough ` +
+          `journaled state to skip completed pools safely. If the journal shows a pool was ` +
+          `created before a completed LP result was recorded, automatic resume will stop and ` +
+          `you should sweep the wallet or recover the existing LP positions manually.`;
         document.getElementById('continueToTransferAfterFailBtnLabel').textContent =
           'Skip to Transfer Assets';
       }
@@ -1795,7 +1844,7 @@ function prefillDestinationFromFunder() {
 
 
 // Vanity CA grind — pre-grinds the token mint address before token creation
-let vanityCAKeypairs = []; // [{ publicKey, secretKey, rarity, epochs, attempts }]
+let vanityCAKeypairs = []; // [{ publicKey, secretKey, rarity, epochs, attempts, target, prefix, suffix, mode }]
 let selectedVanityCA = null; // index into vanityCAKeypairs
 
 // ---- Vanity CA epoch tiers (authoritative from C binary) ----
@@ -1881,6 +1930,41 @@ const MATCH_COLORS = [
 let _keyDisplayTarget = '';
 let _lastKeyShown = '';
 
+function vanityCandidateTargetLabel(candidate) {
+  const prefix = candidate.prefix || (candidate.mode === 'prefix' ? candidate.target : null);
+  const suffix = candidate.suffix || (candidate.mode === 'suffix' ? candidate.target : null);
+  if (prefix && suffix) return `starts ${prefix} / ends ${suffix}`;
+  if (prefix) return `starts ${prefix}`;
+  if (suffix) return `ends ${suffix}`;
+  if (candidate.target) return candidate.target;
+  return candidate.rarity || '';
+}
+
+function isVanityBothMode(mode) {
+  return mode === 'both';
+}
+
+function applyVanityModeUi() {
+  const mode = document.getElementById('vanityCAMode')?.value || 'suffix';
+  const target = document.getElementById('vanityCATarget');
+  const endControl = document.getElementById('vanityCAEndControl');
+  const endTarget = document.getElementById('vanityCAEndTarget');
+  const btn = document.getElementById('grindCABtn');
+  const isBoth = isVanityBothMode(mode);
+  const isIdle = !btn || (btn.dataset.mode || 'grind') === 'grind';
+  if (target) {
+    target.disabled = !isIdle;
+    target.placeholder = isBoth ? 'start' : 'e.g. RATi';
+  }
+  if (endControl) {
+    endControl.classList.toggle('hidden', !isBoth);
+  }
+  if (endTarget) {
+    endTarget.disabled = !isBoth || !isIdle;
+    endTarget.placeholder = 'end';
+  }
+}
+
 function countMatchChars(key, target) {
   // Count how many distinct chars of target appear anywhere in key.
   if (!target || !key) return 0;
@@ -1950,6 +2034,7 @@ function setGrindButtonState(state) {
   const icon = btn.querySelector('i');
   const label = btn.querySelector('span:last-child');
   const target = document.getElementById('vanityCATarget');
+  const endTarget = document.getElementById('vanityCAEndTarget');
   const mode = document.getElementById('vanityCAMode');
 
   if (state === 'grind') {
@@ -1960,6 +2045,7 @@ function setGrindButtonState(state) {
     if (icon) icon.className = 'fas fa-star';
     if (label) label.textContent = 'Grind';
     if (target) target.disabled = false;
+    if (endTarget) endTarget.disabled = !isVanityBothMode(mode?.value || 'suffix');
     if (mode) mode.disabled = false;
   } else if (state === 'cancel') {
     btn.dataset.mode = 'cancel';
@@ -1974,6 +2060,7 @@ function setGrindButtonState(state) {
     // mismatch between the visible target and what's actually being
     // ground.
     if (target) target.disabled = true;
+    if (endTarget) endTarget.disabled = true;
     if (mode) mode.disabled = true;
   } else if (state === 'cancelling') {
     btn.dataset.mode = 'cancelling';
@@ -1982,8 +2069,44 @@ function setGrindButtonState(state) {
     btn.classList.add('is-danger', 'is-loading');
     if (label) label.textContent = 'Cancelling...';
     if (target) target.disabled = true;
+    if (endTarget) endTarget.disabled = true;
     if (mode) mode.disabled = true;
   }
+  if (state === 'grind') applyVanityModeUi();
+}
+
+bind('vanityCAMode', 'change', applyVanityModeUi);
+applyVanityModeUi();
+
+function getVanityRequestFromInputs() {
+  const mode = document.getElementById('vanityCAMode')?.value || 'suffix';
+  const startTarget = document.getElementById('vanityCATarget')?.value.trim() || '';
+  const endTarget = document.getElementById('vanityCAEndTarget')?.value.trim() || '';
+  if (mode === 'both') {
+    return {
+      mode,
+      prefix: startTarget,
+      suffix: endTarget,
+      target: startTarget && endTarget ? `${startTarget}...${endTarget}` : '',
+      highlightTarget: `${startTarget}${endTarget}`,
+    };
+  }
+  if (mode === 'prefix') {
+    return {
+      mode,
+      prefix: startTarget,
+      suffix: '',
+      target: startTarget,
+      highlightTarget: startTarget,
+    };
+  }
+  return {
+    mode,
+    prefix: '',
+    suffix: startTarget,
+    target: startTarget,
+    highlightTarget: startTarget,
+  };
 }
 
 bind('grindCABtn', 'click', async () => {
@@ -2015,8 +2138,12 @@ bind('grindCABtn', 'click', async () => {
   }
 
   // GRIND branch: standard new-grind flow.
-  const target = document.getElementById('vanityCATarget').value.trim();
-  if (!target) {
+  const vanityRequest = getVanityRequestFromInputs();
+  if (vanityRequest.mode === 'both' && (!vanityRequest.prefix || !vanityRequest.suffix)) {
+    log('Enter both start and end vanity targets.', 'warn');
+    return;
+  }
+  if (!vanityRequest.prefix && !vanityRequest.suffix) {
     log('Enter a vanity target first.', 'warn');
     return;
   }
@@ -2024,22 +2151,9 @@ bind('grindCABtn', 'click', async () => {
   await withRunState(async () => {
     setGrindButtonState('cancel');
     try {
-      const mode = document.getElementById('vanityCAMode').value;
-      const isSuffix = mode === 'suffix';
-
       // Show single active progress bar
       const progressEl = document.getElementById('vanityCAProgress');
       if (progressEl) progressEl.classList.remove('hidden');
-
-      // Hide any previously-displayed result card while the new grind
-      // runs. The card re-appears via renderVanityCAList from either the
-      // done handler (with the new CA's data) or the finally block
-      // (restoring the previous CA if cancel/error left selection
-      // intact). Avoids the confusing "old result + new progress bar
-      // visible at the same time" state, especially when the previous
-      // result was in the yellow warning state.
-      const resultEl = document.getElementById('vanityCAResult');
-      if (resultEl) resultEl.classList.add('hidden');
 
       // Ensure original bar is visible, remove any old epoch bars
       const barContainer = progressEl?.querySelector('.vanity-progress-bar');
@@ -2047,11 +2161,11 @@ bind('grindCABtn', 'click', async () => {
       const oldEpochBars = document.getElementById('vanityCAEpochBars');
       if (oldEpochBars) oldEpochBars.remove();
       setupGrindBar();
-      setupKeyDisplay(target);
+      setupKeyDisplay(vanityRequest.highlightTarget);
 
       const params = new URLSearchParams();
-      if (isSuffix) params.set('suffix', target);
-      else params.set('prefix', target);
+      if (vanityRequest.prefix) params.set('prefix', vanityRequest.prefix);
+      if (vanityRequest.suffix) params.set('suffix', vanityRequest.suffix);
       // Pass the session token as a query param — EventSource can't set
       // custom headers, so the SSE endpoint validates it inline.
       try {
@@ -2081,15 +2195,17 @@ bind('grindCABtn', 'click', async () => {
               epochs: data.wallet.epochs,
               attempts: data.wallet.attempts,
               seed: data.wallet.seed,
+              target: data.wallet.target || vanityRequest.target,
+              prefix: data.wallet.prefix || vanityRequest.prefix || null,
+              suffix: data.wallet.suffix || vanityRequest.suffix || null,
+              mode: data.wallet.mode || vanityRequest.mode,
+              persisted: data.wallet.persisted === true,
             };
-            // Replace any previous grind with this one and auto-select
-            // it. Without selectedVanityCA being set here, the launch
-            // flow at the "vanityCAKeypair" form-append site would
-            // silently skip the keypair and the pre-grind would be a
-            // no-op. Most-recent-successful-grind wins; the user can
-            // discard via the clear button on the result block.
-            vanityCAKeypairs = [entry];
-            selectedVanityCA = 0;
+            // Keep prior grinds as candidates and auto-select the new
+            // one. The launch flow reads selectedVanityCA at submit time,
+            // so the newest successful grind still wins by default while
+            // earlier CAs remain one click away.
+            addVanityCAEntry(entry);
             if (progressEl) progressEl.classList.add('hidden');
             renderVanityCAList();
             log('Vanity CA: ' + data.wallet.publicKey + ' (' + data.wallet.rarity + ', ' + data.wallet.attempts.toLocaleString() + ' attempts)', 'success');
@@ -2126,38 +2242,73 @@ bind('grindCABtn', 'click', async () => {
       if (epochBars) epochBars.remove();
     } finally {
       setGrindButtonState('grind');
-      // Re-render the result card after every grind exit path so it
-      // reflects the current state: the new CA on success (harmless
-      // double-call after the done handler), the previously-selected
-      // CA restored after cancel/error (if any), or stays hidden if no
-      // selection persists. Without this the card stays hidden after
-      // cancel even when there's a previous result the user expects
-      // to see again.
+      // Re-render after every exit path so the selected CA and candidate
+      // list stay in sync after success, cancellation, or failure.
       renderVanityCAList();
     }
   });
 });
 
-// Discard the active vanity CA (the result block's X button). Wipes
-// the array and the selection, then re-renders the block so it hides.
-// The user can then grind again from scratch. Uses the existing
-// clearVanityCAs helper defined further down so wipe logic lives in
-// one place.
+// Discard only the selected vanity CA. Other successful grinds stay available
+// as launch candidates until a full wallet/session reset calls clearVanityCAs().
 bind('clearVanityCAResultBtn', 'click', () => {
-  if (typeof clearVanityCAs === 'function') clearVanityCAs();
+  if (typeof discardSelectedVanityCA === 'function') discardSelectedVanityCA();
   log('Vanity CA discarded.', 'info');
 });
 
-// Render the active vanity CA into the result block in index.html.
-//
-// History: this used to be a multi-result list renderer, but the matching
-// list elements (vanityCAList, vanityCAListContainer) were never added to
-// the HTML — so the function ran no-ops every time and the user never saw
-// their grind result. The function now updates the single-result block
-// (vanityCAResult / vanityCAResultAddr / vanityCARarity) that DOES exist
-// in the HTML and was sitting unused. The "list" semantics are preserved
-// in the underlying array, but in practice we replace-on-success so the
-// array has at most one entry at a time.
+function addVanityCAEntry(entry, { select = true } = {}) {
+  const existingIdx = vanityCAKeypairs.findIndex((ca) => ca.publicKey === entry.publicKey);
+  if (existingIdx >= 0) {
+    vanityCAKeypairs[existingIdx] = { ...vanityCAKeypairs[existingIdx], ...entry };
+    if (select) selectedVanityCA = existingIdx;
+    return;
+  }
+  vanityCAKeypairs.push(entry);
+  if (select) selectedVanityCA = vanityCAKeypairs.length - 1;
+}
+
+function discardSelectedVanityCA() {
+  if (selectedVanityCA === null || !vanityCAKeypairs[selectedVanityCA]) return;
+  const removed = vanityCAKeypairs[selectedVanityCA];
+  const oldIdx = selectedVanityCA;
+  vanityCAKeypairs.splice(oldIdx, 1);
+  selectedVanityCA = vanityCAKeypairs.length
+    ? Math.min(oldIdx, vanityCAKeypairs.length - 1)
+    : null;
+  renderVanityCAList();
+  if (removed?.publicKey) {
+    fetch('/api/vanity-ca-candidates/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ publicKey: removed.publicKey }),
+    }).catch((err) => {
+      console.warn('Failed to remove saved Vanity CA:', err);
+    });
+  }
+}
+
+async function loadSavedVanityCAs() {
+  try {
+    const resp = await fetch('/api/vanity-ca-candidates');
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || `HTTP ${resp.status}`);
+    const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+    candidates.forEach((candidate) => {
+      if (candidate && candidate.publicKey && !candidate.decryptionFailed) {
+        addVanityCAEntry(candidate, { select: false });
+      }
+    });
+    if (selectedVanityCA === null && vanityCAKeypairs.length > 0) {
+      selectedVanityCA = vanityCAKeypairs.length - 1;
+    }
+    renderVanityCAList();
+  } catch (e) {
+    console.warn('Failed to load saved Vanity CAs:', e);
+  }
+}
+
+// Render the selected vanity CA and the optional candidate history. The launch
+// submit path uses selectedVanityCA, so the selected row here is authoritative.
 function renderVanityCAList() {
   const resultEl = document.getElementById('vanityCAResult');
   const addrEl = document.getElementById('vanityCAResultAddr');
@@ -2165,11 +2316,16 @@ function renderVanityCAList() {
   const metaEl = document.getElementById('vanityCAResultMeta');
   const iconEl = document.getElementById('vanityCAResultIcon');
   const headlineEl = document.getElementById('vanityCAResultHeadline');
+  const optionsEl = document.getElementById('vanityCAOptions');
   if (!resultEl) return;
 
   // No active CA → hide the block and we're done.
   if (selectedVanityCA === null || !vanityCAKeypairs[selectedVanityCA]) {
     resultEl.classList.add('hidden');
+    if (optionsEl) {
+      optionsEl.innerHTML = '';
+      optionsEl.classList.add('hidden');
+    }
     return;
   }
 
@@ -2193,9 +2349,11 @@ function renderVanityCAList() {
     rarityEl.textContent = ca.rarity;
   }
   if (metaEl) {
-    metaEl.textContent =
-      `${ca.attempts.toLocaleString()} attempts`
-      + (typeof ca.epochs === 'number' ? ` · ${ca.epochs.toFixed(1)}× epoch` : '');
+    metaEl.textContent = [
+      vanityCandidateTargetLabel(ca),
+      `${ca.attempts.toLocaleString()} attempts`,
+      typeof ca.epochs === 'number' ? `${ca.epochs.toFixed(1)}× epoch` : '',
+    ].filter(Boolean).join(' · ');
   }
 
   // The vanity CA is always usable — there is no pre-flight constraint
@@ -2210,6 +2368,30 @@ function renderVanityCAList() {
       + '<span class="has-text-grey">&mdash; will be used as the token mint address</span>';
   }
 
+  if (optionsEl) {
+    if (vanityCAKeypairs.length <= 1) {
+      optionsEl.innerHTML = '';
+      optionsEl.classList.add('hidden');
+    } else {
+      optionsEl.classList.remove('hidden');
+      optionsEl.innerHTML = vanityCAKeypairs.map((candidate, idx) => {
+        const selected = idx === selectedVanityCA;
+        const label = shortAddress(candidate.publicKey, 5, 5);
+        const targetLabel = vanityCandidateTargetLabel(candidate) || candidate.rarity;
+        return `<button type="button" class="button is-small vanity-ca-option ${selected ? 'is-primary' : 'is-light'}" data-vanity-ca-index="${idx}" title="${escapeAttr(candidate.publicKey)}">`
+          + `<span>${escapeHtml(label)}</span>`
+          + `<span class="has-text-grey ml-1">${escapeHtml(targetLabel)}</span>`
+          + `</button>`;
+      }).join('');
+      optionsEl.querySelectorAll('[data-vanity-ca-index]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          selectedVanityCA = Number(btn.dataset.vanityCaIndex);
+          renderVanityCAList();
+        });
+      });
+    }
+  }
+
   resultEl.classList.remove('hidden');
 }
 
@@ -2220,3 +2402,4 @@ function clearVanityCAs() {
   renderVanityCAList();
 }
 
+renderVanityCAList();

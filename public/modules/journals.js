@@ -70,11 +70,21 @@ function launchJournalStageLabel(journal) {
     token_create_failed: 'Token creation failed',
     lp_create_started: 'Pool creation started',
     lp_resume_started: 'Launch resume started',
+    lp_resume_blocked_unsafe_partial: 'Launch resume blocked',
+    lp_phase1_recovery_prepared: 'Partial pool recovery prepared',
     lp_recovered_for_transfer: 'Launch recovered for transfer',
     pool_create_done: 'Pool created',
+    phase1_pool_recovery_start: 'Partial pool recovery started',
     phase1_pool_done: 'Pool positions recorded',
     main_open_done: 'Main LP position opened',
+    main_open_recovered: 'Main LP position recovered',
+    main_open_failed: 'Main LP position failed',
     ladder_open_done: 'Ladder position opened',
+    ladder_open_recovered: 'Ladder position recovered',
+    ladder_open_failed: 'Ladder position failed',
+    support_open_done: 'Support position opened',
+    support_open_recovered: 'Support position recovered',
+    support_open_failed: 'Support position failed',
     bootstrap_open_done: 'Bootstrap opened',
     main_lock_done: 'LP position locked',
     main_lock_failed: 'LP position lock failed',
@@ -102,16 +112,9 @@ function launchJournalStageLabel(journal) {
 }
 
 function launchJournalRecoveryText(journal) {
-  // A funds shortfall is the one launch-stop with a clean fix: top up the
-  // launch wallet and resume. Surface it ahead of the phase-specific messages
-  // since the remedy is the same regardless of which phase ran short, and
-  // resume adopts any already-created pool and continues from there.
-  if (journal.lp?.failedKind === 'insufficient_funds') {
-    return 'The launch stopped because the launch wallet ran low on SOL. Add SOL to the launch wallet (this entry shows its address), then use Resume \u2014 it will adopt any pool already created and continue from where it stopped.';
-  }
-  const orphanedPoolEvents = unsafeCreatedPoolEvents(journal);
-  if (orphanedPoolEvents.length > 0) {
-    return 'A pool was created and some positions opened before the launch stopped. The launch wallet still controls them \u2014 use Resume to adopt that pool and open the remaining positions automatically.';
+  const unsafeEvents = unsafeCreatedPoolEvents(journal);
+  if (unsafeEvents.length > 0) {
+    return 'A pool was created before Trebuchet recorded completed LP positions for it. Automatic resume is blocked to avoid duplicate pool work; use this entry\u2019s recovery phrase to sweep or handle the pool manually.';
   }
   if (journal.transfer?.walletEmpty === false || journal.stage === 'transfer_partial') {
     return 'Final sweep did not prove the launch wallet empty. Use this entry\u2019s recovery phrase to sweep or import the wallet manually.';
@@ -181,121 +184,12 @@ function launchJournalTxRows(journal) {
   return `<div class="mt-2"><strong>Recorded txs:</strong> ${shown}${more}</div>`;
 }
 
-// Stored, structured LP results from the journal — authoritative for any
-// allocation that finished Phase 1. Kept separate from the reconstructed view
-// below so callers that need "what the structured results already record" (the
-// orphaned-pool messaging) aren't confused by event-reconstructed entries.
-function journalStoredResults(journal) {
+function journalPriorResults(journal) {
   const lp = journal.lp || {};
   const source = Array.isArray(lp.results) && lp.results.length > 0
     ? lp.results
     : (Array.isArray(lp.partialResults) ? lp.partialResults : []);
   return source.filter((result) => result && result.poolId);
-}
-
-// Frontend mirror of launchRecovery.js (server). Reconstruct per-allocation LP
-// results from the journal's granular Phase-1 events so a launch that died
-// mid-Phase-1 (pool created, some positions open, no phase1_pool_done) still
-// presents a resumable result. Must stay in sync with the server module; see
-// its header for the full rationale.
-function journalReconstructFromEvents(journal) {
-  const events = Array.isArray(journal.events) ? journal.events : [];
-  const byAlloc = new Map();
-  const ensure = (ai) => {
-    if (!byAlloc.has(ai)) {
-      byAlloc.set(ai, {
-        allocationIndex: ai,
-        poolId: null,
-        txIds: { createPool: null },
-        mainPositions: [],
-        ladderPositions: [],
-        supportPositions: [],
-        bootstrap: null,
-      });
-    }
-    return byAlloc.get(ai);
-  };
-  const upsertIndexed = (list, key, value, nftMint, openTxId) => {
-    let entry = list.find((p) => p[key] === value);
-    if (!entry) {
-      entry = { [key]: value, nftMint: null, locked: false, txIds: { open: null } };
-      list.push(entry);
-    }
-    if (nftMint) entry.nftMint = nftMint;
-    entry.txIds.open = openTxId || entry.txIds.open || null;
-  };
-
-  for (const event of events) {
-    if (!event || typeof event.stage !== 'string') continue;
-    const ai = event.allocationIndex;
-    if (!Number.isInteger(ai)) continue;
-    if (event.stage === 'pool_create_done' || event.stage === 'pool_adopted') {
-      const a = ensure(ai);
-      if (event.poolId) a.poolId = event.poolId;
-      a.txIds.createPool = event.txId || a.txIds.createPool || null;
-    } else if (event.stage === 'main_open_done' || event.stage === 'main_open_skip') {
-      if (Number.isInteger(event.sliceIndex)) {
-        upsertIndexed(ensure(ai).mainPositions, 'sliceIndex', event.sliceIndex, event.nftMint, event.txId);
-      }
-    } else if (event.stage === 'ladder_open_done' || event.stage === 'ladder_open_skip') {
-      if (Number.isInteger(event.bandIndex)) {
-        upsertIndexed(ensure(ai).ladderPositions, 'bandIndex', event.bandIndex, event.nftMint, event.txId);
-      }
-    } else if (event.stage === 'support_open_done' || event.stage === 'support_open_skip') {
-      if (event.nftMint) {
-        const list = ensure(ai).supportPositions;
-        let entry = list.find((p) => p.nftMint === event.nftMint);
-        if (!entry) {
-          entry = { nftMint: event.nftMint, locked: false, txIds: { open: null } };
-          list.push(entry);
-        }
-        entry.txIds.open = event.txId || entry.txIds.open || null;
-      }
-    } else if (event.stage === 'bootstrap_open_done') {
-      ensure(ai).bootstrap = {
-        nftMint: event.nftMint || null,
-        locked: false,
-        tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
-        tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
-        txIds: { open: event.txId || null, lock: null },
-      };
-    }
-  }
-
-  const out = [];
-  for (const a of byAlloc.values()) {
-    if (!a.poolId) continue;
-    a.mainPositions.sort((x, y) => x.sliceIndex - y.sliceIndex);
-    a.ladderPositions.sort((x, y) => x.bandIndex - y.bandIndex);
-    out.push(a);
-  }
-  out.sort((x, y) => x.allocationIndex - y.allocationIndex);
-  return out;
-}
-
-// Stored results win per allocation; reconstruction only fills allocations the
-// stored results don't cover. Mirrors mergePriorResults in launchRecovery.js.
-function journalMergePriorResults(stored, reconstructed) {
-  const byAlloc = new Map();
-  for (const r of reconstructed) {
-    if (r && Number.isInteger(r.allocationIndex)) byAlloc.set(r.allocationIndex, r);
-  }
-  for (const r of stored) {
-    if (r && Number.isInteger(r.allocationIndex)) byAlloc.set(r.allocationIndex, r);
-  }
-  return [...byAlloc.values()]
-    .filter((r) => r && r.poolId)
-    .sort((x, y) => (x.allocationIndex ?? 0) - (y.allocationIndex ?? 0));
-}
-
-// The resume payload preview / step-5 summary view: stored results plus any
-// allocation reconstructed from events (the mid-Phase-1 failure case). Matches
-// what the server hands the orchestrator on resume.
-function journalPriorResults(journal) {
-  return journalMergePriorResults(
-    journalStoredResults(journal),
-    journalReconstructFromEvents(journal),
-  );
 }
 
 function journalHasCompletedLp(journal) {
@@ -308,16 +202,12 @@ function journalHasCompletedLp(journal) {
   );
 }
 
-// Pools the journal recorded as created whose allocation never made it into
-// the STORED structured results — i.e. a launch that died mid-Phase-1. This no
-// longer blocks resume (the server adopts such pools after verifying them
-// on-chain); it only drives the recovery guidance text below.
 function unsafeCreatedPoolEvents(journal) {
-  const stored = new Set(journalStoredResults(journal).map((r) => r.allocationIndex));
+  const completedAllocations = new Set(journalPriorResults(journal).map((r) => r.allocationIndex));
   return (journal.events || []).filter(
     (event) =>
       event.stage === 'pool_create_done' &&
-      !stored.has(event.allocationIndex),
+      !completedAllocations.has(event.allocationIndex),
   );
 }
 
@@ -335,27 +225,23 @@ function canFinishTokenJournal(journal) {
 }
 
 function canResumeLaunchJournal(journal, wallet) {
-  // Client-side preconditions only: the plan exists and a recoverable wallet
-  // secret is present. A pool created mid-Phase-1 is NO LONGER a block — the
-  // server reconstructs the orphaned pool from the event log, verifies it
-  // on-chain, and adopts it. The server stays the authority and refuses safely
-  // if verification fails, so offering the button here can't strand the user.
   return !!(
     journal.token?.mint &&
     journal.poolPlan?.tokenTotalSupply &&
     journal.poolPlan?.targetMarketCapUsd &&
     Array.isArray(journal.poolPlan?.allocations) &&
     wallet &&
-    Array.isArray(wallet.secretKey)
+    wallet.hasSecretKey &&
+    unsafeCreatedPoolEvents(journal).length === 0
   );
 }
 
 function prepareRecoveredSessionFromJournal(journal, wallet) {
   tempWallet = {
     publicKey: wallet.publicKey,
-    secretKey: wallet.secretKey,
-    secretKeyB58: wallet.secretKeyB58,
-    mnemonic: wallet.mnemonic,
+    ...(wallet.secretKey ? { secretKey: wallet.secretKey } : {}),
+    ...(wallet.secretKeyB58 ? { secretKeyB58: wallet.secretKeyB58 } : {}),
+    ...(wallet.mnemonic ? { mnemonic: wallet.mnemonic } : {}),
   };
   fundingWallet = null;
   fundingDetectionExhausted = false;
@@ -436,6 +322,19 @@ function prepareRecoveredSessionFromJournal(journal, wallet) {
   setStepSummary(5, count > 0 ? `${count} pool${count === 1 ? '' : 's'} recorded` : 'ready to resume');
 }
 
+async function revealPendingWalletSecret(publicKey) {
+  const resp = await fetch('/api/pending-wallets/reveal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ publicKey }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data.success || !data.wallet) {
+    throw new Error(data.error || `Reveal failed with HTTP ${resp.status}`);
+  }
+  return data.wallet;
+}
+
 async function resumeLaunchJournal(journal, wallet, btn) {
   const completedLp = journalHasCompletedLp(journal);
   const actionLabel = completedLp ? 'Continue transfer' : 'Resume launch';
@@ -506,7 +405,7 @@ function buildLaunchJournalRow(journal, wallet) {
   const canFinish = canFinishTokenJournal(journal);
   const resumeLabel = journalHasCompletedLp(journal) ? 'Continue transfer' : 'Resume launch';
   const resumeHelp = !canResume && journal.token?.mint && journal.poolPlan?.allocations
-    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : ': matching recoverable wallet is missing'}.</div>`
+    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.secretPinLocked ? ': unlock the Recovery PIN first' : wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafeCreatedPoolEvents(journal).length > 0 ? ': unsafe partial pool state recorded' : ': matching recoverable wallet is missing'}.</div>`
     : '';
 
   // Recovery material from the matching wallet, folded into this card so the
@@ -515,8 +414,8 @@ function buildLaunchJournalRow(journal, wallet) {
   // secret decrypted; secretIsMnemonic picks the recovery-phrase vs raw-key
   // wording. When a wallet is attached but can't be decrypted we show a note
   // instead of a copy button.
-  const hasSecret = !!(wallet && !wallet.decryptionFailed && (wallet.mnemonic || wallet.secretKeyB58));
-  const secretIsMnemonic = hasSecret && !!wallet.mnemonic;
+  const hasSecret = !!(wallet && !wallet.decryptionFailed && (wallet.hasMnemonic || wallet.hasSecretKey));
+  const secretIsMnemonic = hasSecret && !!wallet.hasMnemonic;
   const recoverBtnHtml = hasSecret ? `
         <div class="control">
           <button class="button is-small is-info" data-action="copy-recovery">
@@ -524,13 +423,25 @@ function buildLaunchJournalRow(journal, wallet) {
             <span>${secretIsMnemonic ? 'Copy recovery phrase' : 'Copy secret key'}</span>
           </button>
         </div>` : '';
-  const decryptNoteHtml = (wallet && wallet.decryptionFailed) ? `
+  const pinLockedNoteHtml = (wallet && wallet.secretPinLocked) ? `
+    <div class="notification is-info is-light is-size-7 py-2 px-3 my-2">
+      The recoverable wallet for this launch is locked behind your Recovery
+      PIN. Unlock it to resume, copy the recovery phrase, or use the wallet.
+    </div>` : '';
+  const decryptNoteHtml = (wallet && wallet.decryptionFailed && !wallet.secretPinLocked) ? `
     <div class="notification is-danger is-light is-size-7 py-2 px-3 my-2">
       The recoverable wallet for this launch can't be decrypted — the OS
       keychain key has likely changed (file copied to another account or
       machine, or the keychain was reset). If you backed up the recovery
       phrase elsewhere, use that.
     </div>` : '';
+  const unlockPinBtnHtml = (wallet && wallet.secretPinLocked) ? `
+        <div class="control">
+          <button class="button is-small is-info" data-action="unlock-pin">
+            <span class="icon is-small"><i class="fas fa-unlock"></i></span>
+            <span>Unlock PIN</span>
+          </button>
+        </div>` : '';
   // The removal action also discards the wallet secret when one is attached,
   // so the label and confirmation make that consequence explicit.
   const removeLabel = hasSecret ? 'Dismiss &amp; discard wallet' : 'Dismiss journal';
@@ -547,6 +458,7 @@ function buildLaunchJournalRow(journal, wallet) {
     <div class="notification is-warning is-light is-size-7 py-2 px-3 my-2">
       ${escapeHtml(launchJournalRecoveryText(journal))}
     </div>
+    ${pinLockedNoteHtml}
     ${decryptNoteHtml}
     ${launchJournalPoolRows(journal)}
     ${launchJournalTxRows(journal)}
@@ -577,6 +489,7 @@ function buildLaunchJournalRow(journal, wallet) {
         </div>
       ` : ''}
       ${recoverBtnHtml}
+      ${unlockPinBtnHtml}
       ${journal.token?.mint ? `
         <div class="control">
           <button class="button is-small" data-action="copy-token">
@@ -614,6 +527,13 @@ function buildLaunchJournalRow(journal, wallet) {
   });
   wrap.querySelector('[data-action="copy-wallet"]').addEventListener('click', async () => {
     await copyText(journal.walletPublicKey, 'Launch wallet public key');
+  });
+  wrap.querySelector('[data-action="unlock-pin"]')?.addEventListener('click', async () => {
+    if (typeof showSecretPinModal === 'function') {
+      await showSecretPinModal('unlock');
+      await loadLaunchJournals();
+      if (typeof loadPendingWallets === 'function') await loadPendingWallets();
+    }
   });
 
   // Finish-token button: complete an interrupted token creation (the mint
@@ -657,7 +577,7 @@ function buildLaunchJournalRow(journal, wallet) {
 
   // Use-wallet button: load this wallet as active tempWallet for a fresh launch
   wrap.querySelector('[data-action="use-wallet"]')?.addEventListener('click', async () => {
-    if (!wallet || !wallet.secretKey) return;
+    if (!wallet || !wallet.hasSecretKey) return;
     if (tempWallet) {
       const ok = await confirmDialog({
         title: 'Switch wallet?',
@@ -673,18 +593,17 @@ function buildLaunchJournalRow(journal, wallet) {
     createdTokenInfo = null;
     lpResult = null;
     fundingRequirement = { solLamports: 0, byQuote: {}, autoSwapPlan: [] };
-    if (typeof clearVanityCAs === 'function') clearVanityCAs();
 
     tempWallet = {
       publicKey: wallet.publicKey,
-      secretKey: wallet.secretKey,
-      secretKeyB58: wallet.secretKeyB58,
-      mnemonic: wallet.mnemonic || null,
     };
 
     document.getElementById('walletInfo').classList.remove('hidden');
     document.getElementById('walletAddress').value = wallet.publicKey;
-    document.getElementById('qrCode').src = '';
+    setWalletQrImages(null);
+    ensureWalletQrCode(tempWallet).catch((e) => {
+      log(`Couldn't render wallet QR: ${e.message}`, 'warning');
+    });
     document.getElementById('privateKeyContainer').classList.add('hidden');
     document.getElementById('tokenCreatedInfo').classList.add('hidden');
     document.getElementById('createTokenBtn').classList.remove('hidden');
@@ -710,12 +629,17 @@ function buildLaunchJournalRow(journal, wallet) {
     if (typeof updateCancelButtonState === 'function') updateCancelButtonState();
   });
   wrap.querySelector('[data-action="copy-recovery"]')?.addEventListener('click', async () => {
-    const text = wallet && (wallet.mnemonic || wallet.secretKeyB58);
-    if (!text) {
-      log(`No recovery secret available for ${walletShort}`, 'warning');
-      return;
+    try {
+      const revealed = await revealPendingWalletSecret(wallet.publicKey);
+      const text = revealed.mnemonic || revealed.secretKeyB58;
+      if (!text) {
+        log(`No recovery secret available for ${walletShort}`, 'warning');
+        return;
+      }
+      await copyText(text, revealed.mnemonic ? 'Recovery phrase' : 'Secret key');
+    } catch (e) {
+      log(`Couldn't reveal recovery secret for ${walletShort}: ${e.message}`, 'warning');
     }
-    await copyText(text, wallet.mnemonic ? 'Recovery phrase' : 'Secret key');
   });
   wrap.querySelector('[data-action="resume"]')?.addEventListener('click', async (event) => {
     await resumeLaunchJournal(journal, wallet, event.currentTarget);
@@ -764,4 +688,3 @@ function buildLaunchJournalRow(journal, wallet) {
 
   return wrap;
 }
-

@@ -123,6 +123,7 @@ test('migrates legacy plaintext entries when encryption is available', async (t)
 test('treats malformed pending-wallet files as empty and non-fatal', async (t) => {
   await withMutedConsole(async () => {
     const configDir = makeTempConfigDir(t);
+    secretStore.lockSecretPin();
     secretStore.setSafeStorage(null);
     writeFileSync(pendingWalletFile(configDir), '{not json');
 
@@ -130,5 +131,29 @@ test('treats malformed pending-wallet files as empty and non-fatal', async (t) =
 
     assert.deepEqual(pendingWallets.list(), []);
     assert.equal(existsSync(pendingWalletFile(configDir)), true);
+  });
+});
+
+test('stores pending wallet secrets with the configured Recovery PIN', async (t) => {
+  await withMutedConsole(async () => {
+    const configDir = makeTempConfigDir(t);
+    process.env.TREBUCHET_CONFIG_DIR = configDir;
+    secretStore.setSafeStorage(null);
+    secretStore.setupSecretPin('2468');
+    t.after(() => secretStore.lockSecretPin());
+
+    const pendingWallets = await importFreshPendingWallets(configDir);
+    pendingWallets.add('PinWallet11111111111111111111111111111111', [7, 8, 9], 'pin seed words');
+
+    const disk = JSON.parse(readFileSync(pendingWalletFile(configDir), 'utf8'));
+    assert.match(disk[0].secretKeyEnc, /^pin:/);
+    assert.match(disk[0].mnemonicEnc, /^pin:/);
+    assert.deepEqual(pendingWallets.get('PinWallet11111111111111111111111111111111').secretKey, [7, 8, 9]);
+
+    secretStore.lockSecretPin();
+    assert.equal(pendingWallets.get('PinWallet11111111111111111111111111111111').secretKey, undefined);
+
+    assert.equal(secretStore.unlockSecretPin('2468'), true);
+    assert.deepEqual(pendingWallets.get('PinWallet11111111111111111111111111111111').secretKey, [7, 8, 9]);
   });
 });

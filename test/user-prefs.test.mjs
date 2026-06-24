@@ -36,6 +36,9 @@ test('returns defaults when no preferences file exists', async (t) => {
   // checkForUpdatesOnStartup defaults to true — opt-out, not opt-in.
   // If users had to opt in they'd never discover the feature exists.
   assert.equal(prefs.checkForUpdatesOnStartup, true);
+  assert.equal(prefs.medievalCursor, false);
+  assert.equal(prefs.medievalCursorOptIn, false);
+  assert.equal(prefs.playBackgroundMusic, false);
 
   // Calling get() before any set() should not touch the disk. The
   // file is created lazily on the first set().
@@ -73,7 +76,7 @@ test('round-trips multiple writes without losing or duplicating fields', async (
   const onDisk = JSON.parse(readFileSync(path.join(configDir, 'userPrefs.json'), 'utf8'));
   assert.deepEqual(
     Object.keys(onDisk).sort(),
-    ['checkForUpdatesOnStartup', 'coinPreview', 'coinPreviewParked', 'demoMode', 'medievalCursor', 'playIntroVideo', 'playSoundEffects', 'playBackgroundMusic', 'publishLaunchReport'].sort(),
+    ['checkForUpdatesOnStartup', 'coinPreview', 'coinPreviewParked', 'demoMode', 'medievalCursor', 'medievalCursorOptIn', 'playIntroVideo', 'playSoundEffects', 'playBackgroundMusic', 'publishLaunchReport'].sort(),
   );
   assert.equal(onDisk.checkForUpdatesOnStartup, false);
 });
@@ -111,7 +114,7 @@ test('rejects unknown keys without corrupting existing state', async (t) => {
   const onDisk = JSON.parse(readFileSync(path.join(configDir, 'userPrefs.json'), 'utf8'));
   assert.deepEqual(
     Object.keys(onDisk).sort(),
-    ['checkForUpdatesOnStartup', 'coinPreview', 'coinPreviewParked', 'demoMode', 'medievalCursor', 'playIntroVideo', 'playSoundEffects', 'playBackgroundMusic', 'publishLaunchReport'].sort(),
+    ['checkForUpdatesOnStartup', 'coinPreview', 'coinPreviewParked', 'demoMode', 'medievalCursor', 'medievalCursorOptIn', 'playIntroVideo', 'playSoundEffects', 'playBackgroundMusic', 'publishLaunchReport'].sort(),
   );
 });
 
@@ -195,4 +198,7 @@ test('fills missing keys from defaults when the file has partial data', async (t
   const userPrefs = await importFreshUserPrefs(configDir);
   const prefs = userPrefs.get();
   assert.equal(prefs.checkForUpdatesOnStartup, true);
+  assert.equal(prefs.medievalCursor, false);
+  assert.equal(prefs.medievalCursorOptIn, false);
+  assert.equal(prefs.playBackgroundMusic, false);
 });

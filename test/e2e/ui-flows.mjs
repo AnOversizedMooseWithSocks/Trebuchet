@@ -85,15 +85,23 @@ async function withPage(fn, size = 'desktop') {
     // Intercept the HTML response and remove the splash screen markup
     // before the browser parses it — no video frames at all in the recording.
     await p.route('**/', async (route) => {
-      const resp = await route.fetch();
-      const ct = resp.headers()['content-type'] || '';
-      if (ct.includes('text/html')) {
-        let body = await resp.text();
-        // Remove the splash screen div entirely (self-closing or paired tag)
-        body = body.replace(/<div[^>]*id="splashScreen"[^>]*>[\s\S]*?<\/div>/i, '');
-        await route.fulfill({ response: resp, body });
-      } else {
-        await route.fulfill({ response: resp });
+      try {
+        const resp = await route.fetch();
+        const ct = resp.headers()['content-type'] || '';
+        if (ct.includes('text/html')) {
+          let body = await resp.text();
+          // Remove the splash screen div entirely (self-closing or paired tag)
+          body = body.replace(/<div[^>]*id="splashScreen"[^>]*>[\s\S]*?<\/div>/i, '');
+          await route.fulfill({ response: resp, body });
+        } else {
+          await route.fulfill({ response: resp });
+        }
+      } catch (e) {
+        // CI occasionally closes a context while the next run's document
+        // request is still being proxied. Let Playwright surface real
+        // navigation failures through p.goto(), but do not let this async route
+        // handler crash the entire E2E process with an uncaught ECONNRESET.
+        try { await route.continue(); } catch {}
       }
     });
 
@@ -109,6 +117,26 @@ async function withPage(fn, size = 'desktop') {
       await p.click('#disclaimerAgreeCheck');
       await p.click('#disclaimerAgreeBtn');
     } catch {}
+
+    // First real launch now requires a Recovery PIN before recoverable secrets
+    // can be persisted. Later pages in the same E2E server session usually stay
+    // unlocked, but this also handles an unlock prompt if one appears.
+    await p.waitForFunction(() => {
+      const modal = document.querySelector('#secretPinModal');
+      const status = document.querySelector('#secretPinStatusText')?.textContent || '';
+      return modal?.classList.contains('is-active') || status.startsWith('Unlocked');
+    }, { timeout: 20000 });
+    if (await p.locator('#secretPinModal.is-active #secretPinInput').count()) {
+      await p.fill('#secretPinInput', '1234');
+      if (await p.locator('#secretPinConfirmInput:visible').count()) {
+        await p.fill('#secretPinConfirmInput', '1234');
+      }
+      await p.click('#secretPinSubmitBtn');
+      await p.waitForFunction(() => {
+        const modal = document.querySelector('#secretPinModal');
+        return modal && !modal.classList.contains('is-active');
+      }, { timeout: 15000 });
+    }
 
     // Brief settle so the UI is interactive.
     await p.waitForTimeout(500);

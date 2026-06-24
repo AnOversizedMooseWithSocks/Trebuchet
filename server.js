@@ -47,13 +47,10 @@ import {
 } from './rpcConfig.js';
 
 import * as pendingWallets from './pendingWallets.js';
+import * as vanityCaStore from './vanityCaStore.js';
+import * as secretStore from './secretStore.js';
 import { createLaunchReportUmi, publishLaunchReport } from './launchReportService.js';
 import * as launchJournal from './launchJournal.js';
-import { classifyChainError } from './chainRetry.js';
-import {
-  reconstructPartialResultsFromEvents,
-  mergePriorResults,
-} from './launchRecovery.js';
 import * as userPrefs from './userPrefs.js';
 import * as updateCheckBridge from './updateCheckBridge.js';
 import * as demoChainService from './demoChainService.js';
@@ -71,6 +68,7 @@ import {
   normalizeTokenSymbol,
   normalizeWholeTokenSupply,
 } from './validators.js';
+import { normalizeDistribution } from './lpDistribution.js';
 import { isWalletEffectivelyEmpty } from './walletRecovery.js';
 
 // In-flight airdrop guard. Maps wallet public key → boolean (currently
@@ -486,6 +484,41 @@ function isDemoMode() {
   }
 }
 
+function secretPinLockedError(action = 'use saved recovery secrets') {
+  const error = new Error(`Unlock your Recovery PIN before ${action}.`);
+  error.statusCode = 423;
+  error.code = 'SECRET_PIN_LOCKED';
+  return error;
+}
+
+function sendErrorResponse(res, error, fallbackStatus = 500) {
+  const status = error?.statusCode || error?.status || fallbackStatus;
+  const body = {
+    success: false,
+    error: launchJournal.errorMessage(error),
+  };
+  if (error?.code) body.code = error.code;
+  if (error?.code === 'SECRET_PIN_LOCKED') body.secretPinLocked = true;
+  res.status(status).json(body);
+}
+
+function launchFailureDetails(error, context = {}) {
+  return launchJournal.errorDetails(error, context);
+}
+
+function rejectIfSecretPinLocked(res, action) {
+  if (!secretStore.isSecretPinLocked()) return false;
+  sendErrorResponse(res, secretPinLockedError(action), 423);
+  return true;
+}
+
+function migrateSecretsToUnlockedPin() {
+  // These loads opportunistically rewrite legacy/plain/safeStorage tokens
+  // into pin: tokens when the PIN key is currently unlocked.
+  pendingWallets.list();
+  vanityCaStore.list();
+}
+
 
 
 // ---------------------------------------------------------------------------
@@ -538,47 +571,45 @@ app.get('/', (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 
-// Diagnostic endpoint for the splash-video 404 problem. Reports what
-// server.js sees on disk: the resolved public/ path, whether it exists,
-// what's inside it, and whether intro.mp4 specifically is readable.
-// Useful for narrowing down whether a 404 on /intro.mp4 is "server
-// can't find the file" vs "file exists but isn't being served for
-// some other reason." Hit this from DevTools:
+// Opt-in diagnostic endpoint for splash-video 404 debugging. It reports local
+// filesystem/process paths, so keep it unavailable in normal desktop/web runs.
+// Enable only for targeted troubleshooting:
 //
+//   TREBUCHET_ENABLE_SPLASH_DEBUG=1 npm run web
 //   fetch('/api/_splash-debug').then(r => r.json()).then(console.log)
-//
-// Safe to ship — only reads its own directory, no user data exposed.
-app.get('/api/_splash-debug', (_req, res) => {
-  const introPath = path.join(publicDir, 'intro.mp4');
-  let publicListing = null;
-  let publicListingError = null;
-  try {
-    publicListing = fs.readdirSync(publicDir);
-  } catch (e) {
-    publicListingError = e.message;
-  }
-  let introStat = null;
-  let introStatError = null;
-  try {
-    const s = fs.statSync(introPath);
-    introStat = { size: s.size, isFile: s.isFile(), mtime: s.mtime };
-  } catch (e) {
-    introStatError = e.message;
-  }
-  res.json({
-    __dirname,
-    publicDir,
-    publicDirExists: fs.existsSync(publicDir),
-    publicListing,
-    publicListingError,
-    introPath,
-    introExists: fs.existsSync(introPath),
-    introStat,
-    introStatError,
-    cwd: process.cwd(),
-    execPath: process.execPath,
+if (process.env.TREBUCHET_ENABLE_SPLASH_DEBUG === '1') {
+  app.get('/api/_splash-debug', (_req, res) => {
+    const introPath = path.join(publicDir, 'intro.mp4');
+    let publicListing = null;
+    let publicListingError = null;
+    try {
+      publicListing = fs.readdirSync(publicDir);
+    } catch (e) {
+      publicListingError = e.message;
+    }
+    let introStat = null;
+    let introStatError = null;
+    try {
+      const s = fs.statSync(introPath);
+      introStat = { size: s.size, isFile: s.isFile(), mtime: s.mtime };
+    } catch (e) {
+      introStatError = e.message;
+    }
+    res.json({
+      __dirname,
+      publicDir,
+      publicDirExists: fs.existsSync(publicDir),
+      publicListing,
+      publicListingError,
+      introPath,
+      introExists: fs.existsSync(introPath),
+      introStat,
+      introStatError,
+      cwd: process.cwd(),
+      execPath: process.execPath,
+    });
   });
-});
+}
 
 // ---------------------------------------------------------------------------
 // Server log streaming
@@ -611,16 +642,59 @@ app.get('/api/server-logs', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Recovery PIN endpoints
+// ---------------------------------------------------------------------------
+
+app.get('/api/secret-pin/status', (_req, res) => {
+  res.json({ success: true, status: secretStore.secretPinStatus() });
+});
+
+app.post('/api/secret-pin/setup', (req, res) => {
+  try {
+    secretStore.setupSecretPin(req.body?.pin);
+    migrateSecretsToUnlockedPin();
+    res.json({ success: true, status: secretStore.secretPinStatus() });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+app.post('/api/secret-pin/unlock', (req, res) => {
+  try {
+    const ok = secretStore.unlockSecretPin(req.body?.pin);
+    if (!ok) {
+      return res.status(401).json({
+        success: false,
+        code: 'BAD_SECRET_PIN',
+        error: 'Recovery PIN is incorrect',
+      });
+    }
+    migrateSecretsToUnlockedPin();
+    res.json({ success: true, status: secretStore.secretPinStatus() });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+app.post('/api/secret-pin/lock', (_req, res) => {
+  res.json({ success: true, status: secretStore.lockSecretPin() });
+});
+
+// ---------------------------------------------------------------------------
 // Wallet endpoints
 // ---------------------------------------------------------------------------
 
 app.post('/api/generate-wallet', async (req, res) => {
   try {
+    const demoMode = isDemoMode();
+    if (!demoMode && rejectIfSecretPinLocked(res, 'generating a recoverable launch wallet')) {
+      return;
+    }
     console.log('Generating temporary wallet...');
     const walletInfo = await generateTemporaryWallet();
     const qrCode = await getWalletQRCode(walletInfo.publicKey);
 
-    if (isDemoMode()) {
+    if (demoMode) {
       // Demo: still produce a REAL keypair (the secret key is shown to the
       // user and downstream code expects a valid signer), but register a
       // fresh empty WalletState in the demo ledger instead of writing to
@@ -647,16 +721,62 @@ app.post('/api/generate-wallet', async (req, res) => {
     });
   } catch (error) {
     console.error('Error generating wallet:', error);
-    res.status(500).json({ success: false, error: error.message });
+    sendErrorResponse(res, error);
+  }
+});
+
+app.get('/api/wallet-qr', async (req, res) => {
+  try {
+    const publicKey = String(req.query.publicKey || '').trim();
+    if (!publicKey) {
+      return res.status(400).json({ success: false, error: 'publicKey required' });
+    }
+    // Validate before rendering so typos fail with a useful message instead
+    // of producing a QR that scans to nonsense.
+    new PublicKey(publicKey);
+    const qrCode = await getWalletQRCode(publicKey);
+    res.json({ success: true, publicKey, qrCode });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
   }
 });
 
 // SOL-only balance (kept for backwards compatibility / Step 1 display)
 // ---------------------------------------------------------------------------
 
+app.get('/api/vanity-ca-candidates', (req, res) => {
+  try {
+    const secretPinLocked = secretStore.isSecretPinLocked();
+    const candidates = vanityCaStore.listMetadata().map((candidate) => ({
+      ...candidate,
+      ...(candidate.decryptionFailed && secretPinLocked ? { secretPinLocked: true } : {}),
+    }));
+    res.json({ success: true, candidates, secretPinLocked });
+  } catch (error) {
+    console.error('Error listing vanity CA candidates:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/vanity-ca-candidates/remove', (req, res) => {
+  try {
+    const { publicKey } = req.body || {};
+    if (!publicKey) {
+      return res.status(400).json({ success: false, error: 'publicKey required' });
+    }
+    vanityCaStore.remove(publicKey);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error removing vanity CA candidate:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // SSE streaming endpoint for vanity CA grind progress
 app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
   let { prefix, suffix, threads, blockhash, token } = req.query;
+  prefix = typeof prefix === 'string' ? prefix.trim() : '';
+  suffix = typeof suffix === 'string' ? suffix.trim() : '';
 
   // Validate session token inline.  This endpoint is exempt from the
   // middleware so EventSource can connect, but we still gate on the
@@ -668,6 +788,11 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
   const expectedBuf = Buffer.from(API_SESSION_TOKEN);
   if (tokenBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(tokenBuf, expectedBuf)) {
     return res.status(403).json({ success: false, error: 'invalid session token' });
+  }
+
+  const demoMode = isDemoMode();
+  if (!demoMode && rejectIfSecretPinLocked(res, 'saving a Vanity CA candidate')) {
+    return;
   }
 
   if (!prefix && !suffix) {
@@ -743,10 +868,10 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
     }
   }
 
-  const target = prefix || suffix;
-  const targetLen = target.length;
-  // 58^len
+  const target = prefix && suffix ? `${prefix}...${suffix}` : (prefix || suffix);
+  const targetLen = prefix.length + suffix.length;
   const expected = Math.pow(58, targetLen);
+  const vanityMode = prefix && suffix ? 'both' : (prefix ? 'prefix' : 'suffix');
 
   // SSE headers
   res.writeHead(200, {
@@ -769,14 +894,22 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
   });
 
   // Send initial metadata
-  res.write(`data: ${JSON.stringify({ type: 'start', target, targetLen, expected })}\n\n`);
+  res.write(`data: ${JSON.stringify({
+    type: 'start',
+    target,
+    targetLen,
+    expected,
+    prefix: prefix || null,
+    suffix: suffix || null,
+    mode: vanityMode,
+  })}\n\n`);
 
   let lastAttempts = 0;
   let lastSend = Date.now();
 
   try {
-    const generateVanityKeypair = await getVanityKeygen();
-    const result = await generateVanityKeypair({
+    const vanityMod = await import('./vanityKeygen.js');
+    const result = await vanityMod.generateVanityKeypair({
       prefix, suffix, threads, blockhash,
       onProgress: ({ attempts, key }) => {
         // Throttle to ~4 updates/sec
@@ -799,8 +932,21 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
     // it starts as an empty, fundable launch wallet — same as the plain
     // generate-wallet demo branch. (This stream endpoint never writes to the
     // pending-wallet/journal recovery stores, so there's nothing to skip.)
-    if (isDemoMode()) {
+    if (demoMode) {
       demoChainService.registerWallet(walletInfo.publicKey);
+    } else {
+      vanityCaStore.add({
+        publicKey: result.publicKey,
+        secretKey: result.secretKey,
+        rarity: result.rarity,
+        epochs: result.epochs,
+        attempts: result.attempts,
+        expectedAttempts: result.expectedAttempts,
+        target,
+        prefix: prefix || null,
+        suffix: suffix || null,
+        mode: vanityMode,
+      });
     }
 
     const qrCode = await getWalletQRCode(walletInfo.publicKey);
@@ -819,6 +965,11 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
         rarity: result.rarity,
         epochs: result.epochs,
         expectedAttempts: result.expectedAttempts,
+        target,
+        prefix: prefix || null,
+        suffix: suffix || null,
+        mode: vanityMode,
+        persisted: !demoMode,
         ...(result.vrfProof ? {
           vrfProof: result.vrfProof,
           vrfPk: result.vrfPk,
@@ -864,7 +1015,13 @@ app.post('/api/cancel-vanity-grind', async (req, res) => {
 
 app.post('/api/generate-vanity-wallet', async (req, res) => {
   try {
-    const { prefix, suffix, threads } = req.body;
+    const demoMode = isDemoMode();
+    if (!demoMode && rejectIfSecretPinLocked(res, 'generating a recoverable vanity wallet')) {
+      return;
+    }
+    let { prefix, suffix, threads } = req.body;
+    prefix = typeof prefix === 'string' ? prefix.trim() : '';
+    suffix = typeof suffix === 'string' ? suffix.trim() : '';
     if (!prefix && !suffix) {
       return res.status(400).json({ success: false, error: 'prefix or suffix required' });
     }
@@ -881,8 +1038,9 @@ app.post('/api/generate-vanity-wallet', async (req, res) => {
       });
     }
 
-    const target = prefix || suffix;
-    console.log(`Generating vanity wallet (${prefix ? 'prefix' : 'suffix'}: "${target}")...`);
+    const target = prefix && suffix ? `${prefix}...${suffix}` : (prefix || suffix);
+    const vanityMode = prefix && suffix ? 'both' : (prefix ? 'prefix' : 'suffix');
+    console.log(`Generating vanity wallet (${vanityMode}: "${target}")...`);
 
     const generateVanityKeypair = await getVanityKeygen();
     const result = await generateVanityKeypair({ prefix, suffix, threads });
@@ -897,7 +1055,7 @@ app.post('/api/generate-vanity-wallet', async (req, res) => {
     };
 
     const qrCode = await getWalletQRCode(walletInfo.publicKey);
-    if (isDemoMode()) {
+    if (demoMode) {
       // Demo: register an empty wallet in the demo ledger and DON'T touch the
       // disk-backed recovery stores — mirrors the generate-wallet demo branch
       // so synthetic demo wallets never leak into real recovery data.
@@ -920,11 +1078,15 @@ app.post('/api/generate-vanity-wallet', async (req, res) => {
         rarity: result.rarity,
         epochs: result.epochs,
         expectedAttempts: result.expectedAttempts,
+        target,
+        prefix: prefix || null,
+        suffix: suffix || null,
+        mode: vanityMode,
       },
     });
   } catch (error) {
     console.error('Error generating vanity wallet:', error);
-    res.status(500).json({ success: false, error: error.message });
+    sendErrorResponse(res, error);
   }
 });
 app.post('/api/check-balance', async (req, res) => {
@@ -1072,6 +1234,10 @@ app.post('/api/publish-launch-report', async (req, res) => {
 
     if (!mint) {
       return res.json({ success: true, skipped: true, reason: 'missing-mint' });
+    }
+
+    if (walletPublicKey && rejectIfSecretPinLocked(res, 'publishing a launch report')) {
+      return;
     }
 
     // Journal-backed idempotency: the report publishes during the transfer
@@ -1451,22 +1617,10 @@ function recordLpJournalProgress(walletPublicKey, event) {
 
 function priorResultsFromJournal(journal) {
   const lp = journal?.lp || {};
-  // Stored, structured results are authoritative when present: they carry the
-  // complete Phase-1 result plus any lock/transfer state later phases wrote.
-  const stored = Array.isArray(lp.results) && lp.results.length > 0
+  const source = Array.isArray(lp.results) && lp.results.length > 0
     ? lp.results
     : (Array.isArray(lp.partialResults) ? lp.partialResults : []);
-  const storedClean = cloneJson(stored).filter((result) => result && result.poolId);
-  // Also reconstruct any allocation that has a pool on-chain but never made it
-  // into the structured results — a launch that died mid-Phase-1 (pool created,
-  // some positions open, but no phase1_pool_done emitted). Without this such a
-  // launch looks empty here and the resume tries to recreate the already-
-  // existing pool and fails. The merge lets stored results win and only fills
-  // the gaps (see launchRecovery.js). This is also what makes a recorded-but-
-  // orphaned pool a known prior, so the resume endpoint can adopt it instead of
-  // refusing.
-  const reconstructed = reconstructPartialResultsFromEvents(journal);
-  return mergePriorResults(storedClean, reconstructed);
+  return cloneJson(source).filter((result) => result && result.poolId);
 }
 
 function hasCompletedLpResults(journal) {
@@ -1485,89 +1639,230 @@ function hasCompletedLpResults(journal) {
   );
 }
 
-// Best-effort on-chain verification that the pools a resume is about to ADOPT
-// actually exist. We reach here only for pools the journal recorded as created
-// but that never produced a completed structured result (orphaned by a
-// mid-Phase-1 failure). A recorded pool_create_done is not proof the pool
-// exists on the active cluster — the RPC may have changed, the journal may be
-// stale, or the create may have reverted — so before the orchestrator adopts
-// one (skipping pool creation entirely) we confirm it is a real CLMM pool
-// account. If it isn't, or if RPC is unreachable, stay conservative and refuse
-// the automatic resume with a clear sweep/recover message rather than failing
-// cryptically mid-adoption.
-//
-// Returns { ok: true } when every pool verifies, otherwise
-// { ok: false, message, unverified: [poolId, ...] }.
-async function verifyResumablePoolsOnChain(poolIds) {
-  const ids = Array.from(new Set((poolIds || []).filter(Boolean)));
-  if (ids.length === 0) return { ok: true };
-
-  // Dynamic imports mirror the existing in-file pattern (the diagnose endpoint
-  // does the same) and source the CLMM program id from the installed SDK
-  // rather than hardcoding a literal. PublicKey is already imported at module
-  // scope.
-  let Connection;
-  let clmmProgramId;
-  try {
-    ({ Connection } = await import('@solana/web3.js'));
-    const sdk = await import('@raydium-io/raydium-sdk-v2');
-    clmmProgramId = sdk.CLMM_PROGRAM_ID instanceof PublicKey
-      ? sdk.CLMM_PROGRAM_ID
-      : new PublicKey(sdk.CLMM_PROGRAM_ID);
-  } catch (e) {
-    return {
-      ok: false,
-      unverified: ids,
-      message:
-        `Couldn't load the on-chain libraries needed to verify the recorded ` +
-        `pool(s) before resuming (${e.message}). Recover or sweep the launch ` +
-        `wallet manually; recorded pool(s): ${ids.join(', ')}.`,
-    };
-  }
-
-  let connection;
-  try {
-    connection = new Connection(getRpcConfig().active, 'confirmed');
-  } catch (e) {
-    return {
-      ok: false,
-      unverified: ids,
-      message:
-        `Couldn't reach an RPC endpoint to verify the recorded pool(s) before ` +
-        `resuming (${e.message}). Check the RPC panel and retry, or recover/` +
-        `sweep the launch wallet manually; recorded pool(s): ${ids.join(', ')}.`,
-    };
-  }
-
-  const unverified = [];
-  for (const id of ids) {
-    try {
-      const info = await connection.getAccountInfo(new PublicKey(id));
-      // Missing account, or one not owned by the CLMM program, means the
-      // recorded pool isn't a live CLMM pool on this cluster.
-      if (!info || !info.owner || !info.owner.equals(clmmProgramId)) {
-        unverified.push(id);
-      }
-    } catch (e) {
-      // An RPC error for this id — treat as unverified (conservative).
-      unverified.push(id);
-    }
-  }
-
-  if (unverified.length > 0) {
-    return {
-      ok: false,
-      unverified,
-      message:
-        `Trebuchet recorded ${unverified.length === 1 ? 'a pool' : 'pools'} it ` +
-        `can't confirm on-chain right now, so it won't resume automatically ` +
-        `(adopting a pool that isn't really there could corrupt the launch). ` +
-        `Recover or sweep the launch wallet manually; unverified pool(s): ` +
-        `${unverified.join(', ')}.`,
-    };
-  }
-  return { ok: true };
+function unsafeCreatedPoolEvents(journal, priorResults) {
+  const completedAllocations = new Set(priorResults.map((r) => r.allocationIndex));
+  return (journal.events || []).filter(
+    (event) =>
+      event.stage === 'pool_create_done' &&
+      !completedAllocations.has(event.allocationIndex),
+  );
 }
+
+function latestEventsByIndex(events, stage, indexKey, allocationIndex) {
+  const byIndex = new Map();
+  for (const event of events || []) {
+    if (event.stage !== stage || event.allocationIndex !== allocationIndex) continue;
+    const idx = Number(event[indexKey]);
+    if (!Number.isInteger(idx) || idx < 0) continue;
+    byIndex.set(idx, event);
+  }
+  return [...byIndex.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([index, event]) => ({ index, event }));
+}
+
+function mergePriorResults(priorResults, recoveredResults) {
+  const merged = cloneJson(priorResults || []);
+  for (const recovered of recoveredResults || []) {
+    upsertJournalResult(merged, recovered);
+  }
+  return merged;
+}
+
+function materializePhase1RecoveryResults(journal, priorResults, allocations) {
+  const completedAllocations = new Set((priorResults || []).map((r) => r.allocationIndex));
+  const poolCreateEvents = unsafeCreatedPoolEvents(journal, priorResults);
+  const byAllocation = new Map();
+  const blockedEvents = [];
+
+  for (const event of poolCreateEvents) {
+    const allocIdx = Number(event.allocationIndex);
+    if (!Number.isInteger(allocIdx) || allocIdx < 0 || allocIdx >= allocations.length) {
+      blockedEvents.push({ ...event, reason: 'allocation index is outside the current plan' });
+      continue;
+    }
+    if (completedAllocations.has(allocIdx)) continue;
+    if (!event.poolId) {
+      blockedEvents.push({ ...event, reason: 'pool_create_done is missing poolId' });
+      continue;
+    }
+    const bucket = byAllocation.get(allocIdx) || [];
+    bucket.push(event);
+    byAllocation.set(allocIdx, bucket);
+  }
+
+  const recoveredResults = [];
+  for (const [allocationIndex, events] of byAllocation.entries()) {
+    const poolIds = [...new Set(events.map((event) => event.poolId).filter(Boolean))];
+    if (poolIds.length !== 1) {
+      blockedEvents.push(...events.map((event) => ({
+        ...event,
+        reason: 'multiple created pools recorded for one allocation',
+      })));
+      continue;
+    }
+
+    let distribution;
+    try {
+      distribution = normalizeDistribution(allocations[allocationIndex]?.distribution);
+    } catch (err) {
+      blockedEvents.push(...events.map((event) => ({
+        ...event,
+        reason: `distribution cannot be normalized: ${launchJournal.errorMessage(err)}`,
+      })));
+      continue;
+    }
+
+    const alloc = allocations[allocationIndex] || {};
+    const mainPositions = latestEventsByIndex(
+      journal.events,
+      'main_open_done',
+      'sliceIndex',
+      allocationIndex,
+    ).map(({ index, event }) => {
+      if (index >= distribution.length) {
+        blockedEvents.push({ ...event, reason: 'main slice index is outside the current distribution' });
+        return null;
+      }
+      return {
+        sliceIndex: index,
+        sharePercent: Number.isFinite(Number(event.sharePercent))
+          ? Number(event.sharePercent)
+          : distribution[index]?.sharePercent,
+        tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+        tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+        nftMint: event.nftMint || null,
+        locked: false,
+        recipient: distribution[index]?.recipient || null,
+        transferredTo: null,
+        txIds: { open: event.txId || null, lock: null, transfer: null },
+      };
+    }).filter(Boolean);
+
+    const ladderPositions = latestEventsByIndex(
+      journal.events,
+      'ladder_open_done',
+      'bandIndex',
+      allocationIndex,
+    ).map(({ index, event }) => ({
+      bandIndex: index,
+      tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+      tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+      nftMint: event.nftMint || null,
+      locked: false,
+      txIds: { open: event.txId || null, lock: null },
+    }));
+
+    const supportPositions = (journal.events || [])
+      .filter((event) => event.stage === 'support_open_done' && event.allocationIndex === allocationIndex)
+      .slice(-1)
+      .map((event) => ({
+        tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+        tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+        depthPct: Number.isFinite(event.depthPct) ? event.depthPct : null,
+        quoteRaw: event.quoteAmountRaw || null,
+        nftMint: event.nftMint || null,
+        locked: false,
+        txIds: { open: event.txId || null, lock: null },
+      }));
+
+    const missingNftEvent = [...mainPositions, ...ladderPositions, ...supportPositions]
+      .find((position) => !position.nftMint);
+    if (missingNftEvent) {
+      blockedEvents.push(...events.map((event) => ({
+        ...event,
+        reason: 'one or more recorded open events is missing nftMint',
+      })));
+      continue;
+    }
+
+    const createEvent = events.at(-1);
+    recoveredResults.push({
+      allocationIndex,
+      phase1Incomplete: true,
+      recoveredFrom: 'journal_events',
+      quoteSymbol: alloc.quoteSymbolOverride || alloc.quoteToken || `allocation ${allocationIndex + 1}`,
+      quoteAddress: alloc.quoteToken || null,
+      supplyPercent: alloc.supplyPercent,
+      poolId: poolIds[0],
+      mainPositions,
+      ladderPositions,
+      supportPositions,
+      bootstrap: null,
+      txIds: { createPool: createEvent.txId || null },
+    });
+  }
+
+  return { recoveredResults, blockedEvents };
+}
+
+app.post('/api/finish-token-creation', async (req, res) => {
+  try {
+    const { secretKeyArr, walletPublicKey } = resolveSigner({
+      tempWalletSecretKey: req.body.tempWalletSecretKey,
+      walletPublicKey: req.body.walletPublicKey,
+    });
+    if (!walletPublicKey) {
+      return res.status(400).json({ success: false, error: 'walletPublicKey or tempWalletSecretKey required' });
+    }
+
+    const journal = launchJournal.activeForWallet(walletPublicKey);
+    if (!journal || !journal.token || !journal.token.mint) {
+      return res.status(409).json({
+        success: false,
+        error: 'No interrupted token creation found for this wallet (no recorded mint).',
+      });
+    }
+    const { mint, name, symbol, totalSupply, metadataUri } = journal.token;
+    if (totalSupply == null) {
+      return res.status(409).json({
+        success: false,
+        error: 'The recorded token entry is missing its supply; cannot safely finish it.',
+      });
+    }
+
+    const status = await finishTokenCreation({
+      tempWalletSecretKey: secretKeyArr,
+      tokenMint: mint,
+      name,
+      symbol,
+      totalSupply,
+      metadataUri,
+      journalEvents: journal.events || [],
+      onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
+    });
+
+    // Reflect the finished state back into the journal. Merge onto the existing
+    // token record so the name/symbol/uri already there are preserved. Once the
+    // mint authority is renounced the token is usable, so we move the stage back
+    // to 'token_created' and let the normal flow continue.
+    launchJournal.upsertForWallet(
+      walletPublicKey,
+      {
+        status: 'active',
+        stage: status.mintAuthorityRenounced ? 'token_created' : 'token_create_finished',
+        error: null,
+        token: {
+          ...journal.token,
+          mintAuthorityRenounced: status.mintAuthorityRenounced,
+          metadataUpdateAuthorityRevoked: status.updateAuthorityRevoked,
+          isSafe: status.isSafe,
+        },
+      },
+      {
+        stage: 'token_create_finished',
+        isSafe: status.isSafe,
+        steps: status.steps,
+        sanity: status.sanity,
+      },
+    );
+
+    res.json({ success: true, ...status });
+  } catch (error) {
+    console.error('Error finishing token creation:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 app.post('/api/create-token', uploadLogo, async (req, res) => {
   // uploadLogo (multer) has already parsed req.body / req.file by the time
@@ -1585,7 +1880,13 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       vanityPrefix,
       vanitySuffix,
       vanityCAKeypair: vanityCAKeypairRaw,
+      vanityCAPublicKey,
     } = req.body;
+
+    if ((req.body.walletPublicKey || vanityCAPublicKey)
+        && rejectIfSecretPinLocked(res, 'creating a token with saved recovery secrets')) {
+      return;
+    }
 
     // If the caller asked for a fresh vanity grind (prefix/suffix) but the
     // binary isn't built, reject up front with the same 503 the dedicated
@@ -1650,6 +1951,21 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       },
     );
 
+    let vanityCAKeypair = vanityCAKeypairRaw ? JSON.parse(vanityCAKeypairRaw) : null;
+    if (!vanityCAKeypair && vanityCAPublicKey) {
+      const candidate = vanityCaStore.get(vanityCAPublicKey);
+      if (!candidate) {
+        return res.status(404).json({ success: false, error: 'Saved Vanity CA not found' });
+      }
+      if (!Array.isArray(candidate.secretKey)) {
+        return res.status(409).json({
+          success: false,
+          error: 'Saved Vanity CA secret could not be decrypted',
+        });
+      }
+      vanityCAKeypair = candidate.secretKey;
+    }
+
     const result = await createTokenWithMetaplex({
       tempWalletSecretKey: tempWalletSecretKeyArr,
       name: normalizedName,
@@ -1659,9 +1975,12 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       logoBase64,
       vanityPrefix,
       vanitySuffix,
-      vanityCAKeypair: vanityCAKeypairRaw ? JSON.parse(vanityCAKeypairRaw) : null,
+      vanityCAKeypair,
       onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
     });
+    if (vanityCAPublicKey) {
+      vanityCaStore.remove(vanityCAPublicKey);
+    }
 
     launchJournal.upsertForWallet(
       walletPublicKey,
@@ -1707,7 +2026,7 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
         { stage: 'token_create_failed', error: error.message },
       );
     }
-    res.status(500).json({ success: false, error: error.message });
+    sendErrorResponse(res, error);
   } finally {
     // Release the per-wallet operation lock if we claimed it.
     if (claimedLaunchOp && walletPublicKey) {
@@ -1921,82 +2240,6 @@ const compatCache = new Map();
 // for every non-SOL quote regardless of this cache.
 const step2ProbeCache = new Map();
 const STEP2_PROBE_TTL_MS = 3 * 60 * 1000;  // 3 minutes
-
-// Finish a token creation that stopped AFTER the mint already existed.
-// create-token's per-step retries cover transient blips; this covers the rare
-// non-transient stop (an outage longer than the retry window, say) that leaves
-// a paid-for mint with some post-mint steps undone. It reads the mint and the
-// journal's recorded token params, detects what's already on-chain, and
-// completes only the missing steps — never minting a new token or re-minting
-// supply. The journal's recorded txIds are cross-checked against on-chain state.
-// Body: { walletPublicKey, tempWalletSecretKey? }
-app.post('/api/finish-token-creation', async (req, res) => {
-  try {
-    const { secretKeyArr, walletPublicKey } = resolveSigner({
-      tempWalletSecretKey: req.body.tempWalletSecretKey,
-      walletPublicKey: req.body.walletPublicKey,
-    });
-    if (!walletPublicKey) {
-      return res.status(400).json({ success: false, error: 'walletPublicKey or tempWalletSecretKey required' });
-    }
-
-    const journal = launchJournal.activeForWallet(walletPublicKey);
-    if (!journal || !journal.token || !journal.token.mint) {
-      return res.status(409).json({
-        success: false,
-        error: 'No interrupted token creation found for this wallet (no recorded mint).',
-      });
-    }
-    const { mint, name, symbol, totalSupply, metadataUri } = journal.token;
-    if (totalSupply == null) {
-      return res.status(409).json({
-        success: false,
-        error: 'The recorded token entry is missing its supply; cannot safely finish it.',
-      });
-    }
-
-    const status = await finishTokenCreation({
-      tempWalletSecretKey: secretKeyArr,
-      tokenMint: mint,
-      name,
-      symbol,
-      totalSupply,
-      metadataUri,
-      journalEvents: journal.events || [],
-      onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
-    });
-
-    // Reflect the finished state back into the journal. Merge onto the existing
-    // token record so the name/symbol/uri already there are preserved. Once the
-    // mint authority is renounced the token is usable, so we move the stage back
-    // to 'token_created' and let the normal flow continue.
-    launchJournal.upsertForWallet(
-      walletPublicKey,
-      {
-        status: 'active',
-        stage: status.mintAuthorityRenounced ? 'token_created' : 'token_create_finished',
-        error: null,
-        token: {
-          ...journal.token,
-          mintAuthorityRenounced: status.mintAuthorityRenounced,
-          metadataUpdateAuthorityRevoked: status.updateAuthorityRevoked,
-          isSafe: status.isSafe,
-        },
-      },
-      {
-        stage: 'token_create_finished',
-        isSafe: status.isSafe,
-        steps: status.steps,
-        sanity: status.sanity,
-      },
-    );
-
-    res.json({ success: true, ...status });
-  } catch (error) {
-    console.error('Error finishing token creation:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
 // Quote-token info: when the user picks/enters a quote token in the UI,
 // we look up its symbol/decimals/USD price for inline display. For known
@@ -2630,6 +2873,10 @@ app.post('/api/acquire-quote-tokens', async (req, res) => {
       });
       return res.json({ jobId });
     }
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'acquiring quote tokens with a saved launch wallet')) {
+      return;
+    }
     const { secretKeyArr, keypair: ownerKeypair } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
 
@@ -2652,7 +2899,7 @@ app.post('/api/acquire-quote-tokens', async (req, res) => {
     res.json({ jobId });
   } catch (error) {
     console.error('[acquire] error starting job:', error);
-    res.status(500).json({ error: error.message });
+    sendErrorResponse(res, error);
   }
 });
 
@@ -2735,10 +2982,17 @@ app.post('/api/preflight-create-lp', async (req, res) => {
     // Preflight failures are always pre_flight by definition. Surface
     // them in the same envelope shape that /api/create-lp uses on
     // failure so the frontend's error handler treats both identically.
-    console.error('Preflight failed:', error.message);
+    const message = launchJournal.errorMessage(error);
+    const errorDetails = launchFailureDetails(error, {
+      route: 'preflight-create-lp',
+      failedPhase: error.failedPhase || 'pre_flight',
+      failedAllocationIndex: error.failedAllocationIndex ?? null,
+    });
+    console.error('Preflight failed:', message);
     res.status(400).json({
       success: false,
-      error: error.message,
+      error: message,
+      errorDetails,
       failedPhase: error.failedPhase || 'pre_flight',
       failedAllocationIndex: error.failedAllocationIndex ?? null,
       failedAllocation: error.failedAllocation ?? null,
@@ -2791,6 +3045,10 @@ app.post('/api/create-lp', async (req, res) => {
     console.log('Creating LP for token:', tokenMint);
     console.log('Allocations:', JSON.stringify(allocations, null, 2));
 
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'creating liquidity pools with a saved launch wallet')) {
+      return;
+    }
     const { secretKeyArr, walletPublicKey: resolvedWalletPublicKey } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
     walletPublicKey = resolvedWalletPublicKey;
@@ -2831,6 +3089,7 @@ app.post('/api/create-lp', async (req, res) => {
         stage: 'lp_create_started',
         poolPlan,
         error: null,
+        errorDetails: null,
       },
       { stage: 'lp_create_started', tokenMint, allocationCount: allocations?.length || 0 },
     );
@@ -2867,6 +3126,7 @@ app.post('/api/create-lp', async (req, res) => {
         status: 'active',
         stage: 'lp_created',
         error: null,
+        errorDetails: null,
         lp: {
           results: result.results || [],
           partialResults: null,
@@ -2882,6 +3142,13 @@ app.post('/api/create-lp', async (req, res) => {
 
     res.json({ success: true, ...result });
   } catch (error) {
+    const message = launchJournal.errorMessage(error);
+    const errorDetails = launchFailureDetails(error, {
+      route: 'create-lp',
+      failedPhase: error.failedPhase || 'unknown',
+      failedAllocationIndex: error.failedAllocationIndex ?? null,
+      partialResultCount: error.partialResults?.length || 0,
+    });
     console.error('Error creating LP:', error);
     if (walletPublicKey) {
       launchJournal.upsertForWallet(
@@ -2889,12 +3156,9 @@ app.post('/api/create-lp', async (req, res) => {
         {
           status: 'failed',
           stage: `lp_${error.failedPhase || 'unknown'}_failed`,
-          error: error.message,
+          error: message,
+          errorDetails,
           lp: {
-            // Classify the failure so the recovery UI can surface a funds
-            // shortfall as an actionable 'add SOL and resume' state. error.kind
-            // is set by the retry helpers; otherwise re-derive from error text.
-            failedKind: error.failedKind || error.kind || classifyChainError(error),
             partialResults: error.partialResults || [],
             failedAllocationIndex: error.failedAllocationIndex,
             failedAllocation: error.failedAllocation,
@@ -2906,15 +3170,19 @@ app.post('/api/create-lp', async (req, res) => {
         },
         {
           stage: `lp_${error.failedPhase || 'unknown'}_failed`,
-          error: error.message,
+          error: message,
+          errorDetails,
           failedPhase: error.failedPhase,
           partialResultCount: error.partialResults?.length || 0,
         },
       );
     }
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      error: error.message,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.code === 'SECRET_PIN_LOCKED' ? { secretPinLocked: true } : {}),
+      error: message,
+      errorDetails,
       partialResults: error.partialResults || [],
       failedAllocationIndex: error.failedAllocationIndex,
       failedAllocation: error.failedAllocation,
@@ -2922,10 +3190,9 @@ app.post('/api/create-lp', async (req, res) => {
       // tells the frontend which phase failed so it can render the progress
       // tree correctly and decide retry semantics:
       //   - pre_flight: nothing on-chain happened, fix config and retry
-      //   - main_positions: a pool may have been created and some positions
-      //     opened; resume now reconstructs that orphaned pool from the event
-      //     log, verifies it on-chain, adopts it, and opens only the still-
-      //     missing positions (see launchRecovery.js + createSinglePool resume)
+      //   - main_positions: pool may have been created, current behaviour
+      //     is to require a sweep; mid-Phase-1 partial recovery is a
+      //     larger refactor for later
       //   - bootstrap: main positions intact, retry bootstraps only
       //   - locks: positions all open, retry the lock phase only
       //   - transfers: positions locked, un-transferred Fee Keys will
@@ -3002,6 +3269,10 @@ app.post('/api/resume-launch', async (req, res) => {
         `allocation(s) carried over from prior attempt`,
     );
 
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'resuming a launch with a saved launch wallet')) {
+      return;
+    }
     const { secretKeyArr, walletPublicKey: resolvedWalletPublicKey } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
     walletPublicKey = resolvedWalletPublicKey;
@@ -3014,12 +3285,83 @@ app.post('/api/resume-launch', async (req, res) => {
       return;
     }
     claimedLaunchOp = true;
+
+    const activeJournal = launchJournal.activeForWallet(walletPublicKey);
+    const phase1Recovery = materializePhase1RecoveryResults(
+      activeJournal || {},
+      priorResults,
+      allocations,
+    );
+    let effectivePriorResults = mergePriorResults(priorResults, phase1Recovery.recoveredResults);
+    if (phase1Recovery.blockedEvents.length > 0) {
+      const pools = phase1Recovery.blockedEvents.map((event) => event.poolId).filter(Boolean).join(', ');
+      const message =
+        'This launch recorded ambiguous partial pool state that Trebuchet cannot safely ' +
+        'resume automatically without risking duplicate or skipped LP work. ' +
+        `Sweep the launch wallet or recover the existing LP positions manually${pools ? `; recorded pool(s): ${pools}` : ''}.`;
+      const errorDetails = {
+        code: 'UNSAFE_PARTIAL_POOL_STATE',
+        route: 'resume-launch',
+        failedPhase: 'main_positions',
+        priorResultCount: effectivePriorResults.length,
+        unsafePoolEvents: phase1Recovery.blockedEvents,
+      };
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        {
+          status: 'failed',
+          stage: 'lp_main_positions_failed',
+          error: message,
+          errorDetails,
+          lp: {
+            priorResults: effectivePriorResults,
+            failedPhase: 'main_positions',
+          },
+        },
+        {
+          stage: 'lp_resume_blocked_unsafe_partial',
+          error: message,
+          errorDetails,
+          failedPhase: 'main_positions',
+          priorResultCount: effectivePriorResults.length,
+          unsafePoolEventCount: phase1Recovery.blockedEvents.length,
+        },
+      );
+      return res.status(409).json({
+        success: false,
+        code: 'UNSAFE_PARTIAL_POOL_STATE',
+        manualRecoveryRequired: true,
+        failedPhase: 'main_positions',
+        partialResults: effectivePriorResults,
+        unsafePoolEvents: phase1Recovery.blockedEvents,
+        error: message,
+        errorDetails,
+      });
+    }
+    if (phase1Recovery.recoveredResults.length > 0) {
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        {
+          lp: {
+            partialResults: effectivePriorResults,
+            priorResults: effectivePriorResults,
+          },
+        },
+        {
+          stage: 'lp_phase1_recovery_prepared',
+          recoveredAllocationCount: phase1Recovery.recoveredResults.length,
+          priorResultCount: effectivePriorResults.length,
+        },
+      );
+    }
+
     launchJournal.upsertForWallet(
       walletPublicKey,
       {
         status: 'active',
         stage: 'lp_resume_started',
         error: null,
+        errorDetails: null,
         poolPlan: {
           tokenMint,
           tokenDecimals: tokenDecimals || 9,
@@ -3028,15 +3370,16 @@ app.post('/api/resume-launch', async (req, res) => {
           allocations,
           lockPositions: lockPositions !== false,
         },
-        lp: {
-          priorResults,
-        },
+        lp: phase1Recovery.recoveredResults.length > 0
+          ? { priorResults: effectivePriorResults, partialResults: effectivePriorResults }
+          : { priorResults: effectivePriorResults },
       },
       {
         stage: 'lp_resume_started',
         tokenMint,
-        priorResultCount: priorResults.length,
+        priorResultCount: effectivePriorResults.length,
         allocationCount: allocations.length,
+        phase1RecoveryCount: phase1Recovery.recoveredResults.length,
       },
     );
 
@@ -3053,7 +3396,7 @@ app.post('/api/resume-launch', async (req, res) => {
       targetMarketCapUsd,
       allocations,
       lockPositions: lockPositions !== false,
-      priorResults,
+      priorResults: effectivePriorResults,
       onProgress: (event) => {
         try { recordLpJournalProgress(walletPublicKey, event); }
         catch (_) { /* never let a progress write break the launch */ }
@@ -3068,6 +3411,7 @@ app.post('/api/resume-launch', async (req, res) => {
         status: 'active',
         stage: 'lp_created',
         error: null,
+        errorDetails: null,
         lp: {
           results: result.results || [],
           partialResults: null,
@@ -3083,6 +3427,13 @@ app.post('/api/resume-launch', async (req, res) => {
 
     res.json({ success: true, ...result });
   } catch (error) {
+    const message = launchJournal.errorMessage(error);
+    const errorDetails = launchFailureDetails(error, {
+      route: 'resume-launch',
+      failedPhase: error.failedPhase || 'resume',
+      failedAllocationIndex: error.failedAllocationIndex ?? null,
+      partialResultCount: error.partialResults?.length || 0,
+    });
     console.error('Error resuming launch:', error);
     if (walletPublicKey) {
       launchJournal.upsertForWallet(
@@ -3090,12 +3441,9 @@ app.post('/api/resume-launch', async (req, res) => {
         {
           status: 'failed',
           stage: `lp_${error.failedPhase || 'resume'}_failed`,
-          error: error.message,
+          error: message,
+          errorDetails,
           lp: {
-            // Classify the failure so the recovery UI can surface a funds
-            // shortfall as an actionable 'add SOL and resume' state. error.kind
-            // is set by the retry helpers; otherwise re-derive from error text.
-            failedKind: error.failedKind || error.kind || classifyChainError(error),
             partialResults: error.partialResults || [],
             failedAllocationIndex: error.failedAllocationIndex,
             failedAllocation: error.failedAllocation,
@@ -3107,15 +3455,19 @@ app.post('/api/resume-launch', async (req, res) => {
         },
         {
           stage: `lp_${error.failedPhase || 'resume'}_failed`,
-          error: error.message,
+          error: message,
+          errorDetails,
           failedPhase: error.failedPhase,
           partialResultCount: error.partialResults?.length || 0,
         },
       );
     }
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      error: error.message,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.code === 'SECRET_PIN_LOCKED' ? { secretPinLocked: true } : {}),
+      error: message,
+      errorDetails,
       partialResults: error.partialResults || [],
       failedAllocationIndex: error.failedAllocationIndex,
       failedAllocation: error.failedAllocation,
@@ -3384,6 +3736,10 @@ app.post('/api/transfer-assets', async (req, res) => {
 
     console.log('Transferring assets to:', destinationWallet);
 
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'transferring assets with a saved launch wallet')) {
+      return;
+    }
     const { secretKeyArr, walletPublicKey: resolvedWalletPublicKey } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
     walletPublicKey = resolvedWalletPublicKey;
@@ -3677,7 +4033,7 @@ app.post('/api/transfer-assets', async (req, res) => {
         { stage: 'transfer_failed', error: error.message },
       );
     }
-    res.status(500).json({ success: false, error: error.message });
+    sendErrorResponse(res, error);
   } finally {
     // Release the per-wallet operation lock if we claimed it. 409
     // rejections never claim, so a rejected duplicate doesn't release
@@ -3746,6 +4102,10 @@ async function runAirdropHandler(req, res) {
       });
     }
 
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'running an airdrop with a saved launch wallet')) {
+      return;
+    }
     const { secretKeyArr, walletPublicKey: resolvedWalletPublicKey } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
     walletPublicKey = resolvedWalletPublicKey;
@@ -3862,7 +4222,7 @@ async function runAirdropHandler(req, res) {
     });
   } catch (error) {
     console.error('Airdrop retry failed:', error);
-    res.status(500).json({ success: false, error: error.message });
+    sendErrorResponse(res, error);
   } finally {
     // Release the launch-op mutex no matter how the handler exited. Only
     // when WE claimed it — a 409 from rejectOrClaimLaunchOp means another
@@ -3942,6 +4302,10 @@ app.post('/api/launch-journals/resume', async (req, res) => {
     }
 
     walletPublicKey = journal.walletPublicKey;
+    if (walletPublicKey
+        && rejectIfSecretPinLocked(res, 'resuming a launch journal with a saved wallet')) {
+      return;
+    }
     const wallet = pendingWallets.get(walletPublicKey);
     if (!wallet || !Array.isArray(wallet.secretKey)) {
       return res.status(409).json({
@@ -3978,6 +4342,7 @@ app.post('/api/launch-journals/resume', async (req, res) => {
           status: 'active',
           stage: journal.stage,
           error: null,
+          errorDetails: null,
           lp: { partialResults: null },
         },
         {
@@ -3989,33 +4354,76 @@ app.post('/api/launch-journals/resume', async (req, res) => {
       return res.json({ success: true, recovered: true, results: priorResults });
     }
 
-    // Any pool we're about to ADOPT — reconstructed from the event log because
-    // it never produced a completed structured result — must be verified to
-    // exist on-chain first. Pools already present in the stored results were
-    // proven good on a prior pass, so we don't re-verify those: this keeps the
-    // common transfer-retry resume free of an extra RPC round-trip and matches
-    // the pre-reconstruction behaviour for normal resumes.
-    const lpForResume = journal.lp || {};
-    const storedPoolIds = new Set(
-      [
-        ...(Array.isArray(lpForResume.results) ? lpForResume.results : []),
-        ...(Array.isArray(lpForResume.partialResults) ? lpForResume.partialResults : []),
-      ]
-        .filter((r) => r && r.poolId)
-        .map((r) => r.poolId),
+    const phase1Recovery = materializePhase1RecoveryResults(
+      journal,
+      priorResults,
+      allocations,
     );
-    const adoptedPoolIds = priorResults
-      .map((r) => r.poolId)
-      .filter((id) => id && !storedPoolIds.has(id));
-    if (adoptedPoolIds.length > 0) {
-      const verification = await verifyResumablePoolsOnChain(adoptedPoolIds);
-      if (!verification.ok) {
-        return res.status(409).json({
-          success: false,
-          error: verification.message,
-          unverifiedPools: verification.unverified || adoptedPoolIds,
-        });
-      }
+    let effectivePriorResults = mergePriorResults(priorResults, phase1Recovery.recoveredResults);
+    priorResultsForFailure = effectivePriorResults;
+    if (phase1Recovery.blockedEvents.length > 0) {
+      const pools = phase1Recovery.blockedEvents.map((event) => event.poolId).filter(Boolean).join(', ');
+      const message =
+        'This journal recorded ambiguous partial pool state that Trebuchet cannot safely ' +
+        'resume automatically without risking duplicate or skipped LP work. ' +
+        `Recover or sweep the launch wallet manually${pools ? `; recorded pool(s): ${pools}` : ''}.`;
+      const errorDetails = {
+        code: 'UNSAFE_PARTIAL_POOL_STATE',
+        route: 'launch-journals/resume',
+        failedPhase: 'main_positions',
+        priorResultCount: effectivePriorResults.length,
+        unsafePoolEvents: phase1Recovery.blockedEvents,
+        source: 'launch_journal',
+      };
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        {
+          status: 'failed',
+          stage: 'lp_main_positions_failed',
+          error: message,
+          errorDetails,
+          lp: {
+            priorResults: effectivePriorResults,
+            failedPhase: 'main_positions',
+          },
+        },
+        {
+          stage: 'lp_resume_blocked_unsafe_partial',
+          error: message,
+          errorDetails,
+          failedPhase: 'main_positions',
+          priorResultCount: effectivePriorResults.length,
+          unsafePoolEventCount: phase1Recovery.blockedEvents.length,
+          source: 'launch_journal',
+        },
+      );
+      return res.status(409).json({
+        success: false,
+        code: 'UNSAFE_PARTIAL_POOL_STATE',
+        manualRecoveryRequired: true,
+        failedPhase: 'main_positions',
+        partialResults: effectivePriorResults,
+        error: message,
+        errorDetails,
+        unsafePoolEvents: phase1Recovery.blockedEvents,
+      });
+    }
+    if (phase1Recovery.recoveredResults.length > 0) {
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        {
+          lp: {
+            partialResults: effectivePriorResults,
+            priorResults: effectivePriorResults,
+          },
+        },
+        {
+          stage: 'lp_phase1_recovery_prepared',
+          recoveredAllocationCount: phase1Recovery.recoveredResults.length,
+          priorResultCount: effectivePriorResults.length,
+          source: 'launch_journal',
+        },
+      );
     }
 
     launchJournal.upsertForWallet(
@@ -4024,6 +4432,7 @@ app.post('/api/launch-journals/resume', async (req, res) => {
         status: 'active',
         stage: 'lp_resume_started',
         error: null,
+        errorDetails: null,
         poolPlan: {
           tokenMint,
           tokenDecimals,
@@ -4032,13 +4441,16 @@ app.post('/api/launch-journals/resume', async (req, res) => {
           allocations,
           lockPositions,
         },
-        lp: { priorResults },
+        lp: phase1Recovery.recoveredResults.length > 0
+          ? { priorResults: effectivePriorResults, partialResults: effectivePriorResults }
+          : { priorResults: effectivePriorResults },
       },
       {
         stage: 'lp_resume_started',
         tokenMint,
-        priorResultCount: priorResults.length,
+        priorResultCount: effectivePriorResults.length,
         allocationCount: allocations.length,
+        phase1RecoveryCount: phase1Recovery.recoveredResults.length,
         source: 'launch_journal',
       },
     );
@@ -4057,7 +4469,7 @@ app.post('/api/launch-journals/resume', async (req, res) => {
       targetMarketCapUsd,
       allocations,
       lockPositions,
-      priorResults,
+      priorResults: effectivePriorResults,
       onProgress: (event) => {
         try { recordLpJournalProgress(walletPublicKey, event); }
         catch (_) { /* never let a progress write break the launch */ }
@@ -4072,6 +4484,7 @@ app.post('/api/launch-journals/resume', async (req, res) => {
         status: 'active',
         stage: 'lp_created',
         error: null,
+        errorDetails: null,
         lp: {
           results: result.results || [],
           partialResults: null,
@@ -4087,22 +4500,27 @@ app.post('/api/launch-journals/resume', async (req, res) => {
 
     res.json({ success: true, ...result });
   } catch (error) {
-    console.error('Error resuming launch journal:', error);
     const partialResults = Array.isArray(error.partialResults)
       ? error.partialResults
       : priorResultsForFailure;
+    const message = launchJournal.errorMessage(error);
+    const errorDetails = launchFailureDetails(error, {
+      route: 'launch-journals/resume',
+      failedPhase: error.failedPhase || 'resume',
+      failedAllocationIndex: error.failedAllocationIndex ?? null,
+      partialResultCount: partialResults.length,
+      source: 'launch_journal',
+    });
+    console.error('Error resuming launch journal:', error);
     if (walletPublicKey) {
       launchJournal.upsertForWallet(
         walletPublicKey,
         {
           status: 'failed',
           stage: `lp_${error.failedPhase || 'resume'}_failed`,
-          error: error.message,
+          error: message,
+          errorDetails,
           lp: {
-            // Classify the failure so the recovery UI can surface a funds
-            // shortfall as an actionable 'add SOL and resume' state. error.kind
-            // is set by the retry helpers; otherwise re-derive from error text.
-            failedKind: error.failedKind || error.kind || classifyChainError(error),
             partialResults,
             failedAllocationIndex: error.failedAllocationIndex,
             failedAllocation: error.failedAllocation,
@@ -4114,16 +4532,20 @@ app.post('/api/launch-journals/resume', async (req, res) => {
         },
         {
           stage: `lp_${error.failedPhase || 'resume'}_failed`,
-          error: error.message,
+          error: message,
+          errorDetails,
           failedPhase: error.failedPhase,
           partialResultCount: partialResults.length,
           source: 'launch_journal',
         },
       );
     }
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      error: error.message,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.code === 'SECRET_PIN_LOCKED' ? { secretPinLocked: true } : {}),
+      error: message,
+      errorDetails,
       partialResults,
       failedAllocationIndex: error.failedAllocationIndex,
       failedAllocation: error.failedAllocation,
@@ -4157,36 +4579,73 @@ app.post('/api/launch-journals/dismiss', (req, res) => {
 
 app.get('/api/pending-wallets', (req, res) => {
   try {
-    // Augment each entry with a base58 form of the secret key, since
-    // that's what users actually paste into wallet apps.
+    const secretPinLocked = secretStore.isSecretPinLocked();
+    // Return metadata only. Secret material is available through the explicit
+    // per-wallet reveal endpoint below, so loading the recovery panel no longer
+    // decrypts and ships every pending mnemonic/private key to the renderer.
     //
-    // Tolerate entries whose decryption failed (e.g. the file was
-    // copied from another machine, or the OS keychain rotated): one
-    // bad entry must not break the whole panel, so we surface a
-    // `decryptionFailed` flag instead of crashing on Uint8Array.from
-    // of undefined.
+    // Tolerate entries whose decryption failed (e.g. the file was copied from
+    // another machine, or the OS keychain rotated): one bad entry must not break
+    // the whole panel, so we surface a `decryptionFailed` flag.
     const wallets = pendingWallets.list().map((w) => {
+      const hasSecretKey = Array.isArray(w.secretKey);
+      const hasMnemonic = typeof w.mnemonic === 'string';
       const out = {
         publicKey: w.publicKey,
         createdAt: w.createdAt,
+        hasSecretKey,
+        hasMnemonic,
       };
-      if (Array.isArray(w.secretKey)) {
-        out.secretKey = w.secretKey;
-        out.secretKeyB58 = secretKeyToBase58(w.secretKey);
-      }
-      if (typeof w.mnemonic === 'string') {
-        out.mnemonic = w.mnemonic;
-      }
-      // If neither was decryptable, the front-end shows a "decryption
-      // failed" state with only a Discard button.
-      if (!out.secretKey && !out.mnemonic) {
+      if (!hasSecretKey && !hasMnemonic) {
         out.decryptionFailed = true;
+        if (secretPinLocked) out.secretPinLocked = true;
       }
       return out;
     });
-    res.json({ success: true, wallets });
+    res.json({ success: true, wallets, secretPinLocked });
   } catch (error) {
     console.error('Error listing pending wallets:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/pending-wallets/reveal', (req, res) => {
+  try {
+    if (rejectIfSecretPinLocked(res, 'revealing a recovery secret')) {
+      return;
+    }
+    const { publicKey } = req.body;
+    if (!publicKey) {
+      return res.status(400).json({ success: false, error: 'publicKey required' });
+    }
+
+    const wallet = pendingWallets.get(publicKey);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'pending wallet not found' });
+    }
+
+    const out = {
+      publicKey: wallet.publicKey,
+      createdAt: wallet.createdAt,
+    };
+    if (Array.isArray(wallet.secretKey)) {
+      out.secretKey = wallet.secretKey;
+      out.secretKeyB58 = secretKeyToBase58(wallet.secretKey);
+    }
+    if (typeof wallet.mnemonic === 'string') {
+      out.mnemonic = wallet.mnemonic;
+    }
+    if (!out.secretKey && !out.mnemonic) {
+      return res.status(409).json({
+        success: false,
+        error: 'pending wallet secret could not be decrypted',
+        decryptionFailed: true,
+      });
+    }
+
+    res.json({ success: true, wallet: out });
+  } catch (error) {
+    console.error('Error revealing pending wallet:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -4244,6 +4703,9 @@ function resolveSigner({ tempWalletSecretKey, walletPublicKey } = {}) {
 
   // (1) Prefer the server-side stored secret, keyed by public key.
   if (walletPublicKey) {
+    if (secretStore.isSecretPinLocked()) {
+      throw secretPinLockedError('using a saved launch wallet');
+    }
     const stored = pendingWallets.get(walletPublicKey);
     if (stored && Array.isArray(stored.secretKey)) {
       secretKeyArr = stored.secretKey;

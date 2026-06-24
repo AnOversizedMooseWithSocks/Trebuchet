@@ -176,8 +176,10 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           for f in test/e2e/videos/*.webm; do
+            [ -s "$f" ] || { echo "::warning::Skipping empty video $f"; continue; }
             name="${f%.webm}"
-            ffmpeg -y -i "$f" -vf "fps=6,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" -loop 0 "${name}.gif" 2>/dev/null
+            timeout 60s ffmpeg -y -i "$f" -vf "fps=6,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" -loop 0 "${name}.gif" 2>/dev/null \
+              || echo "::warning::Could not convert $f to GIF"
           done
 
       - name: Build tutorial page
