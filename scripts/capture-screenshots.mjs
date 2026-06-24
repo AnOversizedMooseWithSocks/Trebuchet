@@ -20,6 +20,14 @@
 //      modal. Each step is captured as a tight element screenshot of its
 //      step card, which reads far better in a README than full-window
 //      shots.
+//
+//      Beyond the linear flow, three standalone surfaces are also captured
+//      as best-effort detours: the flywheel explainer modal (15, at step 2),
+//      the launch-report "What's this?" explainer (16, after the report),
+//      and the pending-wallet recovery panel (17, seeded with a synthetic
+//      entry and shown after a reload — it never surfaces in a clean run).
+//      A failure to capture any one of these warns and is skipped without
+//      failing the whole run.
 //   3. Output filenames are STABLE — regenerating overwrites in place, so
 //      the README never needs rewriting and git diffs show exactly which
 //      screens changed.
@@ -426,6 +434,24 @@ try {
     await page.waitForTimeout(300);
   }
 
+  // ---- Flywheel explainer modal (the "Learn more" beside the flywheel
+  // toggle in the simple-config block). The content is static markup, not
+  // built on open, so the modal is activated directly rather than chasing
+  // the trigger link's position — which keeps this stable under the coin
+  // re-layout. Activate, shoot the card, then deactivate so it can't
+  // overlay any later capture.
+  try {
+    await page.evaluate(() => document.getElementById('flywheelInfoModal')?.classList.add('is-active'));
+    await page.waitForSelector('#flywheelInfoModal.is-active', { timeout: 8_000 });
+    await page.waitForTimeout(400);
+    await shootEl('#flywheelInfoModal .modal-card', '15-flywheel-info.png');
+  } catch (e) {
+    console.warn('flywheel-info capture skipped:', e.message);
+  } finally {
+    await page.evaluate(() => document.getElementById('flywheelInfoModal')?.classList.remove('is-active'));
+    await page.waitForTimeout(200);
+  }
+
   // ---- Step 2 detours: capture every configuration surface ----
   // IMPORTANT nesting fact (learned the hard way): the airdrop section
   // AND the "Customize pools manually" button both live INSIDE
@@ -759,6 +785,22 @@ try {
     console.warn('report capture skipped:', e.message);
   }
 
+  // ---- Launch-report "What's this?" explainer modal. In the app it opens
+  // via document-level click delegation on the report links; the content is
+  // a static explainer, so activate it directly and shoot the card. Same
+  // activate / shoot / deactivate discipline as the flywheel modal above.
+  try {
+    await page.evaluate(() => document.getElementById('launchReportInfoModal')?.classList.add('is-active'));
+    await page.waitForSelector('#launchReportInfoModal.is-active', { timeout: 8_000 });
+    await page.waitForTimeout(400);
+    await shootEl('#launchReportInfoModal .modal-card', '16-report-info.png');
+  } catch (e) {
+    console.warn('report-info capture skipped:', e.message);
+  } finally {
+    await page.evaluate(() => document.getElementById('launchReportInfoModal')?.classList.remove('is-active'));
+    await page.waitForTimeout(200);
+  }
+
   await waitEnabled('#continueToTransferBtn');
   await click('#continueToTransferBtn');
   await stepIs(6);
@@ -786,6 +828,42 @@ try {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(1200);
   await shootCard(6, '14-transfer.png');
+
+  // ---- Pending-wallet recovery panel. It only ever surfaces wallets that
+  // existed at page load (i.e. a crashed or closed prior session), so a clean
+  // demo run never shows it. To document the feature, seed one synthetic
+  // entry into the server's pending-wallet cache file, then reload: the fresh
+  // load snapshots the now-non-empty cache and renders the panel. This is the
+  // LAST capture on purpose — it resets the page, so nothing after it depends
+  // on the completed-launch state. Deterministic: a fixed demo pubkey and age,
+  // and the file is overwritten so whatever the flow itself left in the cache
+  // can't leak into the shot.
+  try {
+    const demoPending = [{
+      publicKey: 'Demo7Recovery7Wa11et7Pending7Sweep777777777',
+      createdAt: Date.now() - 26 * 60 * 60 * 1000, // ~1 day old, for a real-looking age
+      // Plaintext byte array: pendingWallets.decodeEntry accepts this legacy
+      // shape and the GET endpoint then reports hasSecretKey, so the row
+      // renders with its "Copy secret key" / "Discard" actions. Never shown.
+      secretKey: Array.from({ length: 64 }, (_, i) => (i * 7) % 256),
+    }];
+    writeFileSync(join(cfgDir, 'pendingWallets.json'), JSON.stringify(demoPending, null, 2) + '\n');
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#demoBanner', { state: 'visible', timeout: 20_000 }).catch(() => {});
+    // The first-run disclaimer reappears on a fresh load — dismiss it so it
+    // doesn't overlay the panel.
+    try {
+      await page.waitForSelector('#disclaimerAgreeCheck', { state: 'visible', timeout: 6_000 });
+      await click('#disclaimerAgreeCheck');
+      await click('#disclaimerAgreeBtn');
+      await page.waitForTimeout(400);
+    } catch (_) { /* not shown (pref persisted) — fine */ }
+    await page.waitForSelector('#pendingWalletsPanel:not(.hidden)', { timeout: 10_000 });
+    await page.waitForTimeout(500);
+    await shootEl('#pendingWalletsPanel', '17-pending-wallets.png');
+  } catch (e) {
+    console.warn('pending-wallets capture skipped:', e.message);
+  }
 
   await browser.close();
 
