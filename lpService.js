@@ -4527,19 +4527,27 @@ export async function estimateRequiredFunding({
     //   current tick), so this same USD value gets converted to SOL,
     //   quote tokens, or auto-swap target depending on the pool.
     //
-    // targetMarketCapUsd may be missing if the caller forgot to supply it
-    // when a custom-mode allocation exists. We fall back to the minimal
-    // budget so the user sees an undersized estimate rather than a server
-    // error — but the launch itself will fail at deposit time with a
-    // clearer SDK error, which is the better surface for "you didn't
-    // fund enough".
+    // A custom-mode bootstrap with a real launched-side supply sizes its
+    // quote-side deposit as supplyPercent x targetMarketCapUsd / 100, so the
+    // target market cap is mandatory. If it is missing we cannot size the
+    // deposit; silently falling back to the $1 minimal budget would undersize
+    // the whole estimate, the user would fund too little, and the launch would
+    // later fail at deposit time with a confusing "insufficient funds". Refuse
+    // here instead, naming the fix, so the error surfaces before any spend.
     const bsCfg = a.bootstrap || { mode: 'minimal' };
     const bsIsCustom = bsCfg.mode === 'custom';
+    if (bsIsCustom && Number(bsCfg.supplyPercent) > 0 && !(Number(targetMarketCapUsd) > 0)) {
+      throw new Error(
+        `${poolLabel} uses a custom bootstrap but no target market cap was provided. `
+        + `Set a target market cap (it sizes the bootstrap's starting liquidity) before launching.`,
+      );
+    }
     let bsActualUsd; // the actual USD value the bootstrap quote-side needs
     if (bsIsCustom && Number(targetMarketCapUsd) > 0 && Number(bsCfg.supplyPercent) > 0) {
       bsActualUsd = (Number(bsCfg.supplyPercent) * Number(targetMarketCapUsd)) / 100;
     } else {
-      // Minimal mode (or custom mode with missing inputs — defensive fallback)
+      // Minimal mode, or a degenerate custom bootstrap with zero launched-side
+      // supply (no quote-side need, so no target market cap required).
       bsActualUsd = BS_BOOTSTRAP_USD; // $1
     }
 
