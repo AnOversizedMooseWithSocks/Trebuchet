@@ -427,3 +427,35 @@ test('parked-coin pose is wired end to end', () => {
   const prefs = readFileSync(new URL('../userPrefs.js', import.meta.url), 'utf8');
   assert.match(prefs, /coinPreviewParked: false/, 'userPrefs must default coinPreviewParked off');
 });
+
+test('journal resume is gated on resolvability, not the mere presence of incomplete pools', () => {
+  // Regression guard. The old gate disabled "Resume launch" for ANY recorded-
+  // but-unfinished pool (unsafeCreatedPoolEvents().length === 0), which pre-
+  // empted the on-chain reconciliation the server + orchestrator already run for
+  // the common mid-flight-death case (recoveringPhase1 adopting landed-but-
+  // unrecorded positions). canResume must defer to unsafePoolStateIsUnresolvable,
+  // which mirrors the server's UNSAFE_PARTIAL_POOL_STATE conditions, and let
+  // resolvable pools through.
+  assert.ok(
+    journalsSrc.includes('function unsafePoolStateIsUnresolvable(journal)'),
+    'journals.js must define unsafePoolStateIsUnresolvable',
+  );
+  assert.ok(
+    journalsSrc.includes('!unsafePoolStateIsUnresolvable(journal)'),
+    'canResumeLaunchJournal must gate on resolvability',
+  );
+  assert.ok(
+    !journalsSrc.includes('unsafeCreatedPoolEvents(journal).length === 0'),
+    'the old blanket unsafe-pool veto must be gone',
+  );
+  const fnStart = journalsSrc.indexOf('function unsafePoolStateIsUnresolvable');
+  const fnSrc = journalsSrc.slice(fnStart, fnStart + 700);
+  assert.ok(
+    fnSrc.includes('if (!event.poolId) return true'),
+    'must treat a pool_create event with no poolId as unresolvable (nothing to read on-chain)',
+  );
+  assert.ok(
+    fnSrc.includes('.size > 1'),
+    'must treat two pools recorded for one allocation as unresolvable (ambiguous)',
+  );
+});

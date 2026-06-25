@@ -19315,6 +19315,31 @@ function unsafeCreatedPoolEvents(journal) {
   );
 }
 
+// A recorded-but-unfinished pool can still be resumed as long as the journal
+// pins a single pool with a known poolId for each allocation — that's all the
+// orchestrator's on-chain reconciliation needs to read the real positions and
+// adopt the ones that landed but never reached the journal (recoveringPhase1 on
+// the server). Only two shapes are genuinely unresolvable, and they're exactly
+// what the server refuses with UNSAFE_PARTIAL_POOL_STATE: a pool_create event
+// with no poolId (nothing to read on-chain), or two distinct pools recorded for
+// one allocation (ambiguous which one is the launch). Everything else is left to
+// the server, which reconstructs the pool from journal events and reconciles it
+// against the chain. The old gate blocked on ANY unfinished pool, which stranded
+// the common mid-flight-death case the reconciliation was built to recover.
+function unsafePoolStateIsUnresolvable(journal) {
+  const poolIdsByAllocation = new Map();
+  for (const event of unsafeCreatedPoolEvents(journal)) {
+    if (!event.poolId) return true;
+    const seen = poolIdsByAllocation.get(event.allocationIndex) || new Set();
+    seen.add(event.poolId);
+    poolIdsByAllocation.set(event.allocationIndex, seen);
+  }
+  for (const seen of poolIdsByAllocation.values()) {
+    if (seen.size > 1) return true;
+  }
+  return false;
+}
+
 function canFinishTokenJournal(journal) {
   // The mint exists but its mint authority was never renounced: token creation
   // stopped after the mint was created. Offer to finish it in place rather than
@@ -19336,7 +19361,7 @@ function canResumeLaunchJournal(journal, wallet) {
     Array.isArray(journal.poolPlan?.allocations) &&
     wallet &&
     wallet.hasSecretKey &&
-    unsafeCreatedPoolEvents(journal).length === 0
+    !unsafePoolStateIsUnresolvable(journal)
   );
 }
 
@@ -19509,7 +19534,7 @@ function buildLaunchJournalRow(journal, wallet) {
   const canFinish = canFinishTokenJournal(journal);
   const resumeLabel = journalHasCompletedLp(journal) ? 'Continue transfer' : 'Resume launch';
   const resumeHelp = !canResume && journal.token?.mint && journal.poolPlan?.allocations
-    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.secretPinLocked ? ': unlock the Recovery PIN first' : wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafeCreatedPoolEvents(journal).length > 0 ? ': unsafe partial pool state recorded' : ': matching recoverable wallet is missing'}.</div>`
+    ? `<div class="has-text-grey mt-2">Automatic resume is unavailable${wallet?.secretPinLocked ? ': unlock the Recovery PIN first' : wallet?.decryptionFailed ? ': wallet secret could not be decrypted' : unsafePoolStateIsUnresolvable(journal) ? ': partial pool state is too ambiguous to resume automatically' : ': matching recoverable wallet is missing'}.</div>`
     : '';
 
   // Recovery material from the matching wallet, folded into this card so the
