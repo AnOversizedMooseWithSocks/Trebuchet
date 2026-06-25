@@ -123,6 +123,7 @@ import {
   driftExceedsThreshold,
   driftPercent,
   tickArrayStartIndex,
+  TICK_ARRAY_SIZE,
 } from './lpMath.js';
 import BN from 'bn.js';
 import Decimal from 'decimal.js';
@@ -4751,7 +4752,11 @@ function resolveTickSpacingForConfig(ammConfigIndex) {
   return tier.tickSpacing;
 }
 
-// Count the distinct CLMM tick arrays one pool's positions will initialize.
+// Estimate two counts for one pool: the distinct CLMM tick arrays its positions
+// will initialize (which drives tick-array rent) and the number of positions
+// (which the funding breakdown reports to the user, since "tick arrays" mean
+// nothing to a launcher). Returns { tickArrayCount, positionCount }.
+//
 // Each open position touches the two arrays its [tickLower, tickUpper] bounds
 // fall in, and the launch wallet pays rent for every array that doesn't yet
 // exist. A laddered launch spreads positions across the whole price range
@@ -4761,22 +4766,13 @@ function resolveTickSpacingForConfig(ammConfigIndex) {
 // dry paying tick-array rent on a later ladder position.
 //
 // currentTick is unknown at estimate time (it only exists once the pool is
-// on-chain), but every position bound is currentTick + a fixed offset set by
-// tickSpacing and the band multipliers, so the COUNT of distinct arrays is
-// essentially independent of the absolute tick. We evaluate at a reference
-// tick of 0 (reusing the exact range math the orchestrator uses) and add a
-// small pad in case the real tick straddles an array boundary differently.
-// On any malformed config we fall back to a provably-safe upper bound: a
-// position can never initialize more than two arrays, so 2 x positions can
-// never be too low. The result is also clamped to that bound from above.
-function estimateTickArrayCountForAllocation(alloc, tickSpacing) {
-  const REFERENCE_TICK = 0;
-  // Covers the gap between the distinct-array count at the reference tick and
-  // the count at the real launch tick. A full sweep of every ladder preset over
-  // a complete tick period showed the real tick can land up to three arrays
-  // above the reference-tick count; 4 clears that with a one-array margin, and
-  // the provably-safe upper-bound clamp below backstops anything wider.
-  const ALIGNMENT_PAD_ARRAYS = 4;
+// on-chain), but every position bound is currentTick + a fixed offset, so the
+// distinct-array count is periodic in the launch tick with period = one array
+// span. We sweep one full span (reusing the exact range math the orchestrator
+// uses) and take the true worst case per fee tier. On any malformed config we
+// fall back to a provably-safe upper bound: a position can never initialize
+// more than two arrays, so 2 x positions can never be too low.
+function estimateTickArrayAndPositionCounts(alloc, tickSpacing) {
   const launchedIsMintA = true; // distinct-array count is symmetric in sort order
 
   const slices = (alloc.distribution && alloc.distribution.length > 0)
@@ -4793,60 +4789,96 @@ function estimateTickArrayCountForAllocation(alloc, tickSpacing) {
   if (ladder.mode === 'simple') ladderBandCount = Number(ladder.bandCount) || 0;
   else if (ladder.mode === 'manual') ladderBandCount = Array.isArray(ladder.bands) ? ladder.bands.length : 0;
 
-  // main slices + one bootstrap + ladder bands + optional support
+  // main slices + one bootstrap + ladder bands + optional support. Note the
+  // slices all share the wide-main range (and therefore its tick arrays), so
+  // they add no distinct arrays — only the position TYPES contribute bounds.
   const positionCount = slices.length + 1 + ladderBandCount + (supportEnabled ? 1 : 0);
+  // A position can never initialize more than the two arrays its [lower, upper]
+  // bounds fall in, so 2 x positions is a hard ceiling the real count cannot
+  // exceed. Used as the malformed-config fallback and as a final defensive clamp.
   const safeUpperBound = 2 * positionCount;
 
-  try {
+  // Every position bound for a hypothetical launch at `currentTick`, reusing the
+  // exact range math the orchestrator uses at open time. A wide main and a
+  // bootstrap always exist; ladder bands and support are added when configured.
+  const boundsAtTick = (currentTick) => {
     const bounds = [];
-    const main = computeMainTicks({ currentTick: REFERENCE_TICK, tickSpacing, launchedIsMintA });
+    const main = computeMainTicks({ currentTick, tickSpacing, launchedIsMintA });
     bounds.push(main.tickLower, main.tickUpper);
 
-    const boot = computeBootstrapTicks({ currentTick: REFERENCE_TICK, tickSpacing, mode: bootstrapMode });
+    const boot = computeBootstrapTicks({ currentTick, tickSpacing, mode: bootstrapMode });
     bounds.push(boot.tickLower, boot.tickUpper);
 
     if (ladder.mode === 'simple' && ladderBandCount > 0) {
-      const bands = computeLadderTicks({
-        currentTick: REFERENCE_TICK,
+      computeLadderTicks({
+        currentTick,
         tickSpacing,
         bandCount: ladderBandCount,
         ceilingMultiplier: Number(ladder.ceilingMultiplier),
         launchedIsMintA,
-      });
-      bands.forEach((b) => bounds.push(b.tickLower, b.tickUpper));
+      }).forEach((b) => bounds.push(b.tickLower, b.tickUpper));
     } else if (ladder.mode === 'manual' && ladderBandCount > 0) {
-      const bands = computeLadderTicksManual({
-        currentTick: REFERENCE_TICK,
+      computeLadderTicksManual({
+        currentTick,
         tickSpacing,
         bands: ladder.bands.map((b) => ({
           lowerMultiplier: Number(b.lowerMultiplier),
           upperMultiplier: Number(b.upperMultiplier),
         })),
         launchedIsMintA,
-      });
-      bands.forEach((b) => bounds.push(b.tickLower, b.tickUpper));
+      }).forEach((b) => bounds.push(b.tickLower, b.tickUpper));
     }
 
     if (supportEnabled) {
       const sup = computeSupportTicks({
-        currentTick: REFERENCE_TICK,
+        currentTick,
         tickSpacing,
         launchedIsMintA,
         depthPct: SUPPORT_DEPTH_PCT_DEFAULT,
       });
       bounds.push(sup.tickLower, sup.tickUpper);
     }
+    return bounds;
+  };
 
-    const distinct = new Set(bounds.map((t) => tickArrayStartIndex(t, tickSpacing))).size;
-    const padded = distinct + ALIGNMENT_PAD_ARRAYS;
-    // Floor at 2 (even a single mid-range position needs its two arrays) and
-    // cap at the per-position bound (the on-chain count can never exceed it).
-    return Math.min(Math.max(padded, 2), safeUpperBound);
+  try {
+    // The number of tick arrays a launch actually initializes is the count of
+    // DISTINCT arrays its position bounds fall in. That count depends on the
+    // on-chain launch tick — which doesn't exist yet at estimate time — but it
+    // is periodic in the launch tick with period = one array span: every bound
+    // is a fixed offset from the launch tick, so when the tick advances by a
+    // full span every bound's array advances by one and the distinct COUNT is
+    // unchanged. So we sweep the launch tick across exactly one span and take the
+    // worst case — the true maximum over every possible launch price, computed
+    // per fee tier rather than approximated by a hand-tuned pad.
+    //
+    // This is why a default two-position launch on the 1% / 120-spacing tier
+    // resolves to three arrays, not four: across every launch tick the wide
+    // main's lower bound and the bootstrap's upper bound land in the same array
+    // straddling the launch price (they sit only ~1300 ticks apart, well inside
+    // one 7200-tick array), so the four bounds only ever occupy three arrays.
+    // Finer tiers (spacing 10, 1) have narrower arrays where those two bounds can
+    // split, and the sweep correctly returns four there. Multi-slice mains stay
+    // at three because the extra slices reuse the same range. The earlier
+    // approach (reference tick + flat pad, clamped to 2 x positions) over-budgeted
+    // both — a 2-slice pool clamped all the way up to six.
+    const span = TICK_ARRAY_SIZE * tickSpacing;
+    let maxDistinct = 0;
+    for (let currentTick = 0; currentTick < span; currentTick++) {
+      const distinct = new Set(
+        boundsAtTick(currentTick).map((t) => tickArrayStartIndex(t, tickSpacing)),
+      ).size;
+      if (distinct > maxDistinct) maxDistinct = distinct;
+    }
+    // Floor at 2 (a lone mid-range position still needs its two arrays); the
+    // upper clamp is defensive only — the sweep can never exceed it.
+    const tickArrayCount = Math.min(Math.max(maxDistinct, 2), safeUpperBound);
+    return { tickArrayCount, positionCount };
   } catch (e) {
     console.warn(
       `estimateRequiredFunding: tick-array count fell back to per-position bound (${e.message})`,
     );
-    return safeUpperBound;
+    return { tickArrayCount: safeUpperBound, positionCount };
   }
 }
 
@@ -4947,19 +4979,24 @@ export async function estimateRequiredFunding({
 
     const poolLabel = `Pool ${poolIdx + 1} (${quoteSymbol})`;
 
-    // Pool creation: state account + 2 tick arrays (the minimum)
+    // Pool creation: just the pool state account. (Tick-array rent is the
+    // separate line below; the pool-creation rent alone does not cover it.)
     addSol(`${poolLabel}: pool creation`, COST_POOL_RENT_SOL);
-    // Tick-array rent. Budget the actual number of distinct arrays this
-    // pool's positions will initialize (wide main + bootstrap + every
-    // ladder band + optional support), not a flat two. See
-    // estimateTickArrayCountForAllocation for why a flat two strands
-    // laddered launches. Stays in the buffered bucket (default), so the
-    // 20% safety buffer applies on top.
-    const tickArrayCount = estimateTickArrayCountForAllocation(
+    // Tick-array rent, plus the position count for the breakdown label. Budget
+    // the real number of distinct arrays this pool's positions initialize (wide
+    // main + bootstrap + every ladder band + optional support), not a flat two;
+    // see estimateTickArrayAndPositionCounts for why a flat two strands laddered
+    // launches. The user-facing label is phrased in positions, not tick arrays
+    // (which mean nothing to a launcher), but the COST still reflects the real
+    // array count. Stays in the buffered bucket, so the 20% buffer applies.
+    const { tickArrayCount, positionCount } = estimateTickArrayAndPositionCounts(
       a,
       resolveTickSpacingForConfig(a.ammConfigIndex),
     );
-    addSol(`${poolLabel}: tick arrays (x${tickArrayCount})`, tickArrayCount * COST_TICK_ARRAY_SOL);
+    addSol(
+      `${poolLabel}: price-range rent (for ${positionCount} position${positionCount === 1 ? '' : 's'})`,
+      tickArrayCount * COST_TICK_ARRAY_SOL,
+    );
 
     // Per-slice costs
     for (let s = 0; s < slices.length; s++) {
