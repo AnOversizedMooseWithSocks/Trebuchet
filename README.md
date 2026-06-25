@@ -788,22 +788,19 @@ new terminal so PATH updates take effect.
 
 ### Merge requirements
 
-Pull requests must pass the **Test** job before merging. The Test job
-runs syntax checks, the full unit/integration test suite, and a
-critical npm audit. A maintainer may enable branch protection to
-enforce this automatically; until then, reviewers are expected to
-confirm a passing CI run before approving.
+All changes reach `main` through a pull request — direct pushes to
+`main` are not allowed. A pull request cannot merge until the **Test**
+job passes; that job runs syntax checks, the full unit/integration
+test suite, and a critical npm audit.
 
-The **Build** job (smoke package builds for all four platforms:
-macOS arm64, macOS x64, Windows, and Linux) is advisory — it confirms
-the app packages without errors but is not required for merge. A
-failing Build job is a signal, not a gate.
+The **Build** job (smoke package builds for three platforms: macOS
+arm64, Windows, and Linux) is advisory — it confirms the app packages
+without errors but is not required for merge. A failing Build job is a
+signal, not a gate.
 
-To enable required checks via the GitHub UI:
-1. Go to **Settings → Rules → Rulesets**.
-2. Create a ruleset targeting the default branch.
-3. Under **Required checks**, add `Test`.
-4. Optionally require at least one approving review.
+Both requirements are enforced by a branch ruleset on the default
+branch — a required pull request and the required `Test` check. Manage
+it under **Settings → Rules → Rulesets**.
 
 
 Running on devnet: change `cluster: 'mainnet'` to `'devnet'` in
