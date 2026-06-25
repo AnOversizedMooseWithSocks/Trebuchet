@@ -327,3 +327,35 @@ test('a laddered launch spans many distinct tick arrays, not two', () => {
     `expected many distinct arrays, got ${distinct.size}`,
   );
 });
+
+test('a default two-position launch needs at most three tick arrays on the 1% tier (four on finer tiers)', () => {
+  // Guards the funding estimate's tick-array budget. The estimate sweeps the
+  // launch tick and budgets the WORST-CASE distinct-array count per fee tier
+  // rather than a flat "2 x positions" ceiling. For the default single-slice
+  // shape (wide main + bootstrap) the launch never touches more than three
+  // arrays on the 1% / 120-spacing tier: the main's lower bound and the
+  // bootstrap's upper bound always share the array straddling the launch tick
+  // (~1300 ticks apart, well inside one 7200-tick array). Narrower tiers have
+  // smaller arrays where those two can split, so the true max there is four.
+  // The count is periodic in the launch tick with period = one array span, so a
+  // single-span sweep sees every case.
+  const launchedIsMintA = true;
+  const sweepMax = (tickSpacing) => {
+    const span = TICK_ARRAY_SIZE * tickSpacing;
+    let mx = 0;
+    for (let currentTick = 0; currentTick < span; currentTick++) {
+      const bounds = [];
+      const main = computeMainTicks({ currentTick, tickSpacing, launchedIsMintA });
+      bounds.push(main.tickLower, main.tickUpper);
+      const boot = computeBootstrapTicks({ currentTick, tickSpacing, mode: 'minimal' });
+      bounds.push(boot.tickLower, boot.tickUpper);
+      const d = new Set(bounds.map((t) => tickArrayStartIndex(t, tickSpacing))).size;
+      if (d > mx) mx = d;
+    }
+    return mx;
+  };
+  assert.equal(sweepMax(120), 3, 'default 1% tier: at most three arrays');
+  assert.equal(sweepMax(60), 3, '0.25% tier: at most three arrays');
+  assert.equal(sweepMax(10), 4, '0.05% tier: narrower arrays can split to four');
+  assert.equal(sweepMax(1), 4, '0.01% tier: narrower arrays can split to four');
+});

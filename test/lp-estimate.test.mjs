@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import Decimal from 'decimal.js';
 
 import * as lpEstimate from '../lpService.js'; // F15: de-forked — estimator now lives in lpService.js (the live path)
-import { WSOL_MINT, USDC_MINT } from '../lpConstants.js';
+import { WSOL_MINT, USDC_MINT, COST_TICK_ARRAY_SOL } from '../lpConstants.js';
 
 test.afterEach(() => {
   lpEstimate.resetTestFactories();
@@ -273,4 +273,69 @@ test('lpEstimate exposes DI seams without affecting production defaults', () => 
   assert.equal(typeof lpEstimate.setRouteDiscoveryForTests, 'function');
   assert.equal(typeof lpEstimate.resetTestFactories, 'function');
   assert.doesNotThrow(() => lpEstimate.resetTestFactories());
+});
+
+// ---------------------------------------------------------------------------
+// Tick-array budget: the breakdown reports the swept worst-case array count
+// ---------------------------------------------------------------------------
+
+test('default single-slice launch reports two positions and budgets three arrays of rent', async () => {
+  lpEstimate.setPriceOracleForTests(makePriceOracle({ [WSOL_MINT]: 150 }));
+  lpEstimate.setRouteDiscoveryForTests(makeNoRouteDiscovery());
+
+  // The default shape from the UI: one wide main + a minimal bootstrap, default
+  // fee tier (1% / 120 spacing). The breakdown line is phrased in positions (the
+  // unit a launcher understands) — main + bootstrap = two — and its cost still
+  // encodes the real array count, three here, not the four a flat 2-positions
+  // ceiling would charge.
+  const result = await lpEstimate.estimateRequiredFunding({
+    allocations: [{
+      quoteToken: 'SOL',
+      distribution: [{ sharePercent: 100 }],
+      bootstrap: { mode: 'minimal' },
+      ladder: { mode: 'off' },
+    }],
+  });
+
+  const rentLine = result.solBreakdown.find((e) => e.label.includes('price-range rent'));
+  assert.ok(rentLine, 'price-range rent line present in breakdown');
+  assert.ok(
+    rentLine.label.includes('for 2 positions'),
+    `label should report two positions, got: ${rentLine.label}`,
+  );
+  assert.equal(
+    Math.round(rentLine.sol / COST_TICK_ARRAY_SOL),
+    3,
+    `cost should reflect three arrays on the 1% tier, got ${rentLine.sol} SOL`,
+  );
+});
+
+test('a two-slice main reports three positions but still costs only three arrays', async () => {
+  lpEstimate.setPriceOracleForTests(makePriceOracle({ [WSOL_MINT]: 150 }));
+  lpEstimate.setRouteDiscoveryForTests(makeNoRouteDiscovery());
+
+  // Splitting the main into two slices adds a position (main x2 + bootstrap =
+  // three) but no new tick range — both slices live in the wide-main range. The
+  // array cost must stay at three, not climb with the position count (the old
+  // ceiling clamped this case to six arrays).
+  const result = await lpEstimate.estimateRequiredFunding({
+    allocations: [{
+      quoteToken: 'SOL',
+      distribution: [{ sharePercent: 50 }, { sharePercent: 50 }],
+      bootstrap: { mode: 'minimal' },
+      ladder: { mode: 'off' },
+    }],
+  });
+
+  const rentLine = result.solBreakdown.find((e) => e.label.includes('price-range rent'));
+  assert.ok(rentLine, 'price-range rent line present in breakdown');
+  assert.ok(
+    rentLine.label.includes('for 3 positions'),
+    `label should report three positions, got: ${rentLine.label}`,
+  );
+  assert.equal(
+    Math.round(rentLine.sol / COST_TICK_ARRAY_SOL),
+    3,
+    `two-slice main should still cost three arrays, got ${rentLine.sol} SOL`,
+  );
 });
