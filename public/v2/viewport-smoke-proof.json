@@ -1,0 +1,56 @@
+{
+  "artifactVersion": 1,
+  "kind": "trebuchet-v2-viewport-smoke",
+  "passed": true,
+  "command": "npm run test:v2:viewport",
+  "generatedAt": "2026-07-02T01:06:39.266Z",
+  "durationMs": 723,
+  "target": "file:///Users/ratimics/develop/trebuchet/public/v2/index.html",
+  "requiredChecks": [
+    "launchVisible",
+    "horizontalOverflow",
+    "tokenomicsChart",
+    "liquidityChart",
+    "fundingMeter",
+    "parityPanel",
+    "firstViewportFit"
+  ],
+  "assetHashes": {
+    "index.html": "cecc387642c082b0c4e6f00ed3f1f788f986d276501da81a6a5c3a4be42c1136",
+    "styles.css": "9b30a62d8aa78294e10ab7f8160dde6190f3307d71c01d3856383ad7b0f6595f",
+    "api-client.js": "4cc25a012295e84db1362756aaa593da6134a1583d7934e4fa867d2fbc711062",
+    "app.js": "993e7ceade41280444fb58a021fe214a9947b319cd34d35819a7426200b70e9f"
+  },
+  "viewports": [
+    {
+      "name": "desktop",
+      "width": 1440,
+      "height": 900,
+      "passed": true,
+      "checks": {
+        "launchVisible": true,
+        "horizontalOverflow": true,
+        "tokenomicsChart": true,
+        "liquidityChart": true,
+        "fundingMeter": true,
+        "parityPanel": true,
+        "firstViewportFit": true
+      }
+    },
+    {
+      "name": "mobile",
+      "width": 390,
+      "height": 844,
+      "passed": true,
+      "checks": {
+        "launchVisible": true,
+        "horizontalOverflow": true,
+        "tokenomicsChart": true,
+        "liquidityChart": true,
+        "fundingMeter": true,
+        "parityPanel": true,
+        "firstViewportFit": true
+      }
+    }
+  ]
+}

@@ -4,6 +4,8 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dnsPromises from 'node:dns/promises';
+import * as bip39 from 'bip39';
+import { derivePath } from 'ed25519-hd-key';
 
 import {
   createTokenWithMetaplex,
@@ -62,14 +64,17 @@ import bs58 from 'bs58';
 import BN from 'bn.js';
 import Decimal from 'decimal.js';
 import {
+  detectLogoImageDimensions,
   normalizeTokenDescription,
   normalizeLogoImageMime,
   normalizeTokenName,
   normalizeTokenSymbol,
+  normalizeVanityTargetBase58,
   normalizeWholeTokenSupply,
 } from './validators.js';
 import { normalizeDistribution } from './lpDistribution.js';
 import { isWalletEffectivelyEmpty } from './walletRecovery.js';
+import { buildV2ExecutionReadiness, buildV2LaunchPlan } from './v2LaunchPlan.js';
 
 // In-flight airdrop guard. Maps wallet public key → boolean (currently
 // running). Used to reject concurrent /api/transfer-assets and
@@ -498,6 +503,11 @@ function sendErrorResponse(res, error, fallbackStatus = 500) {
     error: launchJournal.errorMessage(error),
   };
   if (error?.code) body.code = error.code;
+  if (error?.errorDetails) body.errorDetails = error.errorDetails;
+  if (error?.failedPhase) body.failedPhase = error.failedPhase;
+  if (error?.failedAllocationIndex !== undefined) body.failedAllocationIndex = error.failedAllocationIndex;
+  if (error?.failedAllocation !== undefined) body.failedAllocation = error.failedAllocation;
+  if (error?.probeCode) body.probeCode = error.probeCode;
   if (error?.code === 'SECRET_PIN_LOCKED') body.secretPinLocked = true;
   res.status(status).json(body);
 }
@@ -563,6 +573,161 @@ app.use('/api', apiSessionMiddleware);
 app.use(express.json({ limit: '5mb' }));
 
 const publicDir = resolvePublicDir(__dirname);
+const V2_VIEWPORT_SMOKE_PROOF_FILE = 'viewport-smoke-proof.json';
+const V2_VIEWPORT_SMOKE_PROOF_ASSETS = ['index.html', 'styles.css', 'api-client.js', 'app.js'];
+const V2_VIEWPORT_SMOKE_REQUIRED_CHECKS = [
+  'launchVisible',
+  'horizontalOverflow',
+  'tokenomicsChart',
+  'liquidityChart',
+  'fundingMeter',
+  'parityPanel',
+  'firstViewportFit',
+];
+
+function sha256FileHex(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function currentV2ViewportSmokeAssetHashes() {
+  const v2Dir = path.join(publicDir, 'v2');
+  return Object.fromEntries(V2_VIEWPORT_SMOKE_PROOF_ASSETS.map((file) => [
+    file,
+    sha256FileHex(path.join(v2Dir, file)),
+  ]));
+}
+
+function compactViewportSmokeRows(rows = []) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    name: String(row?.name || ''),
+    width: Number(row?.width || 0),
+    height: Number(row?.height || 0),
+    passed: row?.passed === true,
+    checks: row?.checks && typeof row.checks === 'object' ? row.checks : {},
+  })).filter((row) => row.name);
+}
+
+function missingViewportSmokeChecks(row = {}) {
+  const checks = row?.checks && typeof row.checks === 'object' ? row.checks : {};
+  return V2_VIEWPORT_SMOKE_REQUIRED_CHECKS.filter((check) => checks[check] !== true);
+}
+
+function viewportSmokeRequiredChecksMatch(recordedChecks = []) {
+  return Array.isArray(recordedChecks)
+    && recordedChecks.length === V2_VIEWPORT_SMOKE_REQUIRED_CHECKS.length
+    && V2_VIEWPORT_SMOKE_REQUIRED_CHECKS.every((check, index) => recordedChecks[index] === check);
+}
+
+function readV2ViewportSmokeProof() {
+  const proofPath = path.join(publicDir, 'v2', V2_VIEWPORT_SMOKE_PROOF_FILE);
+  if (!fs.existsSync(proofPath)) {
+    return {
+      passed: false,
+      state: 'missing',
+      detail: 'Run npm run test:v2:viewport to generate desktop/mobile viewport-smoke proof.',
+    };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(proofPath, 'utf8'));
+  } catch (error) {
+    return {
+      passed: false,
+      state: 'invalid',
+      detail: `Viewport smoke proof could not be parsed: ${error.message}`,
+    };
+  }
+
+  const generatedAt = parsed?.generatedAt || null;
+  const command = parsed?.command || null;
+  const artifactVersion = parsed?.artifactVersion ?? null;
+  const kind = parsed?.kind || null;
+  const recordedRequiredChecks = Array.isArray(parsed?.requiredChecks)
+    ? parsed.requiredChecks.map((check) => String(check || '')).filter(Boolean)
+    : [];
+  const requiredChecksMatch = viewportSmokeRequiredChecksMatch(recordedRequiredChecks);
+  const viewports = compactViewportSmokeRows(parsed?.viewports);
+  const requiredViewportNames = ['desktop', 'mobile'];
+  const requiredViewportFailures = requiredViewportNames.flatMap((name) => {
+    const row = viewports.find((item) => item.name === name);
+    if (!row) return [`${name}: missing viewport`];
+    const failures = [];
+    if (row.passed !== true) failures.push(`${name}: viewport did not pass`);
+    failures.push(...missingViewportSmokeChecks(row).map((check) => `${name}: ${check}`));
+    return failures;
+  });
+  const requiredViewportsPassed = requiredViewportNames.every((name) => (
+    viewports.some((row) => (
+      row.name === name
+      && row.passed === true
+      && missingViewportSmokeChecks(row).length === 0
+    ))
+  ));
+  const currentAssetHashes = currentV2ViewportSmokeAssetHashes();
+  const recordedAssetHashes = parsed?.assetHashes && typeof parsed.assetHashes === 'object'
+    ? parsed.assetHashes
+    : {};
+  const staleAssets = V2_VIEWPORT_SMOKE_PROOF_ASSETS.filter((file) => (
+    recordedAssetHashes[file] !== currentAssetHashes[file]
+  ));
+
+  if (
+    parsed?.artifactVersion !== 1
+    || parsed?.kind !== 'trebuchet-v2-viewport-smoke'
+    || parsed?.passed !== true
+    || !requiredChecksMatch
+    || !requiredViewportsPassed
+  ) {
+    return {
+      passed: false,
+      state: 'invalid',
+      detail: requiredViewportFailures.length
+        ? `Viewport smoke proof is incomplete or did not pass both desktop and mobile. Missing checks: ${requiredViewportFailures.slice(0, 6).join(', ')}${requiredViewportFailures.length > 6 ? ', ...' : ''}.`
+        : !requiredChecksMatch
+          ? 'Viewport smoke proof was generated with a stale required-check contract; rerun npm run test:v2:viewport.'
+        : 'Viewport smoke proof is incomplete or did not pass both desktop and mobile.',
+      artifactVersion,
+      kind,
+      generatedAt,
+      command,
+      viewports,
+      requiredChecks: recordedRequiredChecks,
+      expectedRequiredChecks: V2_VIEWPORT_SMOKE_REQUIRED_CHECKS,
+      assetHashes: recordedAssetHashes,
+      expectedAssetHashes: currentAssetHashes,
+    };
+  }
+
+  if (staleAssets.length > 0) {
+    return {
+      passed: false,
+      state: 'stale',
+      detail: `Viewport smoke proof is stale for current v2 assets: ${staleAssets.join(', ')}.`,
+      artifactVersion,
+      kind,
+      generatedAt,
+      command,
+      viewports,
+      requiredChecks: V2_VIEWPORT_SMOKE_REQUIRED_CHECKS,
+      assetHashes: recordedAssetHashes,
+      expectedAssetHashes: currentAssetHashes,
+    };
+  }
+
+  return {
+    passed: true,
+    state: 'valid',
+    detail: `Viewport smoke passed for ${requiredViewportNames.join(', ')}.`,
+    artifactVersion,
+    kind,
+    generatedAt,
+    command,
+    viewports,
+    requiredChecks: V2_VIEWPORT_SMOKE_REQUIRED_CHECKS,
+    assetHashes: currentAssetHashes,
+  };
+}
 
 app.use(express.static(publicDir));
 
@@ -641,6 +806,21 @@ app.get('/api/server-logs', (req, res) => {
   res.json({ entries });
 });
 
+app.get('/api/v2/viewport-smoke-proof', (_req, res) => {
+  try {
+    res.json({ success: true, proof: readV2ViewportSmokeProof() });
+  } catch (error) {
+    res.json({
+      success: true,
+      proof: {
+        passed: false,
+        state: 'error',
+        detail: `Viewport smoke proof could not be verified: ${error.message}`,
+      },
+    });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Recovery PIN endpoints
 // ---------------------------------------------------------------------------
@@ -676,8 +856,54 @@ app.post('/api/secret-pin/unlock', (req, res) => {
   }
 });
 
+app.post('/api/secret-pin/change', (req, res) => {
+  try {
+    const ok = secretStore.unlockSecretPin(req.body?.currentPin);
+    if (!ok) {
+      return res.status(401).json({
+        success: false,
+        code: 'BAD_SECRET_PIN',
+        error: 'Recovery PIN is incorrect',
+      });
+    }
+    migrateSecretsToUnlockedPin();
+    const status = secretStore.changeSecretPin(req.body?.newPin);
+    res.json({ success: true, status });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
 app.post('/api/secret-pin/lock', (_req, res) => {
   res.json({ success: true, status: secretStore.lockSecretPin() });
+});
+
+app.post('/api/secret-pin/reset', (req, res) => {
+  try {
+    if (launchOpsInFlight.size > 0 || airdropsInFlight.size > 0) {
+      return res.status(409).json({
+        success: false,
+        code: 'LAUNCH_OP_IN_FLIGHT',
+        error: 'A launch operation is running. Wait for it to finish before resetting the Recovery PIN.',
+      });
+    }
+    if (req.body?.confirmReset !== 'RESET RECOVERY PIN') {
+      return res.status(400).json({
+        success: false,
+        code: 'BAD_SECRET_PIN_RESET_CONFIRMATION',
+        error: 'Type RESET RECOVERY PIN to confirm the destructive reset.',
+      });
+    }
+
+    const removed = {
+      pendingWallets: pendingWallets.removePinEncrypted(),
+      vanityCAs: vanityCaStore.removePinEncrypted(),
+    };
+    const status = secretStore.resetSecretPin();
+    res.json({ success: true, status, removed });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -741,6 +967,119 @@ app.get('/api/wallet-qr', async (req, res) => {
   }
 });
 
+function managedWalletMetadata(wallet, extra = {}) {
+  return {
+    publicKey: wallet.publicKey,
+    createdAt: wallet.createdAt || null,
+    hasSecretKey: Array.isArray(wallet.secretKey),
+    hasMnemonic: typeof wallet.mnemonic === 'string' && wallet.mnemonic.length > 0,
+    decryptionFailed: !Array.isArray(wallet.secretKey),
+    source: extra.source || 'trebuchet-managed',
+    label: extra.label || 'Trebuchet launch wallet',
+    ...extra,
+  };
+}
+
+function keypairFromMnemonic(mnemonic) {
+  const normalized = String(mnemonic || '').trim().replace(/\s+/g, ' ');
+  if (!bip39.validateMnemonic(normalized)) {
+    throw new Error('Invalid wallet mnemonic');
+  }
+  const seed = bip39.mnemonicToSeedSync(normalized);
+  const derivedSeed = derivePath("m/44'/501'/0'/0'", seed.toString('hex')).key;
+  return { keypair: Keypair.fromSeed(derivedSeed), mnemonic: normalized };
+}
+
+function parseImportedWalletSecret(value) {
+  if (Array.isArray(value)) {
+    return { keypair: Keypair.fromSecretKey(Uint8Array.from(value)), mnemonic: null };
+  }
+
+  const text = String(value || '').trim();
+  if (!text) throw new Error('Wallet secret is required');
+
+  if (text.includes(' ')) return keypairFromMnemonic(text);
+
+  if (text.startsWith('[')) {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) throw new Error('Secret key JSON must be an array');
+    return { keypair: Keypair.fromSecretKey(Uint8Array.from(parsed)), mnemonic: null };
+  }
+
+  const decoded = bs58.decode(text);
+  return { keypair: Keypair.fromSecretKey(Uint8Array.from(decoded)), mnemonic: null };
+}
+
+const demoManagedWallets = new Map();
+
+function rememberDemoManagedWallet(wallet) {
+  if (!wallet?.publicKey || !Array.isArray(wallet.secretKey)) return;
+  demoManagedWallets.set(wallet.publicKey, {
+    publicKey: wallet.publicKey,
+    secretKey: wallet.secretKey,
+    mnemonic: wallet.mnemonic || null,
+    createdAt: wallet.createdAt || new Date().toISOString(),
+  });
+}
+
+function invokeJsonHandler(handler, body, options) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const req = { body };
+    const res = {
+      statusCode: 200,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(payload) {
+        settled = true;
+        if (this.statusCode >= 400 || payload?.success === false) {
+          const error = new Error(payload?.error || `Demo handler failed with HTTP ${this.statusCode}`);
+          error.statusCode = this.statusCode;
+          error.payload = payload;
+          reject(error);
+          return payload;
+        }
+        resolve(payload);
+        return payload;
+      },
+    };
+
+    Promise.resolve(handler(req, res, options)).then(() => {
+      if (!settled) resolve({ success: true });
+    }).catch(reject);
+  });
+}
+
+function demoAllocationsForV2(allocations = []) {
+  return allocations.map((allocation) => {
+    const ladder = allocation?.ladder || { mode: 'off' };
+    if (ladder.mode !== 'simple') return allocation;
+    const bandCount = Math.max(0, Math.floor(Number(ladder.bandCount || 0)));
+    if (bandCount <= 0) return { ...allocation, ladder: { mode: 'off' } };
+    const supplyPercent = Number.isFinite(Number(ladder.supplyPercent))
+      ? Math.max(0, Number(ladder.supplyPercent))
+      : 50;
+    const ceilingMultiplier = Number.isFinite(Number(ladder.ceilingMultiplier))
+      ? Math.max(1.01, Number(ladder.ceilingMultiplier))
+      : 1000;
+    const logCeiling = Math.log(ceilingMultiplier);
+    const perBandSupply = bandCount > 0 ? supplyPercent / bandCount : 0;
+    return {
+      ...allocation,
+      ladder: {
+        mode: 'manual',
+        bands: Array.from({ length: bandCount }, (_, index) => ({
+          supplyPercent: Number(perBandSupply.toFixed(4)),
+          lowerMultiplier: Number(Math.exp((logCeiling * index) / bandCount).toFixed(4)),
+          upperMultiplier: Number(Math.exp((logCeiling * (index + 1)) / bandCount).toFixed(4)),
+        })),
+      },
+    };
+  });
+}
+
 // SOL-only balance (kept for backwards compatibility / Step 1 display)
 // ---------------------------------------------------------------------------
 
@@ -797,6 +1136,11 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
 
   if (!prefix && !suffix) {
     return res.status(400).json({ success: false, error: 'prefix or suffix required' });
+  }
+  try {
+    ({ prefix, suffix } = normalizeVanityTargetBase58(prefix, suffix));
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
   }
 
   // Refuse cleanly if the binary isn't available. The frontend disables
@@ -1025,6 +1369,11 @@ app.post('/api/generate-vanity-wallet', async (req, res) => {
     if (!prefix && !suffix) {
       return res.status(400).json({ success: false, error: 'prefix or suffix required' });
     }
+    try {
+      ({ prefix, suffix } = normalizeVanityTargetBase58(prefix, suffix));
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
 
     // Mirror the stream endpoint's availability gate so both vanity routes
     // fail with the same shape and message when the binary isn't built.
@@ -1185,6 +1534,30 @@ app.get('/api/user-prefs', (_req, res) => {
   }
 });
 
+app.get('/api/app-version', (_req, res) => {
+  try {
+    const macos = process.platform === 'darwin';
+    res.json({
+      success: true,
+      version: APP_VERSION,
+      releaseUrl: 'https://github.com/AnOversizedMooseWithSocks/Trebuchet/releases',
+      checkForUpdatesOnStartup: userPrefs.get().checkForUpdatesOnStartup !== false,
+      releaseTrust: {
+        status: 'unsigned-test-artifact',
+        label: 'Unsigned test artifact',
+        signingStatus: 'unsigned',
+        notarizationStatus: macos ? 'not-notarized' : 'not-applicable',
+        platform: process.platform,
+        detail: macos
+          ? 'Current macOS release downloads are unsigned and not notarized unless a release note explicitly says signed and notarized.'
+          : 'Current desktop release downloads are unsigned test artifacts unless a release note explicitly says signed for this platform.',
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 app.post('/api/user-prefs', (req, res) => {
   try {
     // userPrefs.set ignores unknown keys and type-mismatched values,
@@ -1230,26 +1603,171 @@ app.post('/api/publish-launch-report', async (req, res) => {
       poolIds,
       reportHtml,
       launchData,
+      proofFingerprint,
     } = req.body || {};
+    let reportProofFingerprint = typeof proofFingerprint === 'string' && proofFingerprint.trim()
+      ? proofFingerprint.trim().slice(0, 10000)
+      : typeof launchData?.proofFingerprint === 'string' && launchData.proofFingerprint.trim()
+        ? launchData.proofFingerprint.trim().slice(0, 10000)
+        : null;
+    let reportTransferEvidenceHash = null;
 
     if (!mint) {
       return res.json({ success: true, skipped: true, reason: 'missing-mint' });
+    }
+
+    const reportJournal = launchJournalForReport(walletPublicKey, launchData);
+    if (launchData?.source === 'trebuchet-v2') {
+      const launchDataProofFingerprint = typeof launchData?.proofFingerprint === 'string' && launchData.proofFingerprint.trim()
+        ? launchData.proofFingerprint.trim().slice(0, 10000)
+        : null;
+      const requestProofFingerprint = typeof proofFingerprint === 'string' && proofFingerprint.trim()
+        ? proofFingerprint.trim().slice(0, 10000)
+        : null;
+      if (!launchDataProofFingerprint) {
+        return res.json({
+          success: true,
+          skipped: true,
+          reason: 'missing-proof-fingerprint',
+          staleProof: true,
+        });
+      }
+      if (requestProofFingerprint && requestProofFingerprint !== launchDataProofFingerprint) {
+        return res.json({
+          success: true,
+          skipped: true,
+          reason: 'proof-fingerprint-mismatch',
+          staleProof: true,
+          proofFingerprint: launchDataProofFingerprint,
+        });
+      }
+      const derivedProofFingerprint = v2LaunchDataProofFingerprint(launchData);
+      if (launchDataProofFingerprint !== derivedProofFingerprint) {
+        return res.json({
+          success: true,
+          skipped: true,
+          reason: 'launch-data-proof-fingerprint-mismatch',
+          staleProof: true,
+          proofFingerprint: derivedProofFingerprint,
+        });
+      }
+      const launchJournalBinding = v2LaunchDataJournalState(launchData, reportJournal, walletPublicKey);
+      if (!launchJournalBinding.backed) {
+        return res.json({
+          success: true,
+          skipped: true,
+          reason: launchJournalBinding.missing.length
+            ? 'launch-journal-missing'
+            : 'launch-journal-mismatch',
+          launchJournalMissing: launchJournalBinding.missing.length > 0,
+          launchJournalMismatch: launchJournalBinding.mismatches.length > 0,
+          missing: launchJournalBinding.missing,
+          mismatches: launchJournalBinding.mismatches,
+        });
+      }
+      const launchConfigSnapshot = v2LaunchDataConfigSnapshotState(launchData);
+      if (!launchConfigSnapshot.complete) {
+        return res.json({
+          success: true,
+          skipped: true,
+          reason: launchConfigSnapshot.state === 'missing'
+            ? 'launch-config-snapshot-missing'
+            : 'launch-config-snapshot-incomplete',
+          launchConfigIncomplete: true,
+          missing: launchConfigSnapshot.missing,
+        });
+      }
+      const launchConfigConsistency = v2LaunchDataConfigConsistencyState(launchData, reportJournal, {
+        requireJournalFields: true,
+      });
+      if (!launchConfigConsistency.consistent) {
+        return res.json({
+          success: true,
+          skipped: true,
+          reason: 'launch-config-snapshot-mismatch',
+          launchConfigMismatch: true,
+          mismatches: launchConfigConsistency.mismatches,
+        });
+      }
+      const launchProofCompleteness = v2LaunchDataReportCompletenessState(launchData);
+      if (!launchProofCompleteness.complete) {
+        return res.json({
+          success: true,
+          skipped: true,
+          reason: 'launch-proof-incomplete',
+          launchProofIncomplete: true,
+          missing: launchProofCompleteness.missing,
+        });
+      }
+      const submittedTransferEvidenceHash = typeof launchData?.finalSweep?.transferEvidenceHash === 'string' && launchData.finalSweep.transferEvidenceHash.trim()
+        ? launchData.finalSweep.transferEvidenceHash.trim()
+        : typeof launchData?.transferEvidenceHash === 'string' && launchData.transferEvidenceHash.trim()
+          ? launchData.transferEvidenceHash.trim()
+          : null;
+      if (submittedTransferEvidenceHash) {
+        const derivedTransferEvidenceHash = v2TransferEvidenceHash(launchData?.transfer || {});
+        if (submittedTransferEvidenceHash !== derivedTransferEvidenceHash) {
+          return res.json({
+            success: true,
+            skipped: true,
+            reason: 'transfer-evidence-hash-mismatch',
+            staleProof: true,
+            transferEvidenceHash: derivedTransferEvidenceHash,
+          });
+        }
+        reportTransferEvidenceHash = derivedTransferEvidenceHash;
+      }
+      reportProofFingerprint = launchDataProofFingerprint;
+      const airdropStatus = v2LaunchDataAirdropCompletionStatus(launchData);
+      if (!airdropStatus.complete) {
+        return res.json({
+          success: true,
+          skipped: true,
+          reason: airdropStatus.retryRequired
+            ? `airdrop-failed:${airdropStatus.failed}`
+            : airdropStatus.missing?.length
+              ? `airdrop-proof-missing:${airdropStatus.missing.join(',')}`
+              : `airdrop-pending:${airdropStatus.pending}`,
+          airdropIncomplete: true,
+          airdropStatus,
+        });
+      }
     }
 
     if (walletPublicKey && rejectIfSecretPinLocked(res, 'publishing a launch report')) {
       return;
     }
 
-    // Journal-backed idempotency: the report publishes during the transfer
-    // flow, which is re-runnable after a partial sweep failure — and the
-    // frontend's in-memory "already published" state doesn't survive an
-    // app restart. One permanent report per mint; re-requests get the
-    // recorded URIs back.
+    // Journal-backed idempotency: the report publishes during finalization,
+    // which is re-runnable after a partial sweep failure. v2 reports are
+    // proof-bound, so reuse is only safe when the stored proof fingerprint
+    // matches the current proof. If an older/partial report exists for the
+    // same mint, publish the current proof and update the journal.
     if (walletPublicKey) {
-      const prior = launchJournal.activeForWallet(walletPublicKey)?.reportPublish;
+      const prior = reportJournal?.reportPublish;
       if (prior && prior.mint === mint && prior.jsonUri) {
-        console.log(`publish-launch-report: already published for ${mint} — returning recorded URIs`);
-        return res.json({ success: true, jsonUri: prior.jsonUri, htmlUri: prior.htmlUri || null, alreadyPublished: true });
+        const priorFingerprint = typeof prior.proofFingerprint === 'string' ? prior.proofFingerprint : null;
+        const priorTransferEvidenceHash = typeof prior.sweepEvidenceHash === 'string' && prior.sweepEvidenceHash.trim()
+          ? prior.sweepEvidenceHash.trim()
+          : typeof prior.transferEvidenceHash === 'string' && prior.transferEvidenceHash.trim()
+            ? prior.transferEvidenceHash.trim()
+            : null;
+        const priorMatchesTransferEvidence = !reportTransferEvidenceHash
+          || priorTransferEvidenceHash === reportTransferEvidenceHash;
+        if (!reportProofFingerprint || (priorFingerprint === reportProofFingerprint && priorMatchesTransferEvidence)) {
+          console.log(`publish-launch-report: already published for ${mint} — returning recorded URIs`);
+          return res.json({
+            success: true,
+            mint,
+            jsonUri: prior.jsonUri,
+            htmlUri: prior.htmlUri || null,
+            proofFingerprint: priorFingerprint,
+            sweepEvidenceHash: priorTransferEvidenceHash,
+            publishedAt: prior.publishedAt || null,
+            alreadyPublished: true,
+          });
+        }
+        console.log(`publish-launch-report: prior report for ${mint} belongs to a different proof or sweep state — publishing current proof`);
       }
     }
 
@@ -1273,14 +1791,39 @@ app.post('/api/publish-launch-report', async (req, res) => {
     // Persist the publish record so re-runs return the same URIs instead
     // of uploading a second copy. Only on a real success with a URI — a
     // skipped/failed result must stay retryable.
+    const publishedAt = new Date().toISOString();
     if (walletPublicKey && result && result.jsonUri) {
-      launchJournal.upsertForWallet(
-        walletPublicKey,
-        { reportPublish: { mint, jsonUri: result.jsonUri, htmlUri: result.htmlUri || null, publishedAt: new Date().toISOString() } },
-        { stage: 'report_published', mint },
-      );
+      const reportPublishPatch = {
+        reportPublish: {
+          status: 'done',
+          mint,
+          jsonUri: result.jsonUri,
+          htmlUri: result.htmlUri || null,
+          proofFingerprint: reportProofFingerprint,
+          ...(reportTransferEvidenceHash ? { sweepEvidenceHash: reportTransferEvidenceHash } : {}),
+          publishedAt,
+        },
+      };
+      const reportPublishEvent = {
+        stage: 'report_published',
+        mint,
+        proofFingerprint: reportProofFingerprint,
+        ...(reportTransferEvidenceHash ? { sweepEvidenceHash: reportTransferEvidenceHash } : {}),
+      };
+      if (reportJournal?.id) {
+        launchJournal.update(reportJournal.id, reportPublishPatch, reportPublishEvent);
+      } else {
+        launchJournal.upsertForWallet(walletPublicKey, reportPublishPatch, reportPublishEvent);
+      }
     }
-    return res.json({ success: true, ...result });
+    return res.json({
+      success: true,
+      mint,
+      publishedAt,
+      proofFingerprint: reportProofFingerprint,
+      ...(reportTransferEvidenceHash ? { sweepEvidenceHash: reportTransferEvidenceHash } : {}),
+      ...result,
+    });
   } catch (err) {
     // Publishing must never look like a launch failure.
     console.error('publish-launch-report failed:', err);
@@ -1332,6 +1875,2086 @@ app.post('/api/demo/inject-funds', (req, res) => {
   demoChainService.handleInjectFunds(req, res);
 });
 
+// v2 launch-plan preview. This is deliberately side-effect free: it validates
+// the v2 launch form and returns a staged local-wallet run bundle that the v2
+// shell can render. Real execution is routed separately through the guarded v2
+// run-envelope bridge, which re-checks readiness server-side before calling the
+// existing classic launch handlers.
+app.post('/api/v2/launch-plan', (req, res) => {
+  try {
+    const plan = buildV2LaunchPlan(req.body || {}, {
+      demoMode: isDemoMode(),
+    });
+    res.json({ success: true, plan });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/v2/execution-readiness', async (req, res) => {
+  try {
+    const config = req.body?.config || {};
+    const walletPublicKey = String(req.body?.walletPublicKey || config.walletPublicKey || '').trim();
+    const { readiness } = await v2ReadinessForManagedWallet({
+      walletPublicKey,
+      config,
+      body: req.body || {},
+      requireFundingBalance: true,
+    });
+    res.json({ success: true, readiness });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+function latestLaunchJournalForWallet(walletPublicKey) {
+  if (!walletPublicKey) return null;
+  const active = launchJournal.activeForWallet(walletPublicKey);
+  if (active) return active;
+  return launchJournal
+    .list({ includeCompleted: true, includeArchived: false })
+    .filter((entry) => entry.walletPublicKey === walletPublicKey)
+    .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))[0] || null;
+}
+
+function v2LaunchDataJournalId(launchData = {}) {
+  const directId = typeof launchData?.journalId === 'string' ? launchData.journalId.trim() : '';
+  if (directId) return directId;
+  return typeof launchData?.recoveryAudit?.journalId === 'string'
+    ? launchData.recoveryAudit.journalId.trim()
+    : '';
+}
+
+function launchJournalForReport(walletPublicKey, launchData = {}) {
+  const requestedId = v2LaunchDataJournalId(launchData);
+  if (requestedId) {
+    const exact = launchJournal.get(requestedId);
+    return exact && exact.status !== 'archived' ? exact : null;
+  }
+  return latestLaunchJournalForWallet(walletPublicKey);
+}
+
+function v2ExecutionContextFromJournal(walletPublicKey, body = {}) {
+  const journal = latestLaunchJournalForWallet(walletPublicKey);
+  const priorResults = journal ? priorResultsFromJournal(journal) : [];
+  const lpResults = Array.isArray(journal?.lp?.results) ? journal.lp.results : [];
+  const lpComplete = lpResults.length > 0 && !journal?.lp?.failedPhase;
+  const terminalTransfer = journal?.transfer || body.transfer || null;
+  return {
+    tokenMint: journal?.token?.mint || body.tokenMint,
+    tokenCreated: Boolean(journal?.token?.mint || body.tokenCreated),
+    createdTokenInfo: journal?.token || body.createdTokenInfo,
+    priorResults: priorResults.length ? priorResults : body.priorResults,
+    resume: body.resume === true || journal?.status === 'failed' || Boolean(journal?.lp?.failedPhase),
+    failedLaunch: body.failedLaunch === true || journal?.status === 'failed',
+    liquidityComplete: lpComplete || hasCompletedLpResults(journal) || body.liquidityComplete === true || body.lpComplete === true,
+    transferComplete: v2TransferHasWalletEmptyFinalSweepEvidence(terminalTransfer),
+    journal,
+  };
+}
+
+function v2PoolTopologySnapshotFromPlan(plan = {}, journal = null) {
+  const planTopology = plan?.poolTopology && typeof plan.poolTopology === 'object'
+    ? plan.poolTopology
+    : {};
+  const journalPoolPlan = journal?.poolPlan && typeof journal.poolPlan === 'object'
+    ? journal.poolPlan
+    : null;
+  const topology = { ...planTopology };
+  if (journalPoolPlan) {
+    if (Number.isFinite(Number(journalPoolPlan.targetMarketCapUsd))) {
+      topology.targetMarketCapUsd = Number(journalPoolPlan.targetMarketCapUsd);
+    }
+    if (Array.isArray(journalPoolPlan.allocations) && journalPoolPlan.allocations.length > 0) {
+      topology.pools = cloneJson(journalPoolPlan.allocations);
+    }
+    if (journalPoolPlan.airdropPlan && typeof journalPoolPlan.airdropPlan === 'object') {
+      topology.airdrop = {
+        ...(topology.airdrop && typeof topology.airdrop === 'object' ? topology.airdrop : {}),
+        ...cloneJson(journalPoolPlan.airdropPlan),
+      };
+    }
+  }
+  return topology;
+}
+
+function v2LaunchConfigSnapshotFromPlan(plan = {}, journal = null) {
+  const token = plan?.token && typeof plan.token === 'object' ? plan.token : {};
+  const journalToken = journal?.token && typeof journal.token === 'object' && Object.keys(journal.token).length > 0
+    ? journal.token
+    : null;
+  const journalPoolPlan = journal?.poolPlan && typeof journal.poolPlan === 'object'
+    ? journal.poolPlan
+    : null;
+  const tokenSource = journalToken || token;
+  const topology = v2PoolTopologySnapshotFromPlan(plan, journal);
+  const logo = token.logo && typeof token.logo === 'object'
+    ? {
+      name: token.logo.name || null,
+      type: token.logo.type || token.logo.mimeType || null,
+      size: Number.isFinite(Number(token.logo.size ?? token.logo.sizeBytes))
+        ? Number(token.logo.size ?? token.logo.sizeBytes)
+        : null,
+    }
+    : null;
+  return {
+    schema: 'trebuchet-v2-launch-config',
+    source: 'trebuchet-v2',
+    token: {
+      name: tokenSource.name || null,
+      symbol: tokenSource.symbol || null,
+      supply: tokenSource.supply || tokenSource.totalSupply || journalPoolPlan?.tokenTotalSupply || null,
+      description: tokenSource.description || null,
+      decimals: tokenSource.decimals ?? journalPoolPlan?.tokenDecimals ?? 9,
+      logo,
+    },
+    launchSol: Number.isFinite(Number(plan?.funding?.launchSol)) ? Number(plan.funding.launchSol) : null,
+    mode: plan?.mode || null,
+    vanity: plan?.vanity || null,
+    poolTopology: topology,
+    funding: {
+      launchSol: Number.isFinite(Number(plan?.funding?.launchSol)) ? Number(plan.funding.launchSol) : null,
+      targetMarketCapUsd: Number.isFinite(Number(topology?.targetMarketCapUsd))
+        ? Number(topology.targetMarketCapUsd)
+        : null,
+    },
+    recovery: plan?.recovery || null,
+    avatarCollection: plan?.avatarCollection || null,
+  };
+}
+
+function v2ExecutionProofFromContext(context = {}, readiness = {}) {
+  const journal = context.journal || null;
+  const plan = readiness?.plan || null;
+  const tokenInfo = context.createdTokenInfo || journal?.token || null;
+  const tokenMint = tokenInfo?.mint || context.tokenMint || readiness?.tokenMint || null;
+  const lpResults = Array.isArray(journal?.lp?.results)
+    ? journal.lp.results
+    : Array.isArray(journal?.lp?.priorResults)
+      ? journal.lp.priorResults
+      : Array.isArray(context.priorResults)
+        ? context.priorResults
+        : [];
+  const poolIds = [...new Set(lpResults.map((pool) => pool?.poolId).filter(Boolean).map(String))];
+  const journalPoolPlan = journal?.poolPlan && typeof journal.poolPlan === 'object'
+    ? cloneJson(journal.poolPlan)
+    : null;
+  const plannedPoolCount = Math.max(
+    1,
+    Array.isArray(journalPoolPlan?.pools) ? journalPoolPlan.pools.length : 0,
+    Array.isArray(plan?.poolTopology?.pools) ? plan.poolTopology.pools.length : 0,
+  );
+  const reportablePoolIdentity = Boolean(
+    plannedPoolCount > 0
+    && poolIds.length === plannedPoolCount
+    && lpResults.length === plannedPoolCount
+  );
+  const positionCount = v2ProofPositionCount(lpResults);
+  const poolCreateTxCount = v2ProofPoolCreateTxCount(lpResults);
+  const positionOpenTxCount = v2ProofPositionOpenTxCount(lpResults);
+  const positionLockTxCount = v2ProofPositionLockTxCount(lpResults);
+  const positions = lpResults.reduce((counts, pool) => {
+    counts.main += Array.isArray(pool?.mainPositions) ? pool.mainPositions.length : 0;
+    counts.ladder += Array.isArray(pool?.ladderPositions) ? pool.ladderPositions.length : 0;
+    counts.support += Array.isArray(pool?.supportPositions) ? pool.supportPositions.length : 0;
+    counts.bootstrap += pool?.bootstrap ? 1 : 0;
+    return counts;
+  }, { main: 0, ladder: 0, support: 0, bootstrap: 0 });
+  const lockCount = lpResults.reduce((count, pool) => {
+    const positionsForPool = [
+      ...(Array.isArray(pool?.mainPositions) ? pool.mainPositions : []),
+      ...(Array.isArray(pool?.ladderPositions) ? pool.ladderPositions : []),
+      ...(Array.isArray(pool?.supportPositions) ? pool.supportPositions : []),
+      ...(pool?.bootstrap ? [pool.bootstrap] : []),
+    ];
+    return count + positionsForPool.filter((position) => position?.locked === true).length;
+  }, 0);
+  const feeKeyCount = lpResults.reduce((count, pool) => {
+    const positionsForPool = [
+      ...(Array.isArray(pool?.mainPositions) ? pool.mainPositions : []),
+      ...(Array.isArray(pool?.ladderPositions) ? pool.ladderPositions : []),
+      ...(Array.isArray(pool?.supportPositions) ? pool.supportPositions : []),
+      ...(pool?.bootstrap ? [pool.bootstrap] : []),
+    ];
+    return count + positionsForPool.filter((position) => position?.feeKeyNftMint).length;
+  }, 0);
+  const feeKeyRecipientSummary = v2ProofFeeKeyRecipientSummary(lpResults);
+  const tokenAuthoritiesComplete = Boolean(
+    tokenInfo?.mintAuthorityRenounced === true
+    && tokenInfo?.freezeAuthorityDisabled === true
+    && tokenInfo?.metadataUpdateAuthorityRevoked === true
+    && tokenInfo?.metadataImmutable === true
+  );
+  const reportableExecutionProof = Boolean(
+    tokenMint
+    && tokenAuthoritiesComplete
+    && reportablePoolIdentity
+    && poolCreateTxCount >= plannedPoolCount
+    && positionCount > 0
+    && positionOpenTxCount >= positionCount
+    && lockCount >= positionCount
+    && positionLockTxCount >= positionCount
+    && feeKeyCount >= lockCount
+    && feeKeyRecipientSummary.delivered >= feeKeyRecipientSummary.target
+  );
+  const airdropPayload =
+    readiness?.classicPayloads?.transferAssets?.airdrop ||
+    readiness?.classicPayloads?.createLp?.airdrop ||
+    null;
+  const plannedRecipients = Array.isArray(airdropPayload?.recipients)
+    ? airdropPayload.recipients
+    : [];
+  const configuredAirdropCount = plan?.poolTopology?.airdrop?.enabled
+    ? Math.max(0, Number(plan.poolTopology.airdrop.recipientCount || 0))
+    : 0;
+  const plannedAirdropCount = Math.max(
+    Number.isFinite(configuredAirdropCount) ? Math.floor(configuredAirdropCount) : 0,
+    plannedRecipients.length,
+  );
+  const airdropRecord = journal?.airdrop || null;
+  const deliveredAirdrop = Array.isArray(airdropRecord?.transferred) ? airdropRecord.transferred : [];
+  const failedAirdrop = Array.isArray(airdropRecord?.failed) ? airdropRecord.failed : [];
+  const reportPublish = journal?.reportPublish || null;
+  const transfer = journal?.transfer || null;
+  const destinationWallet =
+    transfer?.destinationWallet ||
+    readiness?.classicPayloads?.transferAssets?.destinationWallet ||
+    plan?.poolTopology?.sweepDestination ||
+    null;
+
+  return {
+    source: journal ? 'launch-journal' : 'readiness',
+    journalId: journal?.id || null,
+    status: journal?.status || null,
+    stage: journal?.stage || null,
+    walletPublicKey: journal?.walletPublicKey || readiness?.walletPublicKey || null,
+    updatedAt: journal?.updatedAt || null,
+    token: tokenMint ? {
+      mint: tokenMint,
+      name: tokenInfo?.name || plan?.token?.name || null,
+      symbol: tokenInfo?.symbol || plan?.token?.symbol || null,
+      decimals: tokenInfo?.decimals ?? plan?.token?.decimals ?? 9,
+      totalSupply: tokenInfo?.totalSupply ?? plan?.token?.supply ?? null,
+      metadataUri: tokenInfo?.metadataUri || null,
+      imageUri: tokenInfo?.imageUri || null,
+      mintAuthorityRenounced: tokenInfo?.mintAuthorityRenounced === true,
+      freezeAuthorityDisabled: tokenInfo?.freezeAuthorityDisabled === true,
+      metadataUpdateAuthorityRevoked: tokenInfo?.metadataUpdateAuthorityRevoked === true,
+      metadataImmutable: tokenInfo?.metadataImmutable === true,
+    } : null,
+    liquidity: {
+      complete: context.liquidityComplete === true,
+      poolCount: lpResults.length,
+      poolIds,
+      positions,
+      lockedPositionCount: lockCount,
+      feeKeyCount,
+      results: lpResults,
+    },
+    poolPlan: journalPoolPlan,
+    airdrop: {
+      plannedRecipientCount: plannedAirdropCount,
+      deliveredCount: deliveredAirdrop.length,
+      failedCount: failedAirdrop.length,
+      transferred: deliveredAirdrop,
+      failed: failedAirdrop,
+      tokenMint: airdropPayload?.tokenMint || tokenMint || null,
+      tokenDecimals: airdropPayload?.tokenDecimals ?? tokenInfo?.decimals ?? plan?.token?.decimals ?? 9,
+      recipients: plannedRecipients,
+    },
+    reportPublish,
+    transfer,
+    destinationWallet,
+    launchConfig: v2LaunchConfigSnapshotFromPlan(plan, journal),
+    canPublishReport: reportableExecutionProof,
+    canRunAirdrop: Boolean(tokenMint && plannedRecipients.length > 0),
+    canRetryAirdrop: failedAirdrop.length > 0,
+    canSweep: Boolean(tokenMint && destinationWallet),
+  };
+}
+
+function v2ProofPositionCount(results = []) {
+  return v2ProofPositionRecords(results).length;
+}
+
+function v2ProofPositionRecords(results = []) {
+  return (Array.isArray(results) ? results : []).flatMap((pool) => {
+    if (Array.isArray(pool?.positions) && pool.positions.length) return pool.positions;
+    return [
+      ...(Array.isArray(pool?.mainPositions) ? pool.mainPositions : []),
+      ...(Array.isArray(pool?.ladderPositions) ? pool.ladderPositions : []),
+      ...(Array.isArray(pool?.supportPositions) ? pool.supportPositions : []),
+      ...(pool?.bootstrap ? [pool.bootstrap] : []),
+    ];
+  });
+}
+
+function v2ProofLockedPositionCount(results = []) {
+  return v2ProofPositionRecords(results).filter((position) => position?.locked === true).length;
+}
+
+function v2ProofFeeKeyCount(results = []) {
+  return v2ProofPositionRecords(results).filter((position) => position?.feeKeyNftMint || position?.feeKeyMint).length;
+}
+
+function v2ProofPoolCreateTxCount(results = []) {
+  return (Array.isArray(results) ? results : []).filter((pool) => (
+    v2TrimmedText(pool?.poolId || pool?.id)
+    && v2TrimmedText(pool?.createPoolTx || pool?.txIds?.createPool)
+  )).length;
+}
+
+function v2ProofPositionOpenTxCount(results = []) {
+  return v2ProofPositionRecords(results).filter((position) => (
+    v2TrimmedText(position?.positionNftMint || position?.nftMint || position?.positionMint)
+    && v2TrimmedText(position?.openTx || position?.txIds?.open)
+  )).length;
+}
+
+function v2ProofPositionLockTxCount(results = []) {
+  return v2ProofPositionRecords(results).filter((position) => (
+    position?.locked === true
+    && v2TrimmedText(position?.lockTx || position?.txIds?.lock)
+  )).length;
+}
+
+function v2ProofFeeKeyRecipientSummary(results = []) {
+  const targeted = v2ProofPositionRecords(results).filter((position) => v2TrimmedText(position?.recipient));
+  const delivered = targeted.filter((position) => (
+    v2TrimmedText(position?.transferredTo) === v2TrimmedText(position?.recipient)
+    && v2TrimmedText(position?.transferTx || position?.txIds?.transfer)
+  ));
+  return {
+    target: targeted.length,
+    delivered: delivered.length,
+  };
+}
+
+const V2_AUTHORITY_COMPARISON_FIELDS = Object.freeze([
+  'mintAuthorityRenounced',
+  'freezeAuthorityDisabled',
+  'metadataUpdateAuthorityRevoked',
+  'metadataImmutable',
+]);
+
+function v2OptionalBoolean(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  return null;
+}
+
+function v2NumberOrNull(value) {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function v2StableHashString(value) {
+  const text = String(value ?? '');
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function v2NormalizeAirdropEntry(row = {}) {
+  return {
+    wallet: row.wallet || row.recipient || row.address || null,
+    tokens: v2NumberOrNull(row.tokens),
+    amountRaw: row.amountRaw == null ? null : String(row.amountRaw),
+    txId: row.txId || row.signature || row.tx || null,
+  };
+}
+
+function v2NormalizeAirdropForFingerprint(airdrop = {}) {
+  const normalizeList = (rows = []) => (Array.isArray(rows) ? rows : [])
+    .map(v2NormalizeAirdropEntry)
+    .filter((row) => row.wallet)
+    .sort((a, b) => [
+      a.wallet || '',
+      String(a.tokens ?? ''),
+      String(a.amountRaw ?? ''),
+      a.txId || '',
+    ].join('|').localeCompare([
+      b.wallet || '',
+      String(b.tokens ?? ''),
+      String(b.amountRaw ?? ''),
+      b.txId || '',
+    ].join('|')));
+  return {
+    recipientsHash: v2StableHashString(JSON.stringify(normalizeList(airdrop.recipients))),
+    transferredHash: v2StableHashString(JSON.stringify(normalizeList(airdrop.transferred))),
+    failedHash: v2StableHashString(JSON.stringify(normalizeList(airdrop.failed))),
+  };
+}
+
+function v2TransferEvidenceRows(transfer = {}) {
+  const rows = [];
+  const tokenTransfers = Array.isArray(transfer?.tokenSweep?.transferred) ? transfer.tokenSweep.transferred : [];
+  const nftTransfers = Array.isArray(transfer?.nftSweep?.transferred) ? transfer.nftSweep.transferred : [];
+  const tokenErrors = Array.isArray(transfer?.tokenTransferErrors)
+    ? transfer.tokenTransferErrors
+    : Array.isArray(transfer?.tokenSweep?.errors) ? transfer.tokenSweep.errors : [];
+  const nftErrors = Array.isArray(transfer?.nftTransferErrors)
+    ? transfer.nftTransferErrors
+    : Array.isArray(transfer?.nftSweep?.errors) ? transfer.nftSweep.errors : [];
+  const solAmount = v2NumberOrNull(transfer?.solSweep?.solTransferred ?? transfer?.solTransferred);
+  const solTx = transfer?.solSweep?.txId || transfer?.solTxId || transfer?.txId || transfer?.signature || null;
+
+  if (solAmount != null || solTx || transfer?.solSweepError) {
+    rows.push({
+      type: 'sol',
+      asset: 'SOL',
+      amount: solAmount,
+      decimals: null,
+      txId: solTx,
+      status: transfer?.solSweepError || null,
+      error: Boolean(transfer?.solSweepError),
+    });
+  }
+
+  tokenTransfers.forEach((row) => {
+    rows.push({
+      type: 'token',
+      asset: row.mint || row.tokenMint || null,
+      amount: row.amount == null ? null : String(row.amount),
+      decimals: v2NumberOrNull(row.decimals),
+      txId: row.txId || row.signature || null,
+      status: 'transferred',
+      error: false,
+    });
+  });
+
+  nftTransfers.forEach((row) => {
+    rows.push({
+      type: 'nft',
+      asset: row.mint || row.nftMint || null,
+      amount: '1',
+      programName: row.programName || null,
+      txId: row.txId || row.signature || null,
+      status: 'transferred',
+      error: false,
+    });
+  });
+
+  tokenErrors.forEach((row) => {
+    rows.push({
+      type: 'token',
+      asset: row.mint || row.tokenMint || null,
+      amount: null,
+      decimals: v2NumberOrNull(row.decimals),
+      txId: row.txId || row.signature || null,
+      status: row.error || row.reason || 'transfer failed',
+      error: true,
+    });
+  });
+
+  nftErrors.forEach((row) => {
+    rows.push({
+      type: 'nft',
+      asset: row.mint || row.nftMint || null,
+      amount: null,
+      programName: row.programName || null,
+      txId: row.txId || row.signature || null,
+      status: row.error || row.reason || 'transfer failed',
+      error: true,
+    });
+  });
+
+  return rows.sort((a, b) => [
+    a.type || '',
+    a.asset || '',
+    String(a.amount ?? ''),
+    String(a.decimals ?? ''),
+    a.programName || '',
+    a.txId || '',
+    a.status || '',
+    String(a.error),
+  ].join('|').localeCompare([
+    b.type || '',
+    b.asset || '',
+    String(b.amount ?? ''),
+    String(b.decimals ?? ''),
+    b.programName || '',
+    b.txId || '',
+    b.status || '',
+    String(b.error),
+  ].join('|')));
+}
+
+function v2TransferEvidenceHash(transfer = {}) {
+  if (!transfer || typeof transfer !== 'object' || Object.keys(transfer).length === 0) return null;
+  return v2StableHashString(JSON.stringify({
+    destinationWallet: transfer.destinationWallet || null,
+    status: transfer.status || null,
+    walletEmpty: v2OptionalBoolean(transfer.walletEmpty),
+    rows: v2TransferEvidenceRows(transfer),
+  }));
+}
+
+function v2ProofPoolsForFingerprint(results = []) {
+  return (Array.isArray(results) ? results : []).map((pool) => {
+    const txIds = pool?.txIds || {};
+    return {
+      poolId: pool?.poolId || pool?.id || null,
+      quoteMint: pool?.quoteMint || pool?.quoteAddress || null,
+      supplyPercent: v2NumberOrNull(pool?.supplyPercent),
+      tickSpacing: v2NumberOrNull(pool?.tickSpacing),
+      initialPrice: pool?.initialPrice == null ? null : String(pool.initialPrice),
+      launchedSide: pool?.launchedSide || null,
+      createPoolTx: pool?.createPoolTx || txIds.createPool || null,
+    };
+  }).sort((a, b) => [
+    a.poolId || '',
+    a.quoteMint || '',
+    String(a.tickSpacing ?? ''),
+    String(a.initialPrice ?? ''),
+  ].join('|').localeCompare([
+    b.poolId || '',
+    b.quoteMint || '',
+    String(b.tickSpacing ?? ''),
+    String(b.initialPrice ?? ''),
+  ].join('|')));
+}
+
+function v2ProofPositionsForFingerprint(results = []) {
+  return (Array.isArray(results) ? results : []).flatMap((pool) => {
+    const poolId = pool?.poolId || pool?.id || null;
+    const toRecord = (position = {}, type) => ({
+      poolId,
+      type: type || position.type || position.kind || null,
+      sliceIndex: v2NumberOrNull(position.sliceIndex),
+      bandIndex: v2NumberOrNull(position.bandIndex),
+      supportIndex: v2NumberOrNull(position.supportIndex),
+      sharePercent: v2NumberOrNull(position.sharePercent),
+      supplyPercent: v2NumberOrNull(position.supplyPercent),
+      lowerMultiplier: v2NumberOrNull(position.lowerMultiplier),
+      upperMultiplier: v2NumberOrNull(position.upperMultiplier),
+      depthPct: v2NumberOrNull(position.depthPct),
+      positionNftMint: position.positionNftMint || position.nftMint || position.positionMint || null,
+      feeKeyNftMint: position.feeKeyNftMint || position.feeKeyMint || null,
+      locked: v2OptionalBoolean(position.locked),
+      recipient: position.recipient || null,
+      transferredTo: position.transferredTo || null,
+      tickLower: v2NumberOrNull(position.tickLower),
+      tickUpper: v2NumberOrNull(position.tickUpper),
+      openTx: position.openTx || position.txIds?.open || null,
+      lockTx: position.lockTx || position.txIds?.lock || null,
+      transferTx: position.transferTx || position.txIds?.transfer || null,
+    });
+    if (Array.isArray(pool?.positions) && pool.positions.length) {
+      return pool.positions.map((position) => toRecord(position, position.type || position.kind || null));
+    }
+    return [
+      ...(Array.isArray(pool?.mainPositions) ? pool.mainPositions.map((position) => toRecord(position, 'main')) : []),
+      ...(Array.isArray(pool?.ladderPositions) ? pool.ladderPositions.map((position) => toRecord(position, 'ladder')) : []),
+      ...(Array.isArray(pool?.supportPositions) ? pool.supportPositions.map((position) => toRecord(position, 'support')) : []),
+      ...(pool?.bootstrap ? [toRecord(pool.bootstrap, 'bootstrap')] : []),
+    ];
+  }).sort((a, b) => [
+    a.poolId || '',
+    a.positionNftMint || '',
+    a.feeKeyNftMint || '',
+    a.type || '',
+    String(a.sliceIndex ?? ''),
+    String(a.bandIndex ?? ''),
+    String(a.supportIndex ?? ''),
+    String(a.sharePercent ?? ''),
+    String(a.supplyPercent ?? ''),
+    String(a.lowerMultiplier ?? ''),
+    String(a.upperMultiplier ?? ''),
+    String(a.depthPct ?? ''),
+    String(a.tickLower ?? ''),
+    String(a.tickUpper ?? ''),
+    a.recipient || '',
+    a.transferredTo || '',
+    a.openTx || '',
+    a.lockTx || '',
+    a.transferTx || '',
+  ].join('|').localeCompare([
+    b.poolId || '',
+    b.positionNftMint || '',
+    b.feeKeyNftMint || '',
+    b.type || '',
+    String(b.sliceIndex ?? ''),
+    String(b.bandIndex ?? ''),
+    String(b.supportIndex ?? ''),
+    String(b.sharePercent ?? ''),
+    String(b.supplyPercent ?? ''),
+    String(b.lowerMultiplier ?? ''),
+    String(b.upperMultiplier ?? ''),
+    String(b.depthPct ?? ''),
+    String(b.tickLower ?? ''),
+    String(b.tickUpper ?? ''),
+    b.recipient || '',
+    b.transferredTo || '',
+    b.openTx || '',
+    b.lockTx || '',
+    b.transferTx || '',
+    ].join('|')));
+}
+
+function v2TransferSweepErrorCount(transfer = {}) {
+  const tokenErrors = Array.isArray(transfer.tokenTransferErrors)
+    ? transfer.tokenTransferErrors
+    : Array.isArray(transfer.tokenSweep?.errors) ? transfer.tokenSweep.errors : [];
+  const nftErrors = Array.isArray(transfer.nftTransferErrors)
+    ? transfer.nftTransferErrors
+    : Array.isArray(transfer.nftSweep?.errors) ? transfer.nftSweep.errors : [];
+  return tokenErrors.length + nftErrors.length + (transfer.solSweepError ? 1 : 0);
+}
+
+function v2TransferSweptAssetCount(transfer = {}) {
+  const tokenRows = Array.isArray(transfer.tokenSweep?.transferred) ? transfer.tokenSweep.transferred.length : 0;
+  const nftRows = Array.isArray(transfer.nftSweep?.transferred) ? transfer.nftSweep.transferred.length : 0;
+  const tokens = Number(transfer.tokensTransferred || 0);
+  const nfts = Number(transfer.nftsTransferred || 0);
+  const sol = Number(transfer.solTransferred || 0);
+  return (Number.isFinite(tokens) ? tokens : 0)
+    + (Number.isFinite(nfts) ? nfts : 0)
+    + tokenRows
+    + nftRows
+    + (Number.isFinite(sol) && sol > 0 ? 1 : 0);
+}
+
+function v2TransferHasFinalSweepEvidence(transfer = null) {
+  if (!transfer || typeof transfer !== 'object') return false;
+  if (!String(transfer.destinationWallet || '').trim()) return false;
+  if (transfer.status === 'planned-before-sweep') return false;
+  if (transfer.walletEmpty === true) return v2TransferSweepErrorCount(transfer) === 0;
+  if (transfer.walletEmpty === false) return false;
+  if (v2TransferSweepErrorCount(transfer) > 0) return false;
+  return v2TransferSweptAssetCount(transfer) > 0;
+}
+
+function v2TransferHasWalletEmptyFinalSweepEvidence(transfer = null) {
+  return Boolean(
+    transfer
+    && typeof transfer === 'object'
+    && String(transfer.destinationWallet || '').trim()
+    && transfer.status !== 'planned-before-sweep'
+    && transfer.walletEmpty === true
+    && v2TransferSweepErrorCount(transfer) === 0
+  );
+}
+
+function v2ProofEffectiveDestination(proof = {}) {
+  const transfer = proof?.transfer || null;
+  return v2TransferHasWalletEmptyFinalSweepEvidence(transfer)
+    ? String(transfer.destinationWallet || '').trim() || null
+    : proof?.destinationWallet || null;
+}
+
+function v2ProofFromLaunchData(launchData = {}) {
+  const pools = Array.isArray(launchData?.pools) ? launchData.pools : [];
+  const authorities = launchData?.token?.authorities || {};
+  const transfer = launchData?.transfer && typeof launchData.transfer === 'object'
+    ? launchData.transfer
+    : null;
+  return {
+    walletPublicKey: launchData.launchWallet || launchData.walletPublicKey || null,
+    transfer,
+    destinationWallet: v2TransferHasWalletEmptyFinalSweepEvidence(transfer)
+      ? transfer.destinationWallet
+      : launchData.destinationWallet || null,
+    token: {
+      mint: launchData?.token?.mint || launchData.mint || null,
+      mintAuthorityRenounced: authorities.mintAuthorityRenounced === true,
+      freezeAuthorityDisabled: authorities.freezeAuthorityDisabled === true,
+      metadataUpdateAuthorityRevoked: authorities.metadataUpdateAuthorityRevoked === true,
+      metadataImmutable: authorities.metadataImmutable === true,
+    },
+    liquidity: {
+      poolIds: pools.map((pool) => pool?.poolId).filter(Boolean),
+      positionCount: v2NumberOrNull(launchData?.liquidity?.positionCount),
+      lockedPositionCount: v2NumberOrNull(launchData?.liquidity?.lockedPositionCount),
+      feeKeyCount: v2NumberOrNull(launchData?.liquidity?.feeKeyCount),
+      results: pools.map((pool) => ({
+        poolId: pool?.poolId || null,
+        quoteMint: pool?.quoteMint || null,
+        supplyPercent: pool?.supplyPercent ?? null,
+        tickSpacing: pool?.tickSpacing ?? null,
+        initialPrice: pool?.initialPrice ?? null,
+        launchedSide: pool?.launchedSide || null,
+        createPoolTx: pool?.createPoolTx || null,
+        positions: Array.isArray(pool?.positions) ? pool.positions : [],
+      })),
+    },
+    airdrop: launchData.airdrop || {},
+  };
+}
+
+function v2LaunchProofFingerprint(proof = {}) {
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const poolIds = [
+    ...(Array.isArray(proof?.liquidity?.poolIds) ? proof.liquidity.poolIds : []),
+    ...results.map((pool) => pool?.poolId).filter(Boolean),
+  ].filter((value, index, list) => value && list.indexOf(value) === index).sort();
+  const terminalTransferEvidenceHash = v2TransferHasWalletEmptyFinalSweepEvidence(proof?.transfer)
+    ? v2TransferEvidenceHash(proof.transfer)
+    : null;
+  return JSON.stringify({
+    mint: proof?.token?.mint || null,
+    launchWallet: proof?.walletPublicKey || null,
+    destinationWallet: v2ProofEffectiveDestination(proof),
+    terminalTransferEvidenceHash,
+    poolIds,
+    pools: v2ProofPoolsForFingerprint(results),
+    positionCount: v2OptionalReportCount(proof?.liquidity?.positionCount, v2ProofPositionCount(results)),
+    lockedPositionCount: v2OptionalReportCount(proof?.liquidity?.lockedPositionCount, v2ProofLockedPositionCount(results)),
+    feeKeyCount: v2OptionalReportCount(proof?.liquidity?.feeKeyCount, v2ProofFeeKeyCount(results)),
+    positions: v2ProofPositionsForFingerprint(results),
+    authorities: V2_AUTHORITY_COMPARISON_FIELDS.reduce((record, field) => {
+      record[field] = v2OptionalBoolean(proof?.token?.[field]);
+      return record;
+    }, {}),
+    airdrop: {
+      plannedRecipientCount: Number(proof?.airdrop?.plannedRecipientCount || 0),
+      deliveredCount: Number(proof?.airdrop?.deliveredCount || 0),
+      failedCount: Number(proof?.airdrop?.failedCount || 0),
+      ...v2NormalizeAirdropForFingerprint(proof?.airdrop || {}),
+    },
+  });
+}
+
+function v2LaunchDataProofFingerprint(launchData = {}) {
+  return v2LaunchProofFingerprint(v2ProofFromLaunchData(launchData));
+}
+
+function v2LaunchConfigSnapshotHasV2Envelope(launchConfig = null) {
+  return Boolean(
+    launchConfig
+      && typeof launchConfig === 'object'
+      && String(launchConfig.schema || '').trim() === 'trebuchet-v2-launch-config'
+      && String(launchConfig.source || '').trim() === 'trebuchet-v2'
+  );
+}
+
+function v2LaunchDataConfigSnapshotState(launchData = {}) {
+  const launchConfig = launchData?.launchConfig && typeof launchData.launchConfig === 'object'
+    ? launchData.launchConfig
+    : null;
+  const missing = [];
+  if (!launchConfig) {
+    return { state: 'missing', complete: false, missing: ['snapshot'] };
+  }
+  if (!v2LaunchConfigSnapshotHasV2Envelope(launchConfig)) {
+    missing.push('v2 snapshot marker');
+  }
+  const token = launchConfig.token && typeof launchConfig.token === 'object'
+    ? launchConfig.token
+    : null;
+  const topology = launchConfig.poolTopology && typeof launchConfig.poolTopology === 'object'
+    ? launchConfig.poolTopology
+    : null;
+  if (!token) {
+    missing.push('token');
+  } else {
+    if (!String(token.name || token.symbol || '').trim()) missing.push('token identity');
+    if (!String(token.supply ?? '').trim()) missing.push('token supply');
+  }
+  if (!topology) {
+    missing.push('pool topology');
+  } else if (!Array.isArray(topology.pools) || topology.pools.length === 0) {
+    missing.push('planned pools');
+  }
+  return {
+    state: missing.length ? 'incomplete' : 'complete',
+    complete: missing.length === 0,
+    missing,
+  };
+}
+
+function v2TrimmedText(value) {
+  return String(value ?? '').trim();
+}
+
+function v2SortedTextList(values = []) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map(v2TrimmedText)
+    .filter(Boolean))]
+    .sort();
+}
+
+function v2SameTextList(left = [], right = []) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function v2JournalLiquidityResults(journal = {}) {
+  if (typeof priorResultsFromJournal === 'function') return priorResultsFromJournal(journal);
+  const lp = journal?.lp || {};
+  return Array.isArray(lp.results) && lp.results.length > 0
+    ? lp.results
+    : (Array.isArray(lp.partialResults) ? lp.partialResults : []);
+}
+
+function v2FingerprintRows(rows = []) {
+  return (Array.isArray(rows) ? rows : []).map((row) => JSON.stringify(row)).sort();
+}
+
+function v2LaunchDataJournalLiquidityState(launchData = {}, journal = {}) {
+  const missing = [];
+  const mismatches = [];
+  const proof = v2ProofFromLaunchData(launchData);
+  const launchResults = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const journalResults = v2JournalLiquidityResults(journal);
+  const launchPoolIds = v2SortedTextList([
+    ...(Array.isArray(proof?.liquidity?.poolIds) ? proof.liquidity.poolIds : []),
+    ...launchResults.map((pool) => pool?.poolId || pool?.id),
+  ]);
+  const journalPoolIds = v2SortedTextList(journalResults.map((pool) => pool?.poolId || pool?.id));
+  const launchPoolCount = v2OptionalReportCount(launchData?.liquidity?.poolCount, launchPoolIds.length);
+  if (launchPoolCount > 0) {
+    if (journalPoolIds.length <= 0) missing.push('journal pool ids');
+    else if (journalPoolIds.length !== launchPoolCount) mismatches.push('pool count');
+  }
+  if (launchPoolIds.length && !journalPoolIds.length) {
+    missing.push('journal pool ids');
+  } else if (launchPoolIds.length && journalPoolIds.length && !v2SameTextList(launchPoolIds, journalPoolIds)) {
+    mismatches.push('pool ids');
+  }
+
+  const launchPoolRows = v2FingerprintRows(v2ProofPoolsForFingerprint(launchResults));
+  const journalPoolRows = v2FingerprintRows(v2ProofPoolsForFingerprint(journalResults));
+  if (launchPoolRows.length && !journalPoolRows.length) {
+    missing.push('journal pool records');
+  } else if (launchPoolRows.length && journalPoolRows.length && !v2SameTextList(launchPoolRows, journalPoolRows)) {
+    mismatches.push('pool records');
+  }
+
+  const launchPositionCount = v2OptionalReportCount(
+    launchData?.liquidity?.positionCount,
+    v2ProofPositionCount(launchResults),
+  );
+  const journalPositionCount = v2ProofPositionCount(journalResults);
+  if (launchPositionCount > 0) {
+    if (journalPositionCount <= 0) missing.push('journal positions');
+    else if (journalPositionCount !== launchPositionCount) mismatches.push('position count');
+  }
+  const launchPositions = v2FingerprintRows(v2ProofPositionsForFingerprint(launchResults));
+  const journalPositions = v2FingerprintRows(v2ProofPositionsForFingerprint(journalResults));
+  if (launchPositions.length && !journalPositions.length) {
+    missing.push('journal position records');
+  } else if (launchPositions.length && journalPositions.length && !v2SameTextList(launchPositions, journalPositions)) {
+    mismatches.push('position records');
+  }
+
+  const launchLockedCount = v2OptionalReportCount(
+    launchData?.liquidity?.lockedPositionCount,
+    v2ProofLockedPositionCount(launchResults),
+  );
+  const journalLockedCount = v2ProofLockedPositionCount(journalResults);
+  if (launchLockedCount > 0) {
+    if (journalLockedCount <= 0) missing.push('journal lock proof');
+    else if (journalLockedCount !== launchLockedCount) mismatches.push('lock count');
+  }
+
+  const launchFeeKeyCount = v2OptionalReportCount(
+    launchData?.liquidity?.feeKeyCount,
+    v2ProofFeeKeyCount(launchResults),
+  );
+  const journalFeeKeyCount = v2ProofFeeKeyCount(journalResults);
+  if (launchFeeKeyCount > 0) {
+    if (journalFeeKeyCount <= 0) missing.push('journal Fee Key proof');
+    else if (journalFeeKeyCount !== launchFeeKeyCount) mismatches.push('Fee Key count');
+  }
+  const launchFeeKeyRecipients = v2ProofFeeKeyRecipientSummary(launchResults);
+  const journalFeeKeyRecipients = v2ProofFeeKeyRecipientSummary(journalResults);
+  if (launchFeeKeyRecipients.target > 0) {
+    if (journalFeeKeyRecipients.target <= 0) {
+      missing.push('journal Fee Key recipients');
+    } else if (journalFeeKeyRecipients.target !== launchFeeKeyRecipients.target) {
+      mismatches.push('Fee Key recipient count');
+    }
+    if (launchFeeKeyRecipients.delivered < launchFeeKeyRecipients.target) {
+      missing.push('Fee Key recipient delivery proof');
+    } else if (journalFeeKeyRecipients.delivered < journalFeeKeyRecipients.target) {
+      missing.push('journal Fee Key recipient delivery proof');
+    } else if (journalFeeKeyRecipients.delivered !== launchFeeKeyRecipients.delivered) {
+      mismatches.push('Fee Key recipient delivery');
+    }
+  }
+
+  return { missing, mismatches };
+}
+
+function v2LaunchDataJournalTokenState(launchData = {}, journal = {}) {
+  const missing = [];
+  const mismatches = [];
+  const authorities = launchData?.token?.authorities && typeof launchData.token.authorities === 'object'
+    ? launchData.token.authorities
+    : {};
+  const journalToken = journal?.token && typeof journal.token === 'object' ? journal.token : {};
+  [
+    ['mintAuthorityRenounced', 'mint authority'],
+    ['freezeAuthorityDisabled', 'freeze authority'],
+    ['metadataUpdateAuthorityRevoked', 'metadata update authority'],
+    ['metadataImmutable', 'metadata immutability'],
+  ].forEach(([field, label]) => {
+    if (authorities[field] !== true) return;
+    if (typeof journalToken[field] !== 'boolean') {
+      missing.push(`journal token authority ${label}`);
+      return;
+    }
+    if (journalToken[field] !== true) mismatches.push(`token authority ${label}`);
+  });
+  return { missing, mismatches };
+}
+
+function v2AirdropReportCount(value, fallbackRows = []) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, number) : fallbackRows.length;
+}
+
+function v2AirdropWalletList(rows = []) {
+  return v2SortedTextList((Array.isArray(rows) ? rows : []).map((row) => row?.wallet));
+}
+
+function v2AirdropTxList(rows = []) {
+  return v2SortedTextList((Array.isArray(rows) ? rows : []).map((row) => row?.txId));
+}
+
+function v2LaunchDataJournalAirdropState(launchData = {}, journal = {}) {
+  const missing = [];
+  const mismatches = [];
+  const reportAirdrop = launchData?.airdrop && typeof launchData.airdrop === 'object'
+    ? launchData.airdrop
+    : {};
+  const journalAirdrop = journal?.airdrop && typeof journal.airdrop === 'object'
+    ? journal.airdrop
+    : {};
+  const reportTransferred = v2AirdropRows(reportAirdrop, 'transferred');
+  const reportFailedRows = v2AirdropRows(reportAirdrop, 'failed');
+  const reportRecipients = v2AirdropRows(reportAirdrop, 'recipients');
+  const reportDelivered = v2AirdropReportCount(reportAirdrop.deliveredCount, reportTransferred);
+  const reportFailed = v2AirdropReportCount(reportAirdrop.failedCount, reportFailedRows);
+  const planned = Math.max(
+    v2AirdropReportCount(reportAirdrop.plannedRecipientCount, reportRecipients),
+    reportRecipients.length,
+    reportDelivered + reportFailed,
+  );
+  if (planned <= 0) return { missing, mismatches };
+
+  const journalTransferred = v2AirdropRows(journalAirdrop, 'transferred');
+  const journalFailedRows = v2AirdropRows(journalAirdrop, 'failed');
+  const journalDelivered = journalTransferred.length;
+  const journalFailed = journalFailedRows.length;
+  if (!journalDelivered && !journalFailed) {
+    missing.push('journal airdrop');
+    return { missing, mismatches };
+  }
+  if (reportDelivered !== journalDelivered || reportFailed !== journalFailed) {
+    mismatches.push('airdrop counts');
+  }
+
+  const reportWallets = v2AirdropWalletList(reportTransferred);
+  const journalWallets = v2AirdropWalletList(journalTransferred);
+  if (reportWallets.length && !journalWallets.length) {
+    missing.push('journal airdrop recipients');
+  } else if (reportWallets.length && journalWallets.length && !v2SameTextList(reportWallets, journalWallets)) {
+    mismatches.push('airdrop recipients');
+  }
+
+  const reportTxs = v2AirdropTxList(reportTransferred);
+  const journalTxs = v2AirdropTxList(journalTransferred);
+  if (reportTxs.length && !journalTxs.length) {
+    missing.push('journal airdrop transactions');
+  } else if (reportTxs.length && journalTxs.length && !v2SameTextList(reportTxs, journalTxs)) {
+    mismatches.push('airdrop transactions');
+  }
+
+  return { missing, mismatches };
+}
+
+function v2LaunchDataJournalState(launchData = {}, journal = null, walletPublicKey = null) {
+  const missing = [];
+  const mismatches = [];
+  const requestWallet = v2TrimmedText(walletPublicKey);
+  const launchWallet = v2TrimmedText(launchData.launchWallet || launchData.walletPublicKey);
+  const reportJournalId = v2TrimmedText(launchData.journalId || launchData?.recoveryAudit?.journalId);
+  const tokenMint = v2TrimmedText(launchData?.token?.mint || launchData.mint);
+
+  if (!requestWallet) missing.push('wallet public key');
+  if (!launchWallet) missing.push('launch wallet');
+  if (!reportJournalId) missing.push('journal id');
+  if (!journal || typeof journal !== 'object') {
+    missing.push('launch journal');
+    return { backed: false, missing, mismatches };
+  }
+
+  const journalWallet = v2TrimmedText(journal.walletPublicKey);
+  const journalId = v2TrimmedText(journal.id);
+  const journalMint = v2TrimmedText(journal?.token?.mint || journal?.token?.tokenMint);
+  const journalPools = Array.isArray(journal?.poolPlan?.allocations)
+    ? journal.poolPlan.allocations
+    : [];
+  const launchTransfer = launchData?.transfer && typeof launchData.transfer === 'object'
+    ? launchData.transfer
+    : null;
+  const journalTransfer = journal?.transfer && typeof journal.transfer === 'object'
+    ? journal.transfer
+    : null;
+  const launchTransferTerminal = v2TransferHasWalletEmptyFinalSweepEvidence(launchTransfer);
+  const launchTransferDestination = v2TrimmedText(launchTransfer?.destinationWallet);
+  const journalTransferDestination = v2TrimmedText(journalTransfer?.destinationWallet);
+
+  if (!journalWallet) missing.push('journal wallet');
+  if (!journalId) missing.push('journal id');
+  if (!journalMint) missing.push('journal token');
+  if (journalPools.length <= 0) missing.push('journal pool plan');
+
+  if (requestWallet && journalWallet && requestWallet !== journalWallet) mismatches.push('request wallet');
+  if (launchWallet && journalWallet && launchWallet !== journalWallet) mismatches.push('launch wallet');
+  if (reportJournalId && journalId && reportJournalId !== journalId) mismatches.push('journal id');
+  if (tokenMint && journalMint && tokenMint !== journalMint) mismatches.push('journal token mint');
+  const tokenBinding = v2LaunchDataJournalTokenState(launchData, journal);
+  missing.push(...tokenBinding.missing);
+  mismatches.push(...tokenBinding.mismatches);
+  const liquidityBinding = v2LaunchDataJournalLiquidityState(launchData, journal);
+  missing.push(...liquidityBinding.missing);
+  mismatches.push(...liquidityBinding.mismatches);
+  const airdropBinding = v2LaunchDataJournalAirdropState(launchData, journal);
+  missing.push(...airdropBinding.missing);
+  mismatches.push(...airdropBinding.mismatches);
+  if (launchTransferTerminal) {
+    if (!journalTransfer) {
+      missing.push('journal sweep transfer');
+    } else if (!v2TransferHasWalletEmptyFinalSweepEvidence(journalTransfer)) {
+      missing.push('terminal journal sweep');
+    } else if (
+      launchTransferDestination
+      && journalTransferDestination
+      && launchTransferDestination !== journalTransferDestination
+    ) {
+      mismatches.push('sweep destination');
+    } else {
+      const launchTransferHash = v2TransferEvidenceHash(launchTransfer);
+      const journalTransferHash = v2TransferEvidenceHash(journalTransfer);
+      if (!journalTransferHash) {
+        missing.push('journal sweep evidence hash');
+      } else if (launchTransferHash !== journalTransferHash) {
+        mismatches.push('sweep evidence hash');
+      }
+    }
+  }
+
+  return {
+    backed: missing.length === 0 && mismatches.length === 0,
+    missing,
+    mismatches,
+  };
+}
+
+function v2ReportNumbersMatch(a, b) {
+  if (a == null || a === '' || b == null || b === '') return true;
+  const left = Number(a);
+  const right = Number(b);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return v2TrimmedText(a) === v2TrimmedText(b);
+  return Math.abs(left - right) < 1e-9;
+}
+
+function v2ReportRequiredNumbersMatch(a, b) {
+  if (a == null || a === '' || b == null || b === '') return false;
+  return v2ReportNumbersMatch(a, b);
+}
+
+function v2ReportTextMatches(a, b) {
+  const left = v2TrimmedText(a);
+  const right = v2TrimmedText(b);
+  if (!left || !right) return true;
+  return left === right;
+}
+
+function v2ReportRequiredTextMatches(a, b) {
+  const left = v2TrimmedText(a);
+  const right = v2TrimmedText(b);
+  return Boolean(left && right && left === right);
+}
+
+function v2ReportTextMatchesWhenSnapshotPresent(a, b) {
+  return v2TrimmedText(a) ? v2ReportRequiredTextMatches(a, b) : true;
+}
+
+function v2ReportNumbersMatchWhenSnapshotPresent(a, b) {
+  return a == null || a === '' ? true : v2ReportRequiredNumbersMatch(a, b);
+}
+
+function v2ReportPoolRowsMatch(snapshotPool = {}, reportPool = {}, { requireReportFields = false } = {}) {
+  const textMatch = requireReportFields ? v2ReportRequiredTextMatches : v2ReportTextMatches;
+  const numberMatch = requireReportFields ? v2ReportRequiredNumbersMatch : v2ReportNumbersMatch;
+  return textMatch(snapshotPool.quoteToken || snapshotPool.quoteSymbol, reportPool.quoteToken || reportPool.quoteSymbol || reportPool.quote)
+    && v2ReportTextMatchesWhenSnapshotPresent(snapshotPool.quoteMint, reportPool.quoteMint)
+    && numberMatch(snapshotPool.supplyPercent, reportPool.supplyPercent)
+    && v2ReportNumbersMatchWhenSnapshotPresent(snapshotPool.ammConfigIndex, reportPool.ammConfigIndex);
+}
+
+function v2ReportTextMatchesForStrictness(a, b, requireFields = false) {
+  return requireFields ? v2ReportRequiredTextMatches(a, b) : v2ReportTextMatches(a, b);
+}
+
+function v2ReportNumbersMatchForStrictness(a, b, requireFields = false) {
+  return requireFields ? v2ReportRequiredNumbersMatch(a, b) : v2ReportNumbersMatch(a, b);
+}
+
+function v2LaunchDataConfigConsistencyState(launchData = {}, journal = null, options = {}) {
+  const requireJournalFields = options?.requireJournalFields === true;
+  const launchConfig = launchData?.launchConfig && typeof launchData.launchConfig === 'object'
+    ? launchData.launchConfig
+    : null;
+  if (!launchConfig) return { consistent: false, mismatches: ['snapshot'] };
+  const token = launchConfig.token && typeof launchConfig.token === 'object' ? launchConfig.token : {};
+  const topology = launchConfig.poolTopology && typeof launchConfig.poolTopology === 'object' ? launchConfig.poolTopology : {};
+  const mismatches = [];
+
+  if (!v2ReportRequiredTextMatches(token.name, launchData.name)) mismatches.push('token name');
+  if (!v2ReportRequiredTextMatches(token.symbol, launchData.symbol)) mismatches.push('token symbol');
+  if (!v2ReportRequiredNumbersMatch(token.supply, launchData.totalSupply)) mismatches.push('token supply');
+  if (!v2ReportRequiredNumbersMatch(token.decimals, launchData.decimals)) mismatches.push('token decimals');
+
+  const snapshotPools = Array.isArray(topology.pools) ? topology.pools : [];
+  const reportPools = Array.isArray(launchData.plannedPools) ? launchData.plannedPools : [];
+  if (snapshotPools.length !== reportPools.length) {
+    mismatches.push('planned pool count');
+  } else {
+    snapshotPools.forEach((pool, index) => {
+      if (!v2ReportPoolRowsMatch(pool, reportPools[index], { requireReportFields: true })) {
+        mismatches.push(`planned pool ${index + 1}`);
+      }
+    });
+  }
+
+  const journalToken = journal?.token && typeof journal.token === 'object' ? journal.token : null;
+  const journalPoolPlan = journal?.poolPlan && typeof journal.poolPlan === 'object'
+    ? journal.poolPlan
+    : {};
+  if (journalToken) {
+    const journalSupply = journalToken.totalSupply ?? journalToken.supply ?? journalPoolPlan.tokenTotalSupply;
+    const journalDecimals = journalToken.decimals ?? journalPoolPlan.tokenDecimals;
+    if (!v2ReportTextMatchesForStrictness(token.name, journalToken.name, requireJournalFields)) mismatches.push('journal token name');
+    if (!v2ReportTextMatchesForStrictness(token.symbol, journalToken.symbol, requireJournalFields)) mismatches.push('journal token symbol');
+    if (!v2ReportNumbersMatchForStrictness(token.supply, journalSupply, requireJournalFields)) mismatches.push('journal token supply');
+    if (!v2ReportNumbersMatchForStrictness(token.decimals, journalDecimals, requireJournalFields)) mismatches.push('journal token decimals');
+  } else if (requireJournalFields) {
+    mismatches.push('journal token');
+  }
+
+  const journalPools = Array.isArray(journalPoolPlan.allocations) ? journalPoolPlan.allocations : [];
+  if (journalPools.length > 0) {
+    if (snapshotPools.length !== journalPools.length) {
+      mismatches.push('journal planned pool count');
+    } else {
+      snapshotPools.forEach((pool, index) => {
+        if (!v2ReportPoolRowsMatch(pool, journalPools[index], { requireReportFields: requireJournalFields })) {
+          mismatches.push(`journal planned pool ${index + 1}`);
+        }
+      });
+    }
+  }
+
+  return {
+    consistent: mismatches.length === 0,
+    mismatches,
+  };
+}
+
+function v2LaunchDataPositionRows(launchData = {}) {
+  const pools = Array.isArray(launchData?.pools) ? launchData.pools : [];
+  return pools.flatMap((pool) => {
+    const positions = Array.isArray(pool?.positions) ? pool.positions : [];
+    return positions.map((position = {}) => ({
+      ...position,
+      poolId: position.poolId || pool?.poolId || pool?.id || null,
+      positionNftMint: position.positionNftMint || position.nftMint || position.positionMint || null,
+      feeKeyNftMint: position.feeKeyNftMint || position.feeKeyMint || null,
+      openTx: position.openTx || position.txIds?.open || null,
+      lockTx: position.lockTx || position.txIds?.lock || null,
+      transferTx: position.transferTx || position.txIds?.transfer || null,
+    }));
+  });
+}
+
+function v2ReportCount(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function v2OptionalReportCount(value, fallback = 0) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return v2ReportCount(value, fallback);
+}
+
+function v2ReportCountIsExplicit(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+function v2AirdropRows(airdrop = {}, key) {
+  return Array.isArray(airdrop?.[key])
+    ? airdrop[key].map(v2NormalizeAirdropEntry).filter((row) => row.wallet)
+    : [];
+}
+
+function v2AirdropHasHashOnlyRows(airdrop = {}, key) {
+  const rows = Array.isArray(airdrop?.[key]) ? airdrop[key] : [];
+  const hash = typeof airdrop?.[`${key}Hash`] === 'string' ? airdrop[`${key}Hash`].trim() : '';
+  return Boolean(hash && rows.length === 0);
+}
+
+function v2AirdropDeliveryEvidenceState(airdrop = {}) {
+  const planned = v2ReportCount(airdrop.plannedRecipientCount, 0);
+  const transferredRows = v2AirdropRows(airdrop, 'transferred');
+  const failedRows = v2AirdropRows(airdrop, 'failed');
+  const recipientRows = v2AirdropRows(airdrop, 'recipients');
+  const delivered = v2ReportCount(airdrop.deliveredCount, transferredRows.length);
+  const failed = v2ReportCount(airdrop.failedCount, failedRows.length);
+  const required = planned > 0 || delivered > 0 || failed > 0;
+  const expectedCount = Math.max(planned, delivered);
+  const recipientWallets = new Set([
+    ...recipientRows,
+    ...transferredRows,
+    ...failedRows,
+  ].map((row) => row.wallet).filter(Boolean));
+  const deliveredWallets = new Set(transferredRows.map((row) => row.wallet).filter(Boolean));
+  const transactionCount = transferredRows.filter((row) => v2TrimmedText(row.txId)).length;
+  const missing = [];
+
+  if (required) {
+    if (failed > 0 || failedRows.length > 0) missing.push('zero failed recipients');
+    if (recipientWallets.size < expectedCount) missing.push('airdrop recipient rows');
+    if (deliveredWallets.size < expectedCount || transferredRows.length < expectedCount) missing.push('airdrop delivered rows');
+    if (delivered < expectedCount) missing.push('airdrop delivered count');
+    if (transactionCount < expectedCount) missing.push('airdrop transaction signatures');
+    if (
+      (planned > 0 && v2AirdropHasHashOnlyRows(airdrop, 'recipients'))
+      || (delivered > 0 && v2AirdropHasHashOnlyRows(airdrop, 'transferred'))
+      || (failed > 0 && v2AirdropHasHashOnlyRows(airdrop, 'failed'))
+    ) {
+      missing.push('full airdrop rows');
+    }
+  }
+
+  return {
+    required,
+    planned,
+    delivered,
+    failed,
+    pending: Math.max(0, planned - delivered - failed),
+    complete: !required || missing.length === 0,
+    retryRequired: failed > 0,
+    recipientCount: recipientWallets.size,
+    deliveredRowCount: transferredRows.length,
+    transactionCount,
+    missing,
+  };
+}
+
+function v2LaunchDataReportCompletenessState(launchData = {}) {
+  const missing = [];
+  const addMissing = (value) => {
+    if (!missing.includes(value)) missing.push(value);
+  };
+  const launchWallet = v2TrimmedText(launchData.launchWallet || launchData.walletPublicKey);
+  const tokenMint = v2TrimmedText(launchData?.token?.mint || launchData.mint);
+  const authorities = launchData?.token?.authorities && typeof launchData.token.authorities === 'object'
+    ? launchData.token.authorities
+    : {};
+  const authorityFields = [
+    'mintAuthorityRenounced',
+    'freezeAuthorityDisabled',
+    'metadataUpdateAuthorityRevoked',
+    'metadataImmutable',
+  ];
+  const plannedPools = Array.isArray(launchData.plannedPools) ? launchData.plannedPools : [];
+  const pools = Array.isArray(launchData.pools) ? launchData.pools : [];
+  const liquidity = launchData?.liquidity && typeof launchData.liquidity === 'object'
+    ? launchData.liquidity
+    : {};
+  const plannedPositionCount = plannedPools.reduce((sum, pool) => (
+    sum + v2ReportCount(pool?.plannedPositionCount, 0)
+  ), 0);
+  const positions = v2LaunchDataPositionRows(launchData);
+  const poolCount = v2OptionalReportCount(liquidity.poolCount, pools.length);
+  const reportedPositionCount = v2OptionalReportCount(liquidity.positionCount, positions.length);
+  const recordedPositionCount = Math.max(reportedPositionCount, positions.length);
+  const lockedRowCount = positions.filter((position) => position?.locked === true).length;
+  const lockedPositionCount = v2ReportCount(
+    liquidity.lockedPositionCount,
+    lockedRowCount,
+  );
+  const feeKeyRowCount = positions.filter((position) => v2TrimmedText(position?.feeKeyNftMint)).length;
+  const feeKeyCount = v2ReportCount(
+    liquidity.feeKeyCount,
+    feeKeyRowCount,
+  );
+  const missingAuthorityFields = authorityFields.filter((field) => authorities[field] !== true);
+  const poolRowsMissingCreateProof = pools.filter((pool) => (
+    !v2TrimmedText(pool?.poolId || pool?.id)
+    || !v2TrimmedText(pool?.createPoolTx || pool?.txIds?.createPool)
+  ));
+  const positionRowsMissingOpenProof = positions.filter((position) => (
+    !v2TrimmedText(position?.poolId)
+    || !v2TrimmedText(position?.positionNftMint)
+    || !v2TrimmedText(position?.openTx)
+  ));
+  const lockedRowsMissingProof = positions.filter((position) => (
+    position?.locked !== true
+    || !v2TrimmedText(position?.lockTx)
+  ));
+  const feeKeyRowsMissingProof = positions.filter((position) => (
+    !v2TrimmedText(position?.feeKeyNftMint)
+  ));
+  const recipientRowsMissingTransfer = positions.filter((position) => (
+    v2TrimmedText(position?.recipient)
+    && (
+      v2TrimmedText(position?.transferredTo) !== v2TrimmedText(position?.recipient)
+      || !v2TrimmedText(position?.transferTx)
+    )
+  ));
+  const airdropEvidence = v2AirdropDeliveryEvidenceState(launchData?.airdrop || {});
+
+  if (!launchWallet) addMissing('launch wallet');
+  if (!tokenMint) addMissing('token mint');
+  if (missingAuthorityFields.length) addMissing('authority proof');
+  if (plannedPools.length <= 0) addMissing('planned pools');
+  if (pools.length <= 0) addMissing('pool proof');
+  if (plannedPools.length > 0 && pools.length !== plannedPools.length) addMissing('pool count');
+  if (v2ReportCountIsExplicit(liquidity.poolCount) && poolCount !== pools.length) addMissing('pool count');
+  if (poolRowsMissingCreateProof.length) addMissing('pool create proof');
+  if (plannedPositionCount <= 0) addMissing('planned position count');
+  if (plannedPositionCount > 0 && recordedPositionCount < plannedPositionCount) addMissing('position count');
+  if (v2ReportCountIsExplicit(liquidity.positionCount) && reportedPositionCount !== positions.length) addMissing('position count');
+  if (positions.length < recordedPositionCount) addMissing('position records');
+  if (positionRowsMissingOpenProof.length) addMissing('position open proof');
+  if (recordedPositionCount > 0 && lockedPositionCount < recordedPositionCount) addMissing('lock count');
+  if (v2ReportCountIsExplicit(liquidity.lockedPositionCount) && lockedPositionCount !== lockedRowCount) addMissing('lock count');
+  if (recordedPositionCount > 0 && lockedRowsMissingProof.length) addMissing('lock proof');
+  if (lockedPositionCount > 0 && feeKeyCount < lockedPositionCount) addMissing('fee key count');
+  if (v2ReportCountIsExplicit(liquidity.feeKeyCount) && feeKeyCount !== feeKeyRowCount) addMissing('fee key count');
+  if (lockedPositionCount > 0 && feeKeyRowsMissingProof.length) addMissing('fee key proof');
+  if (recipientRowsMissingTransfer.length) addMissing('fee key recipient transfer proof');
+  airdropEvidence.missing.forEach(addMissing);
+
+  return {
+    complete: missing.length === 0,
+    missing,
+  };
+}
+
+function v2AirdropCompletionStatus(proof = {}) {
+  const airdrop = proof?.airdrop || {};
+  return v2AirdropDeliveryEvidenceState({
+    ...airdrop,
+    plannedRecipientCount: v2OptionalReportCount(
+      airdrop.plannedRecipientCount,
+      Array.isArray(airdrop.recipients) ? airdrop.recipients.length : 0,
+    ),
+  });
+}
+
+function v2LaunchDataAirdropCompletionStatus(launchData = {}) {
+  const airdrop = launchData?.airdrop || {};
+  const audit = launchData?.airdropAudit || {};
+  return v2AirdropDeliveryEvidenceState({
+    ...airdrop,
+    plannedRecipientCount: v2OptionalReportCount(
+      airdrop.plannedRecipientCount,
+      v2OptionalReportCount(
+        audit.plannedRecipientCount,
+        Array.isArray(airdrop.recipients) ? airdrop.recipients.length : 0,
+      ),
+    ),
+    deliveredCount: v2OptionalReportCount(
+      airdrop.deliveredCount,
+      v2OptionalReportCount(
+        audit.deliveredCount,
+        Array.isArray(airdrop.transferred) ? airdrop.transferred.length : 0,
+      ),
+    ),
+    failedCount: v2OptionalReportCount(
+      airdrop.failedCount,
+      v2OptionalReportCount(
+        audit.failedCount,
+        Array.isArray(airdrop.failed) ? airdrop.failed.length : 0,
+      ),
+    ),
+  });
+}
+
+function v2LocalDossierFilenameMatchesKind(filename, kind) {
+  const normalized = String(filename || '').trim().toLowerCase();
+  if (kind === 'local-proof-json') return normalized.endsWith('.json');
+  if (kind === 'local-dossier-html') return normalized.endsWith('.html');
+  return false;
+}
+
+function v2LocalDossierFinalizationIssue(dossier = null, proof = {}) {
+  if (!dossier || typeof dossier !== 'object') return 'missing';
+  const kind = String(dossier.kind || '').trim();
+  const filename = String(dossier.filename || '').trim();
+  const downloadedAt = String(dossier.downloadedAt || '').trim();
+  const dataVersion = Number(dossier.dataVersion);
+  const proofFingerprint = String(dossier.proofFingerprint || '').trim();
+  if (dossier.status !== 'downloaded') return 'not downloaded';
+  if (!['local-dossier-html', 'local-proof-json'].includes(kind)) return 'unknown artifact kind';
+  if (!filename || !v2LocalDossierFilenameMatchesKind(filename, kind)) return 'filename does not match artifact kind';
+  if (!downloadedAt) return 'download timestamp missing';
+  if (!Number.isInteger(dataVersion) || dataVersion <= 0) return 'data version missing';
+  if (!proofFingerprint) return 'proof fingerprint missing';
+  if (proofFingerprint !== v2LaunchProofFingerprint(proof)) return 'proof fingerprint mismatch';
+  const proofMint = String(proof?.token?.mint || '').trim();
+  const dossierMint = String(dossier.mint || '').trim();
+  if (proofMint && !dossierMint) return 'token mint missing';
+  if (proofMint && dossierMint !== proofMint) return 'token mint mismatch';
+  const terminalSweepHash = v2TransferHasWalletEmptyFinalSweepEvidence(proof?.transfer)
+    ? v2TransferEvidenceHash(proof.transfer)
+    : null;
+  if (terminalSweepHash) {
+    const dossierSweepHash = String(
+      dossier.sweepEvidenceHash
+      || dossier.transferEvidenceHash
+      || dossier.finalSweep?.transferEvidenceHash
+      || '',
+    ).trim();
+    if (dossierSweepHash !== terminalSweepHash) return 'terminal sweep evidence hash mismatch';
+  }
+  return null;
+}
+
+function v2ReportPublishUri(report = null) {
+  return String(report?.jsonUri || report?.htmlUri || '').trim();
+}
+
+function v2ReportPublishUriHasPermanentScheme(uri = '') {
+  const value = String(uri || '').trim();
+  return Boolean(
+    /^https?:\/\//i.test(value)
+      || /^ar:\/\//i.test(value)
+      || /^ipfs:\/\//i.test(value)
+  );
+}
+
+function v2ReportPublishHasPermanentEvidence(report = null) {
+  if (!report || typeof report !== 'object') return false;
+  const uri = v2ReportPublishUri(report);
+  const dataVersion = Number(report.dataVersion);
+  const generatedMetadata = Boolean(
+    report.status === 'done'
+      || report.alreadyPublished === true
+      || String(report.publishedAt || '').trim()
+      || (Number.isInteger(dataVersion) && dataVersion > 0)
+  );
+  return Boolean(uri && v2ReportPublishUriHasPermanentScheme(uri) && generatedMetadata);
+}
+
+function v2ReportPublishFinalizationIssue(report = null, proof = {}) {
+  if (!report || typeof report !== 'object') return 'missing';
+  const uri = v2ReportPublishUri(report);
+  if (!uri) return 'permanent URI missing';
+  if (!v2ReportPublishUriHasPermanentScheme(uri)) return 'unsupported report URI';
+  if (!v2ReportPublishHasPermanentEvidence(report)) return 'publish metadata missing';
+  const reportFingerprint = String(report.proofFingerprint || '').trim();
+  if (!reportFingerprint || reportFingerprint !== v2LaunchProofFingerprint(proof)) return 'proof fingerprint mismatch';
+  const proofMint = String(proof?.token?.mint || '').trim();
+  const reportMint = String(report.mint || '').trim();
+  if (proofMint && !reportMint) return 'token mint missing';
+  if (proofMint && reportMint !== proofMint) return 'token mint mismatch';
+  const terminalSweepHash = v2TransferHasWalletEmptyFinalSweepEvidence(proof?.transfer)
+    ? v2TransferEvidenceHash(proof.transfer)
+    : null;
+  const reportSweepHash = String(
+    report.sweepEvidenceHash
+    || report.transferEvidenceHash
+    || report.finalSweep?.transferEvidenceHash
+    || '',
+  ).trim();
+  if (terminalSweepHash && reportSweepHash !== terminalSweepHash) {
+    return 'terminal sweep evidence hash mismatch';
+  }
+  return null;
+}
+
+function v2TransferFinalizationIssue(readiness = {}, evidence = {}) {
+  if (readiness?.nextEndpoint !== '/api/transfer-assets') return null;
+  const proof = readiness.proof || null;
+  const airdropStatus = v2AirdropCompletionStatus(proof);
+  if (airdropStatus.retryRequired) {
+    return `Airdrop has ${airdropStatus.failed} failed recipient${airdropStatus.failed === 1 ? '' : 's'}; retry before final sweep.`;
+  }
+  if (airdropStatus.pending > 0) {
+    return `${airdropStatus.pending} airdrop recipient${airdropStatus.pending === 1 ? '' : 's'} still pending; run airdrop before final sweep.`;
+  }
+  if (!airdropStatus.complete) {
+    const missing = Array.isArray(airdropStatus.missing)
+      ? airdropStatus.missing.filter(Boolean)
+      : [];
+    return missing.length
+      ? `Airdrop proof is incomplete (${missing.join(', ')}); refresh or rerun airdrop before final sweep.`
+      : 'Airdrop proof is incomplete; refresh or rerun airdrop before final sweep.';
+  }
+  if (!proof) return 'Refresh readiness so Trebuchet can verify the launch proof before final sweep.';
+
+  const report = proof.reportPublish || null;
+  const reportUri = v2ReportPublishUri(report);
+  const localDossier = evidence?.localDossier || proof?.localDossier || null;
+  const localDossierIssue = localDossier
+    ? v2LocalDossierFinalizationIssue(localDossier, proof)
+    : null;
+  const localDossierCurrent = Boolean(localDossier && !localDossierIssue);
+
+  if (!reportUri && localDossierIssue) {
+    return `Local dossier proof is stale or incomplete (${localDossierIssue}); download a fresh dossier before final sweep.`;
+  }
+  if (reportUri) {
+    const reportIssue = v2ReportPublishFinalizationIssue(report, proof);
+    if (reportIssue === 'terminal sweep evidence hash mismatch') {
+      return 'Launch report is missing terminal sweep evidence; republish before final sweep.';
+    }
+    if (reportIssue === 'token mint missing' || reportIssue === 'token mint mismatch') {
+      return 'Launch report is not bound to this token mint; republish before final sweep.';
+    }
+    if (reportIssue) {
+      return 'Launch report is stale for this proof; republish before final sweep.';
+    }
+  }
+  if (userPrefs.get().publishLaunchReport === false && !reportUri && !localDossierCurrent) {
+    return 'Report publishing is off; attach the local dossier before final sweep.';
+  }
+  if (!reportUri && !localDossierCurrent) {
+    return proof.canPublishReport
+      ? 'Publish or attach the launch report before final sweep.'
+      : 'Attach the local dossier before final sweep.';
+  }
+  return null;
+}
+
+async function v2FundingBalanceContext(walletPublicKey, { requireFundingBalance = false } = {}) {
+  if (!requireFundingBalance || isDemoMode() || !walletPublicKey) {
+    return { requireFundingBalance: false };
+  }
+  try {
+    return {
+      requireFundingBalance: true,
+      walletBalance: await checkWalletBalanceMultiToken(walletPublicKey),
+    };
+  } catch (error) {
+    return {
+      requireFundingBalance: true,
+      walletBalanceError: launchJournal.errorMessage(error),
+    };
+  }
+}
+
+async function v2ReadinessForManagedWallet({
+  walletPublicKey,
+  config,
+  body = {},
+  requireFundingBalance = false,
+}) {
+  if (walletPublicKey) new PublicKey(walletPublicKey);
+  const wallet = walletPublicKey ? pendingWallets.get(walletPublicKey) : null;
+  const context = v2ExecutionContextFromJournal(walletPublicKey, body);
+  const fundingBalanceContext = await v2FundingBalanceContext(walletPublicKey, {
+    requireFundingBalance,
+  });
+  const readiness = buildV2ExecutionReadiness(config || {}, {
+    demoMode: isDemoMode(),
+    walletPublicKey,
+    walletAvailable: Boolean(wallet),
+    secretAvailable: Array.isArray(wallet?.secretKey),
+    secretPinLocked: secretStore.isSecretPinLocked(),
+    rpc: { activeUrl: getRpcConfig().active },
+    requireCurrentFundingEstimate: true,
+    ...context,
+    ...fundingBalanceContext,
+    fundingEstimate: body.fundingEstimate,
+    airdrop: body.airdrop,
+    airdropRecipients: body.airdropRecipients,
+  });
+  readiness.proof = v2ExecutionProofFromContext(context, readiness);
+  return { wallet, context, readiness };
+}
+
+async function v2WalletBalanceObservation(walletPublicKey) {
+  if (!walletPublicKey) return null;
+  const capturedAt = new Date().toISOString();
+  try {
+    const balance = await checkWalletBalanceMultiToken(walletPublicKey);
+    const sol = Number(balance?.sol);
+    return {
+      ok: true,
+      capturedAt,
+      sol: Number.isFinite(sol) ? sol : null,
+      tokenMintCount: Object.keys(balance?.tokens || {}).length,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      capturedAt,
+      error: launchJournal.errorMessage(error),
+    };
+  }
+}
+
+function v2ObservedWalletDelta(before, after) {
+  const beforeSol = Number(before?.sol);
+  const afterSol = Number(after?.sol);
+  const observed = {
+    before,
+    after,
+    note:
+      'Launch-wallet SOL balance delta observed around the guarded classic call. ' +
+      'It can include swaps, pool deposits, sweeps, rent, refunds, and network fees.',
+  };
+  if (before?.ok === true && after?.ok === true && Number.isFinite(beforeSol) && Number.isFinite(afterSol)) {
+    const deltaSol = afterSol - beforeSol;
+    observed.beforeSol = beforeSol;
+    observed.afterSol = afterSol;
+    observed.deltaSol = deltaSol;
+    observed.outflowSol = deltaSol < 0 ? Math.abs(deltaSol) : 0;
+    observed.inflowSol = deltaSol > 0 ? deltaSol : 0;
+  }
+  if (before?.ok === false || after?.ok === false) {
+    observed.error = after?.error || before?.error || 'Could not observe wallet balance delta';
+  }
+  return observed;
+}
+
+async function runV2ClassicLpPreflight(payload = {}) {
+  try {
+    return await preflightCreatePoolsAndPositions({
+      tokenTotalSupply: payload.tokenTotalSupply,
+      targetMarketCapUsd: payload.targetMarketCapUsd,
+      allocations: payload.allocations,
+    });
+  } catch (error) {
+    const message = launchJournal.errorMessage(error);
+    const wrapped = new Error(message);
+    wrapped.statusCode = 400;
+    wrapped.code = 'V2_LP_PREFLIGHT_FAILED';
+    wrapped.failedPhase = error.failedPhase || 'pre_flight';
+    wrapped.failedAllocationIndex = error.failedAllocationIndex ?? null;
+    wrapped.failedAllocation = error.failedAllocation ?? null;
+    wrapped.probeCode = error.probeCode || null;
+    wrapped.errorDetails = launchFailureDetails(error, {
+      route: 'v2-execute-next-preflight-create-lp',
+      failedPhase: wrapped.failedPhase,
+      failedAllocationIndex: wrapped.failedAllocationIndex,
+    });
+    throw wrapped;
+  }
+}
+
+async function executeV2NextClassicOperation(readiness) {
+  const endpoint = readiness?.nextEndpoint;
+  if (endpoint === '/api/create-token') {
+    return invokeJsonHandler(createTokenHandler, readiness.classicPayloads.createToken);
+  }
+  if (endpoint === '/api/create-lp') {
+    const preflight = await runV2ClassicLpPreflight(readiness.classicPayloads.preflightCreateLp);
+    const result = await invokeJsonHandler(createLpHandler, readiness.classicPayloads.createLp);
+    return {
+      ...result,
+      v2Preflight: preflight,
+    };
+  }
+  if (endpoint === '/api/resume-launch') {
+    return invokeJsonHandler(resumeLaunchHandler, readiness.classicPayloads.resumeLaunch);
+  }
+  if (endpoint === '/api/transfer-assets') {
+    return invokeJsonHandler(transferAssetsHandler, readiness.classicPayloads.transferAssets);
+  }
+  const error = new Error('No executable classic endpoint is ready');
+  error.statusCode = 409;
+  throw error;
+}
+
+app.post('/api/v2/demo-launch/run', async (req, res) => {
+  if (!isDemoMode()) {
+    return res.status(403).json({
+      success: false,
+      error: 'Demo launch runs are only available when demo mode is active',
+    });
+  }
+
+  try {
+    const config = req.body?.config || {};
+    const walletPublicKey = String(req.body?.walletPublicKey || config.walletPublicKey || '').trim();
+    if (!walletPublicKey) {
+      return res.status(400).json({ success: false, error: 'walletPublicKey required' });
+    }
+    new PublicKey(walletPublicKey);
+    const wallet = demoManagedWallets.get(walletPublicKey);
+    if (!wallet || !Array.isArray(wallet.secretKey)) {
+      return res.status(404).json({
+        success: false,
+        error: 'Demo launch wallet secret is unavailable; generate or import a v2 demo wallet first',
+      });
+    }
+
+    const readiness = buildV2ExecutionReadiness(config, {
+      demoMode: true,
+      walletPublicKey,
+      walletAvailable: true,
+      secretAvailable: true,
+      fundingEstimate: req.body?.fundingEstimate,
+      airdrop: req.body?.airdrop,
+      airdropRecipients: req.body?.airdropRecipients,
+    });
+    if (readiness.blockers.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'Demo launch is blocked',
+        readiness,
+      });
+    }
+
+    const tempWalletSecretKey = wallet.secretKey;
+    const tokenResult = await invokeJsonHandler(demoChainService.handleCreateToken, {
+      tempWalletSecretKey,
+      ...readiness.classicPayloads.createToken,
+    });
+    const tokenMint = tokenResult.tokenMint;
+    const tokenDecimals = tokenResult.decimals ?? readiness.plan.token.decimals;
+    const tokenTotalSupply = String(tokenResult.totalSupply ?? readiness.plan.token.supply);
+    const lpReadiness = buildV2ExecutionReadiness(config, {
+      demoMode: true,
+      walletPublicKey,
+      walletAvailable: true,
+      secretAvailable: true,
+      tokenMint,
+      fundingEstimate: req.body?.fundingEstimate,
+      airdrop: req.body?.airdrop,
+      airdropRecipients: req.body?.airdropRecipients,
+    });
+    if (lpReadiness.blockers.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'Demo launch LP is blocked',
+        readiness: lpReadiness,
+      });
+    }
+    const createLpPayload = {
+      ...lpReadiness.classicPayloads.createLp,
+      tempWalletSecretKey,
+      tokenMint,
+      tokenDecimals,
+      tokenTotalSupply,
+      allocations: demoAllocationsForV2(lpReadiness.classicPayloads.createLp.allocations),
+      airdrop: lpReadiness.classicPayloads.createLp.airdrop
+        ? {
+          ...lpReadiness.classicPayloads.createLp.airdrop,
+          tokenMint,
+          tokenDecimals,
+        }
+        : null,
+    };
+    const lpResult = await invokeJsonHandler(demoChainService.handleCreateLp, createLpPayload);
+    const sweepDestination = lpReadiness.plan.poolTopology.sweepDestination || walletPublicKey;
+    const transferPayload = {
+      ...lpReadiness.classicPayloads.transferAssets,
+      tempWalletSecretKey,
+      destinationWallet: sweepDestination,
+      tokenMint,
+      tokenDecimals,
+      airdrop: createLpPayload.airdrop,
+    };
+    const transferResult = await invokeJsonHandler(
+      demoChainService.handleTransferAssets,
+      transferPayload,
+      {
+        airdropProgress: {
+          begin: airdropProgressBegin,
+          step: airdropProgressStep,
+          end: airdropProgressEnd,
+        },
+      },
+    );
+    const completedReadiness = buildV2ExecutionReadiness(config, {
+      demoMode: true,
+      walletPublicKey,
+      walletAvailable: true,
+      secretAvailable: true,
+      tokenMint,
+      liquidityComplete: true,
+      transfer: transferResult,
+      fundingEstimate: req.body?.fundingEstimate,
+      airdrop: req.body?.airdrop,
+      airdropRecipients: req.body?.airdropRecipients,
+    });
+    const runId = crypto
+      .createHash('sha256')
+      .update(`${walletPublicKey}:${tokenMint}:${Date.now()}`)
+      .digest('hex')
+      .slice(0, 16);
+
+    res.json({
+      success: true,
+      run: {
+        id: `demo-v2-${runId}`,
+        runtime: 'demo',
+        walletPublicKey,
+        token: tokenResult,
+        liquidity: lpResult,
+        transfer: transferResult,
+        readiness: completedReadiness,
+        usedDefaultSweepDestination: !lpReadiness.plan.poolTopology.sweepDestination,
+        completedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, error.statusCode || 500);
+  }
+});
+
+app.get('/api/v2/wallets', async (_req, res) => {
+  try {
+    const secretPinLocked = secretStore.isSecretPinLocked();
+    const sourceWallets = isDemoMode()
+      ? Array.from(demoManagedWallets.values())
+      : pendingWallets.list();
+    const wallets = sourceWallets.map((wallet, index) => managedWalletMetadata(wallet, {
+      label: index === 0 ? 'Launch wallet' : `Local wallet ${index + 1}`,
+      secretPinLocked: wallet.secretKey ? undefined : secretPinLocked,
+    }));
+    res.json({ success: true, wallets, secretPinLocked });
+  } catch (error) {
+    sendErrorResponse(res, error);
+  }
+});
+
+app.post('/api/v2/wallets/generate', async (_req, res) => {
+  try {
+    const demoMode = isDemoMode();
+    if (!demoMode && rejectIfSecretPinLocked(res, 'generating a Trebuchet-managed wallet')) {
+      return;
+    }
+
+    const walletInfo = await generateTemporaryWallet();
+    const qrCode = await getWalletQRCode(walletInfo.publicKey);
+    if (demoMode) {
+      demoChainService.registerWallet(walletInfo.publicKey);
+      rememberDemoManagedWallet({
+        publicKey: walletInfo.publicKey,
+        secretKey: walletInfo.secretKey,
+        mnemonic: walletInfo.mnemonic,
+        createdAt: new Date().toISOString(),
+      });
+    } else {
+      pendingWallets.add(walletInfo.publicKey, walletInfo.secretKey, walletInfo.mnemonic);
+    }
+
+    res.json({
+      success: true,
+      wallet: managedWalletMetadata({
+        publicKey: walletInfo.publicKey,
+        secretKey: walletInfo.secretKey,
+        mnemonic: walletInfo.mnemonic,
+        createdAt: new Date().toISOString(),
+      }, {
+        label: 'Launch wallet',
+        qrCode,
+      }),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+app.post('/api/v2/wallets/import', async (req, res) => {
+  try {
+    const demoMode = isDemoMode();
+    if (!demoMode && rejectIfSecretPinLocked(res, 'importing a Trebuchet-managed wallet')) {
+      return;
+    }
+
+    const { keypair, mnemonic } = parseImportedWalletSecret(req.body?.secret || req.body?.secretKey || req.body?.mnemonic);
+    const publicKey = keypair.publicKey.toBase58();
+    const secretKey = Array.from(keypair.secretKey);
+    const qrCode = await getWalletQRCode(publicKey);
+    if (demoMode) {
+      demoChainService.registerWallet(publicKey);
+      rememberDemoManagedWallet({
+        publicKey,
+        secretKey,
+        mnemonic,
+        createdAt: new Date().toISOString(),
+      });
+    } else {
+      pendingWallets.add(publicKey, secretKey, mnemonic);
+    }
+
+    res.json({
+      success: true,
+      wallet: managedWalletMetadata({
+        publicKey,
+        secretKey,
+        mnemonic,
+        createdAt: new Date().toISOString(),
+      }, {
+        label: 'Imported wallet',
+        source: 'imported-local',
+        qrCode,
+      }),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+app.post('/api/v2/run-envelope/arm', (req, res) => {
+  try {
+    const demoMode = isDemoMode();
+    const walletPublicKey = String(req.body?.walletPublicKey || '').trim();
+    if (!walletPublicKey) {
+      return res.status(400).json({ success: false, error: 'walletPublicKey required' });
+    }
+    new PublicKey(walletPublicKey);
+    if (!demoMode && rejectIfSecretPinLocked(res, 'arming a Trebuchet local run')) return;
+
+    const wallet = pendingWallets.get(walletPublicKey);
+    if (!demoMode && (!wallet || !Array.isArray(wallet.secretKey))) {
+      return res.status(404).json({
+        success: false,
+        error: 'Trebuchet-managed wallet secret is unavailable',
+      });
+    }
+    const plan = buildV2LaunchPlan({
+      ...(req.body?.config || {}),
+      walletPublicKey,
+    }, {
+      demoMode,
+    });
+    const envelopeId = crypto
+      .createHash('sha256')
+      .update(`${walletPublicKey}:${plan.id}:${plan.generatedAt}`)
+      .digest('hex')
+      .slice(0, 16);
+
+    res.json({
+      success: true,
+      envelope: {
+        id: `run-${envelopeId}`,
+        walletPublicKey,
+        signer: 'trebuchet-managed-launch-wallet',
+        status: 'armed',
+        operationCount: plan.operations.length,
+        estimatedSolCost: plan.funding.estimatedSolCost,
+        maxSpendSol: plan.funding.estimatedSolCost,
+        requiresUserAction: 'fund-and-arm',
+        plan,
+      },
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+app.post('/api/v2/run-envelope/execute-next', async (req, res) => {
+  if (isDemoMode()) {
+    return res.status(409).json({
+      success: false,
+      error: 'Use the v2 demo launch runner while demo mode is active.',
+    });
+  }
+
+  try {
+    const config = req.body?.config || {};
+    const walletPublicKey = String(req.body?.walletPublicKey || config.walletPublicKey || '').trim();
+    if (!walletPublicKey) {
+      return res.status(400).json({ success: false, error: 'walletPublicKey required' });
+    }
+    const { wallet, readiness } = await v2ReadinessForManagedWallet({
+      walletPublicKey,
+      config,
+      body: req.body || {},
+      requireFundingBalance: true,
+    });
+
+    if (!wallet || !Array.isArray(wallet.secretKey)) {
+      return res.status(409).json({
+        success: false,
+        code: 'WALLET_SECRET_UNAVAILABLE',
+        error: 'Trebuchet-managed wallet secret is unavailable.',
+        readiness,
+      });
+    }
+    if (readiness.blockers.length > 0) {
+      return res.status(409).json({
+        success: false,
+        code: 'V2_EXECUTION_BLOCKED',
+        error: 'Resolve execution blockers before running the next classic operation.',
+        readiness,
+      });
+    }
+    if (!readiness.nextEndpoint) {
+      return res.status(409).json({
+        success: false,
+        code: 'NO_NEXT_ENDPOINT',
+        error: 'No classic endpoint is ready to execute.',
+        readiness,
+      });
+    }
+
+    const confirmedEndpoint = String(req.body?.confirmNextEndpoint || '').trim();
+    if (confirmedEndpoint !== readiness.nextEndpoint) {
+      return res.status(409).json({
+        success: false,
+        code: 'STALE_V2_READINESS',
+        error: `Readiness changed; expected confirmation for ${readiness.nextEndpoint}.`,
+        readiness,
+      });
+    }
+    const finalizationIssue = v2TransferFinalizationIssue(readiness, {
+      localDossier: req.body?.localDossier,
+    });
+    if (finalizationIssue) {
+      return res.status(409).json({
+        success: false,
+        code: 'V2_FINALIZATION_BLOCKED',
+        error: finalizationIssue,
+        readiness,
+      });
+    }
+
+    const balanceBefore = await v2WalletBalanceObservation(walletPublicKey);
+    const result = await executeV2NextClassicOperation(readiness);
+    const balanceAfter = await v2WalletBalanceObservation(walletPublicKey);
+    const observedWalletDelta = v2ObservedWalletDelta(balanceBefore, balanceAfter);
+    const followup = await v2ReadinessForManagedWallet({
+      walletPublicKey,
+      config,
+      body: {
+        ...req.body,
+        tokenMint: result?.tokenMint || req.body?.tokenMint,
+        liquidityComplete: Array.isArray(result?.results) && result.results.length > 0,
+      },
+      requireFundingBalance: true,
+    });
+
+    res.json({
+      success: true,
+      executed: {
+        endpoint: readiness.nextEndpoint,
+        action: readiness.nextAction,
+        result,
+        observedWalletDelta,
+      },
+      readiness: followup.readiness,
+      proof: followup.readiness.proof,
+      executionObservation: {
+        endpoint: readiness.nextEndpoint,
+        walletPublicKey,
+        observedWalletDelta,
+      },
+      journal: followup.context.journal || null,
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, error.statusCode || 500);
+  }
+});
+
 // Renderer POSTs here after its splash video and first-run disclaimer
 // have both been dismissed, signalling "now is a safe time to show
 // an update-available modal — the main UI is visible underneath".
@@ -1344,6 +3967,11 @@ app.post('/api/demo/inject-funds', (req, res) => {
 // the renderer doesn't care about the response either way.
 app.post('/api/trigger-startup-update-check', (_req, res) => {
   const result = updateCheckBridge.trigger();
+  res.json({ success: true, ...result });
+});
+
+app.post('/api/check-for-updates', (_req, res) => {
+  const result = updateCheckBridge.triggerManual();
   res.json({ success: true, ...result });
 });
 
@@ -1443,12 +4071,58 @@ function uploadLogo(req, res, next) {
     if (req.file) {
       try {
         req.file.detectedMime = normalizeLogoImageMime(req.file.buffer);
+        assertClassicLogoDimensions(req.file.buffer);
       } catch (logoError) {
         return res.status(400).json({ success: false, error: logoError.message });
       }
     }
     next();
   });
+}
+
+const V2_LOGO_DATA_URL_RE = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/;
+const V2_MAX_LOGO_BYTES = 100 * 1024;
+const CLASSIC_LOGO_MIN_DIMENSION = 64;
+const CLASSIC_LOGO_MAX_DIMENSION = 1024;
+
+function assertClassicLogoDimensions(buffer) {
+  const dimensions = detectLogoImageDimensions(buffer);
+  if (!dimensions) {
+    throw new Error('Token logo dimensions could not be read');
+  }
+  if (dimensions.width > CLASSIC_LOGO_MAX_DIMENSION || dimensions.height > CLASSIC_LOGO_MAX_DIMENSION) {
+    throw new Error(
+      `Token logo is ${dimensions.width}x${dimensions.height}px; max is ` +
+        `${CLASSIC_LOGO_MAX_DIMENSION}x${CLASSIC_LOGO_MAX_DIMENSION}px`,
+    );
+  }
+  if (dimensions.width < CLASSIC_LOGO_MIN_DIMENSION || dimensions.height < CLASSIC_LOGO_MIN_DIMENSION) {
+    throw new Error(
+      `Token logo is ${dimensions.width}x${dimensions.height}px; minimum is ` +
+        `${CLASSIC_LOGO_MIN_DIMENSION}x${CLASSIC_LOGO_MIN_DIMENSION}px`,
+    );
+  }
+}
+
+function logoBase64FromCreateTokenRequest(req) {
+  if (req.file) {
+    const logoMime = req.file.detectedMime;
+    return `data:${logoMime};base64,${req.file.buffer.toString('base64')}`;
+  }
+
+  const logo = req.body?.logo;
+  const dataUrl = typeof req.body?.logoDataUrl === 'string'
+    ? req.body.logoDataUrl
+    : (logo && typeof logo === 'object' && typeof logo.dataUrl === 'string' ? logo.dataUrl : null);
+  if (!dataUrl) return null;
+
+  const match = dataUrl.match(V2_LOGO_DATA_URL_RE);
+  if (!match) throw new Error('Token logo must be a PNG or JPG data URL');
+  const decoded = Buffer.from(match[2], 'base64');
+  if (decoded.length > V2_MAX_LOGO_BYTES) throw new Error('Token logo must be 100KB or smaller');
+  const detectedMime = normalizeLogoImageMime(decoded);
+  assertClassicLogoDimensions(decoded);
+  return `data:${detectedMime};base64,${decoded.toString('base64')}`;
 }
 
 function recordTokenJournalProgress(walletPublicKey, event) {
@@ -1486,6 +4160,7 @@ function transferJournalSummary({
   solTransferred,
   nftSweep,
   tokenSweep,
+  solSweep,
   solSweepError,
   walletEmpty,
 }) {
@@ -1494,6 +4169,9 @@ function transferJournalSummary({
     tokensTransferred,
     solTransferred,
     nftsTransferred: nftSweep?.transferred?.length || 0,
+    tokenSweep: tokenSweep || { transferred: [], errors: [] },
+    nftSweep: nftSweep || { transferred: [], errors: [] },
+    solSweep: solSweep || { solTransferred: solTransferred || 0 },
     tokenTransferErrors: tokenSweep?.errors || [],
     nftTransferErrors: nftSweep?.errors || [],
     solSweepError: solSweepError || null,
@@ -1527,22 +4205,187 @@ function resultForEvent(results, event) {
   return results.find((r) => r.allocationIndex === event.allocationIndex);
 }
 
-function applyLpEventToResults(results, event) {
+function normalizeJournalDistribution(allocation) {
+  return Array.isArray(allocation?.distribution) && allocation.distribution.length > 0
+    ? allocation.distribution
+    : [{ sharePercent: 100, recipient: null }];
+}
+
+function journalAllocationForEvent(journal, event) {
+  const index = Number(event?.allocationIndex);
+  const allocations = journal?.poolPlan?.allocations;
+  return Number.isInteger(index) && Array.isArray(allocations) ? allocations[index] : null;
+}
+
+function journalResultSkeleton(journal, event) {
+  const allocationIndex = Number(event?.allocationIndex);
+  if (!Number.isInteger(allocationIndex) || !event?.poolId) return null;
+  const allocation = journalAllocationForEvent(journal, event) || {};
+  return {
+    allocationIndex,
+    quoteSymbol: allocation.quoteSymbolOverride || allocation.quoteSymbol || allocation.quoteToken || null,
+    quoteAddress: allocation.quoteMint || allocation.quoteToken || null,
+    supplyPercent: allocation.supplyPercent ?? null,
+    poolId: event.poolId,
+    mainPositions: [],
+    ladderPositions: [],
+    supportPositions: [],
+    bootstrap: null,
+    txIds: { createPool: event.txId || null },
+    phase1Complete: false,
+  };
+}
+
+function ensureResultForEvent(results, event, journal) {
+  let result = resultForEvent(results, event);
+  if (result || !event?.poolId) return result;
+  result = journalResultSkeleton(journal, event);
+  if (!result) return null;
+  upsertJournalResult(results, result);
+  return resultForEvent(results, event);
+}
+
+function upsertIndexedPosition(list, indexKey, index, position) {
+  if (!Number.isInteger(index) || !position?.nftMint) return false;
+  const existingIndex = list.findIndex((item) => Number(item?.[indexKey]) === index);
+  if (existingIndex >= 0) {
+    list[existingIndex] = { ...list[existingIndex], ...position };
+  } else {
+    list.push(position);
+  }
+  list.sort((a, b) => Number(a?.[indexKey] ?? 0) - Number(b?.[indexKey] ?? 0));
+  return true;
+}
+
+function positionForIndex(list, indexKey, index) {
+  if (!Array.isArray(list)) return null;
+  const numericIndex = Number(index);
+  return list.find((item) => Number(item?.[indexKey]) === numericIndex) || list[numericIndex] || null;
+}
+
+function hasOpenedPhase1Position(result) {
+  return [
+    ...(Array.isArray(result?.mainPositions) ? result.mainPositions : []),
+    ...(Array.isArray(result?.ladderPositions) ? result.ladderPositions : []),
+    ...(Array.isArray(result?.supportPositions) ? result.supportPositions : []),
+  ].some((position) => position?.nftMint);
+}
+
+function isResumeCheckpointResult(result) {
+  if (!result?.poolId) return false;
+  return result.phase1Complete !== false || hasOpenedPhase1Position(result);
+}
+
+function eventDerivedPriorResults(journal) {
+  const results = [];
+  const events = Array.isArray(journal?.events) ? journal.events : [];
+  for (const event of events) {
+    applyLpEventToResults(results, event, journal);
+  }
+  return results.filter(isResumeCheckpointResult);
+}
+
+function mergeResultCheckpoint(base, overlay) {
+  if (!base) return overlay;
+  const merged = { ...base, ...overlay };
+  for (const key of ['mainPositions', 'ladderPositions', 'supportPositions']) {
+    const byIndex = new Map();
+    const indexKey = key === 'mainPositions' ? 'sliceIndex'
+      : key === 'ladderPositions' ? 'bandIndex'
+        : 'supportIndex';
+    for (const position of [
+      ...(Array.isArray(base?.[key]) ? base[key] : []),
+      ...(Array.isArray(overlay?.[key]) ? overlay[key] : []),
+    ]) {
+      const index = Number(position?.[indexKey] ?? 0);
+      if (Number.isFinite(index)) byIndex.set(index, position);
+    }
+    merged[key] = [...byIndex.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, position]) => position);
+  }
+  merged.txIds = { ...(base.txIds || {}), ...(overlay.txIds || {}) };
+  merged.bootstrap = overlay.bootstrap || base.bootstrap || null;
+  return merged;
+}
+
+function applyLpEventToResults(results, event, journal = null) {
   if (event.stage === 'phase1_pool_done' && event.result) {
-    upsertJournalResult(results, event.result);
+    upsertJournalResult(results, { ...event.result, phase1Complete: true });
     return true;
   }
 
-  const result = resultForEvent(results, event);
-  if (!result) return false;
+  if (event.stage === 'pool_create_done' && event.poolId) {
+    const existing = resultForEvent(results, event);
+    const skeleton = journalResultSkeleton(journal, event);
+    if (!skeleton) return false;
+    upsertJournalResult(results, mergeResultCheckpoint(existing, skeleton));
+    return true;
+  }
+
+  if (event.stage === 'main_open_done') {
+    const result = ensureResultForEvent(results, event, journal);
+    if (!result) return false;
+    const sliceIndex = Number(event.sliceIndex);
+    const distribution = normalizeJournalDistribution(journalAllocationForEvent(journal, event));
+    const slice = distribution[sliceIndex] || {};
+    const position = {
+      sliceIndex,
+      sharePercent: Number.isFinite(Number(slice.sharePercent)) ? Number(slice.sharePercent) : null,
+      tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+      tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+      nftMint: event.nftMint,
+      locked: false,
+      recipient: slice.recipient || null,
+      transferredTo: null,
+      baseAmountRaw: event.baseAmountRaw || null,
+      txIds: { open: event.txId || null, lock: null, transfer: null },
+    };
+    result.mainPositions = Array.isArray(result.mainPositions) ? result.mainPositions : [];
+    return upsertIndexedPosition(result.mainPositions, 'sliceIndex', sliceIndex, position);
+  }
+
+  if (event.stage === 'ladder_open_done') {
+    const result = ensureResultForEvent(results, event, journal);
+    if (!result) return false;
+    const bandIndex = Number(event.bandIndex);
+    const position = {
+      bandIndex,
+      tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+      tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+      nftMint: event.nftMint,
+      locked: false,
+      baseAmountRaw: event.baseAmountRaw || null,
+      txIds: { open: event.txId || null, lock: null },
+    };
+    result.ladderPositions = Array.isArray(result.ladderPositions) ? result.ladderPositions : [];
+    return upsertIndexedPosition(result.ladderPositions, 'bandIndex', bandIndex, position);
+  }
+
+  if (event.stage === 'support_open_done') {
+    const result = ensureResultForEvent(results, event, journal);
+    if (!result) return false;
+    const supportIndex = Number.isFinite(Number(event.supportIndex)) ? Number(event.supportIndex) : 0;
+    const position = {
+      supportIndex,
+      tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+      tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+      depthPct: Number.isFinite(Number(event.depthPct)) ? Number(event.depthPct) : null,
+      quoteRaw: event.quoteAmountRaw || null,
+      nftMint: event.nftMint,
+      locked: false,
+      txIds: { open: event.txId || null, lock: null },
+    };
+    result.supportPositions = Array.isArray(result.supportPositions) ? result.supportPositions : [];
+    return upsertIndexedPosition(result.supportPositions, 'supportIndex', supportIndex, position);
+  }
 
   if (event.stage === 'bootstrap_open_done' || event.stage === 'bootstrap_open_recovered') {
+    const result = ensureResultForEvent(results, event, journal) || resultForEvent(results, event);
+    if (!result) return false;
     result.bootstrap = {
       nftMint: event.nftMint || null,
       locked: false,
-      // Tick range threaded through from the event (older events lack it;
-      // null keeps the shape consistent and the report renders ranges
-      // conditionally).
       tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
       tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
       txIds: { open: event.txId || null, lock: null },
@@ -1550,8 +4393,11 @@ function applyLpEventToResults(results, event) {
     return true;
   }
 
+  const result = resultForEvent(results, event);
+  if (!result) return false;
+
   if (event.stage === 'main_lock_done' || event.stage === 'main_lock_recovered') {
-    const pos = result.mainPositions?.[event.sliceIndex];
+    const pos = positionForIndex(result.mainPositions, 'sliceIndex', event.sliceIndex);
     if (!pos) return false;
     pos.locked = true;
     pos.feeKeyNftMint = event.feeKeyNftMint || pos.feeKeyNftMint || null;
@@ -1560,7 +4406,7 @@ function applyLpEventToResults(results, event) {
   }
 
   if (event.stage === 'ladder_lock_done' || event.stage === 'ladder_lock_recovered') {
-    const pos = result.ladderPositions?.[event.bandIndex];
+    const pos = positionForIndex(result.ladderPositions, 'bandIndex', event.bandIndex);
     if (!pos) return false;
     pos.locked = true;
     pos.feeKeyNftMint = event.feeKeyNftMint || pos.feeKeyNftMint || null;
@@ -1574,7 +4420,7 @@ function applyLpEventToResults(results, event) {
   // against a position NFT already in the lock program's escrow (spurious
   // lockFailures) and the report misstated the lock state.
   if (event.stage === 'support_lock_done' || event.stage === 'support_lock_recovered') {
-    const pos = result.supportPositions?.[event.supportIndex];
+    const pos = positionForIndex(result.supportPositions, 'supportIndex', event.supportIndex);
     if (!pos) return false;
     pos.locked = true;
     pos.feeKeyNftMint = event.feeKeyNftMint || pos.feeKeyNftMint || null;
@@ -1591,7 +4437,7 @@ function applyLpEventToResults(results, event) {
   }
 
   if (event.stage === 'main_transfer_done' || event.stage === 'main_transfer_recovered') {
-    const pos = result.mainPositions?.[event.sliceIndex];
+    const pos = positionForIndex(result.mainPositions, 'sliceIndex', event.sliceIndex);
     if (!pos) return false;
     pos.transferredTo = event.recipient || pos.recipient || null;
     pos.txIds = { ...(pos.txIds || {}), transfer: event.txId || null };
@@ -1608,7 +4454,7 @@ function recordLpJournalProgress(walletPublicKey, event) {
   const partialResults = journalResultList(journal);
   const patch = { stage: event.stage || 'lp_progress' };
 
-  if (applyLpEventToResults(partialResults, event)) {
+  if (applyLpEventToResults(partialResults, event, journal)) {
     patch.lp = { partialResults };
   }
 
@@ -1620,7 +4466,17 @@ function priorResultsFromJournal(journal) {
   const source = Array.isArray(lp.results) && lp.results.length > 0
     ? lp.results
     : (Array.isArray(lp.partialResults) ? lp.partialResults : []);
-  return cloneJson(source).filter((result) => result && result.poolId);
+  const byAllocation = new Map();
+  for (const result of cloneJson(source).filter(isResumeCheckpointResult)) {
+    byAllocation.set(result.allocationIndex, result);
+  }
+  for (const result of eventDerivedPriorResults(journal)) {
+    const existing = byAllocation.get(result.allocationIndex);
+    byAllocation.set(result.allocationIndex, mergeResultCheckpoint(existing, result));
+  }
+  return [...byAllocation.values()]
+    .filter(isResumeCheckpointResult)
+    .sort((a, b) => Number(a.allocationIndex ?? 0) - Number(b.allocationIndex ?? 0));
 }
 
 function hasCompletedLpResults(journal) {
@@ -1864,7 +4720,7 @@ app.post('/api/finish-token-creation', async (req, res) => {
   }
 });
 
-app.post('/api/create-token', uploadLogo, async (req, res) => {
+async function createTokenHandler(req, res) {
   // uploadLogo (multer) has already parsed req.body / req.file by the time
   // we reach here, so the demo handler can read the same fields.
   if (isDemoMode()) return demoChainService.handleCreateToken(req, res);
@@ -1888,12 +4744,23 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       return;
     }
 
+    let normalizedVanityPrefix = String(vanityPrefix ?? '').trim();
+    let normalizedVanitySuffix = String(vanitySuffix ?? '').trim();
+    if (normalizedVanityPrefix || normalizedVanitySuffix) {
+      try {
+        ({ prefix: normalizedVanityPrefix, suffix: normalizedVanitySuffix } =
+          normalizeVanityTargetBase58(normalizedVanityPrefix, normalizedVanitySuffix));
+      } catch (error) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+    }
+
     // If the caller asked for a fresh vanity grind (prefix/suffix) but the
     // binary isn't built, reject up front with the same 503 the dedicated
     // vanity endpoints use. Pre-ground vanity keypairs (vanityCAKeypair)
     // are fine without the binary — they were ground elsewhere and we're
     // just consuming the keypair, not running the grinder again here.
-    if (vanityPrefix || vanitySuffix) {
+    if (normalizedVanityPrefix || normalizedVanitySuffix) {
       const vanity = await vanityAvailability();
       if (!vanity.available) {
         return res.status(503).json({
@@ -1915,11 +4782,7 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       totalSupply: normalizedTotalSupply,
     });
 
-    let logoBase64 = null;
-    if (req.file) {
-      const logoMime = req.file.detectedMime;
-      logoBase64 = `data:${logoMime};base64,${req.file.buffer.toString('base64')}`;
-    }
+    const logoBase64 = logoBase64FromCreateTokenRequest(req);
 
     const { secretKeyArr: tempWalletSecretKeyArr, walletPublicKey: resolvedWalletPublicKey } =
       resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey });
@@ -1973,8 +4836,8 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       description: normalizedDescription,
       totalSupply: normalizedTotalSupply,
       logoBase64,
-      vanityPrefix,
-      vanitySuffix,
+      vanityPrefix: normalizedVanityPrefix || null,
+      vanitySuffix: normalizedVanitySuffix || null,
       vanityCAKeypair,
       onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
     });
@@ -2033,7 +4896,9 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       clearLaunchOpInFlight(walletPublicKey);
     }
   }
-});
+}
+
+app.post('/api/create-token', uploadLogo, createTokenHandler);
 
 // ---------------------------------------------------------------------------
 // LP / pool creation endpoints
@@ -3004,7 +5869,7 @@ app.post('/api/preflight-create-lp', async (req, res) => {
 
 // Run the full LP creation flow: createPool + main positions + bootstrap +
 // lock + (optional) recipient transfers, for every allocation.
-app.post('/api/create-lp', async (req, res) => {
+async function createLpHandler(req, res) {
   if (isDemoMode()) {
     // Derive wallet pubkey here (mirrors what handleCreateLp does
     // internally) so we can scope the progress events to this launch.
@@ -3227,7 +6092,9 @@ app.post('/api/create-lp', async (req, res) => {
       clearLaunchOpInFlight(walletPublicKey);
     }
   }
-});
+}
+
+app.post('/api/create-lp', createLpHandler);
 
 // Resume a partially-completed launch. Used when a previous /api/create-lp
 // call failed partway — either in the main-positions phase (Phase 1) or
@@ -3241,7 +6108,7 @@ app.post('/api/create-lp', async (req, res) => {
 //   - For each allocation NOT in priorResults: do the full Phase 1 flow.
 // Stateless — server can be restarted between failure and resume without
 // affecting recovery, because everything we need lives on chain.
-app.post('/api/resume-launch', async (req, res) => {
+async function resumeLaunchHandler(req, res) {
   if (isDemoMode()) return demoChainService.handleResumeLaunch(req, res);
   let walletPublicKey = null;
   let claimedLaunchOp = false;
@@ -3491,7 +6358,9 @@ app.post('/api/resume-launch', async (req, res) => {
       clearLaunchOpInFlight(walletPublicKey);
     }
   }
-});
+}
+
+app.post('/api/resume-launch', resumeLaunchHandler);
 
 // ---------------------------------------------------------------------------
 // Launch diagnostic — paste a token address, see what's on chain
@@ -3712,7 +6581,54 @@ app.get('/api/diagnose-launch', async (req, res) => {
 // Per-asset failures within a step are isolated — a single bad transfer
 // doesn't abort the others. Aggregate counts are reported in the
 // response so the frontend can summarize.
-app.post('/api/transfer-assets', async (req, res) => {
+function validateTransferAirdropPayload(airdrop) {
+  if (!airdrop) return;
+  if (typeof airdrop !== 'object') {
+    throw new Error('Airdrop payload must be an object');
+  }
+
+  const recipients = Array.isArray(airdrop.recipients) ? airdrop.recipients : [];
+  const expectedCount = Number(airdrop.recipientCount);
+  if (Number.isFinite(expectedCount) && expectedCount > 0 && recipients.length !== Math.floor(expectedCount)) {
+    throw new Error(
+      `Airdrop declares ${Math.floor(expectedCount)} recipient${Math.floor(expectedCount) === 1 ? '' : 's'}, ` +
+        `but ${recipients.length} executable row${recipients.length === 1 ? ' is' : 's are'} attached`,
+    );
+  }
+  if (recipients.length === 0) return;
+
+  if (!airdrop.tokenMint) throw new Error('Airdrop token mint is required when recipients are attached');
+  try {
+    new PublicKey(airdrop.tokenMint);
+  } catch {
+    throw new Error('Airdrop token mint must be a valid Solana address');
+  }
+  const tokenDecimals = Number(airdrop.tokenDecimals);
+  if (!Number.isInteger(tokenDecimals) || tokenDecimals < 0 || tokenDecimals > 18) {
+    throw new Error('Airdrop token decimals must be an integer between 0 and 18');
+  }
+
+  const seen = new Set();
+  recipients.forEach((row, index) => {
+    const wallet = String(row?.wallet || '').trim();
+    try {
+      new PublicKey(wallet);
+    } catch {
+      throw new Error(`Airdrop recipient ${index + 1}: wallet must be a valid Solana address`);
+    }
+    if (seen.has(wallet)) {
+      throw new Error(`Airdrop recipient ${index + 1}: duplicate wallet ${wallet.slice(0, 8)}...`);
+    }
+    seen.add(wallet);
+
+    const tokens = Number(row?.tokens ?? row?.amount);
+    if (!Number.isFinite(tokens) || tokens <= 0) {
+      throw new Error(`Airdrop recipient ${index + 1}: token amount must be greater than 0`);
+    }
+  });
+}
+
+async function transferAssetsHandler(req, res) {
   if (isDemoMode()) {
     return demoChainService.handleTransferAssets(req, res, {
       airdropProgress: {
@@ -3727,12 +6643,26 @@ app.post('/api/transfer-assets', async (req, res) => {
   try {
     const {
       tempWalletSecretKey,
-      destinationWallet,
+      destinationWallet: rawDestinationWallet,
       // tokenMint kept in payload for backward compat with the frontend,
       // but no longer used to decide what to transfer — the new
       // sweepAllTokensToDestination picks up every fungible token, not
       // just the launched mint. The frontend still passes it.
     } = req.body;
+    const destinationWallet = String(rawDestinationWallet || '').trim();
+    if (!destinationWallet) {
+      return res.status(400).json({ success: false, error: 'destinationWallet required' });
+    }
+    try {
+      new PublicKey(destinationWallet);
+    } catch {
+      return res.status(400).json({ success: false, error: 'destinationWallet must be a valid Solana address' });
+    }
+    try {
+      validateTransferAirdropPayload(req.body.airdrop);
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
 
     console.log('Transferring assets to:', destinationWallet);
 
@@ -3997,6 +6927,7 @@ app.post('/api/transfer-assets', async (req, res) => {
           solTransferred,
           nftSweep,
           tokenSweep,
+          solSweep,
           solSweepError,
           walletEmpty,
         }),
@@ -4017,6 +6948,7 @@ app.post('/api/transfer-assets', async (req, res) => {
       destinationWallet,
       nftSweep,
       tokenSweep,
+      solSweep,
       solSweepError,
       airdrop: airdropResult,
     });
@@ -4042,7 +6974,9 @@ app.post('/api/transfer-assets', async (req, res) => {
       clearLaunchOpInFlight(walletPublicKey);
     }
   }
-});
+}
+
+app.post('/api/transfer-assets', transferAssetsHandler);
 
 // ---------------------------------------------------------------------------
 // Airdrop retry — used when /api/transfer-assets returns partial airdrop

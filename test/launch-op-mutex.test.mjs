@@ -27,10 +27,29 @@ const serverSrc = readFileSync(path.join(REPO, 'server.js'), 'utf8');
 // security-regressions suite) because server.js boots Express on import.
 // ---------------------------------------------------------------------------
 
-// Extract a single route handler's source by locating its app.post(...) and
-// slicing to the next app.<verb>( registration (or EOF). Coarse, but enough
-// to assert "this guard call lives inside this handler".
+const ROUTE_HANDLERS = {
+  '/api/create-token': 'createTokenHandler',
+  '/api/create-lp': 'createLpHandler',
+  '/api/resume-launch': 'resumeLaunchHandler',
+  '/api/transfer-assets': 'transferAssetsHandler',
+};
+
+// Extract a single route handler's source. Some classic handlers are named so
+// v2 can dispatch through the same production code path; older routes remain
+// anonymous and are sliced from their app.post(...) registration.
 function handlerSource(route) {
+  const handlerName = ROUTE_HANDLERS[route];
+  if (handlerName) {
+    assert.ok(
+      serverSrc.includes(`app.post('${route}', ${route === '/api/create-token' ? 'uploadLogo, ' : ''}${handlerName});`),
+      `route ${route} must be registered to ${handlerName}`,
+    );
+    const start = serverSrc.indexOf(`async function ${handlerName}(`);
+    assert.ok(start >= 0, `handler ${handlerName} must exist in server.js`);
+    const rest = serverSrc.slice(start + 1);
+    const next = rest.search(/\n(async function|function|app\.(get|post|put|delete)\()/);
+    return serverSrc.slice(start, next >= 0 ? start + 1 + next : undefined);
+  }
   const start = serverSrc.indexOf(`app.post('${route}'`);
   assert.ok(start >= 0, `route ${route} must exist in server.js`);
   const rest = serverSrc.slice(start + 1);

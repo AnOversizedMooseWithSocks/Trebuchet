@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TREBUCHET · makesometokens</title>
+  <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
+  <link rel="stylesheet" href="./styles.css?v=51">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <a class="brand" href="#launch" data-nav="launch" aria-label="Trebuchet launch view">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>
+          <strong>T R E B U C H E T</strong>
+          <small>makesometokens.com</small>
+        </span>
+      </a>
+
+      <nav class="nav-list" id="primaryNav" aria-label="Primary">
+        <button class="nav-item is-active" type="button" data-view="launch">
+          <i class="fa-solid fa-crosshairs"></i>
+          <span>Launch</span>
+        </button>
+        <button class="nav-item" type="button" data-view="wallet">
+          <i class="fa-solid fa-wallet"></i>
+          <span>Wallet</span>
+        </button>
+        <button class="nav-item" type="button" data-view="discovery">
+          <i class="fa-solid fa-compass"></i>
+          <span>Discovery</span>
+        </button>
+        <button class="nav-item" type="button" data-view="history">
+          <i class="fa-solid fa-clock-rotate-left"></i>
+          <span>History</span>
+        </button>
+        <button class="nav-item" type="button" data-view="settings">
+          <i class="fa-solid fa-sliders"></i>
+          <span>Settings</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span class="eyebrow">Network</span>
+        <button class="network-button" type="button" id="networkButton">
+          <span class="status-dot"></span>
+          <span id="networkLabel">Mainnet</span>
+          <i class="fa-solid fa-chevron-down"></i>
+        </button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <span class="topbar-brand" aria-hidden="true">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span>
+              <strong>T R E B U C H E T</strong>
+              <small>makesometokens.com</small>
+            </span>
+          </span>
+          <span class="eyebrow" id="viewEyebrow">Step 1 of 6 · Setup</span>
+          <h1 id="viewTitle">Launch your token</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-button" type="button" id="themeButton" aria-label="Toggle contrast">
+            <i class="fa-solid fa-circle-half-stroke"></i>
+          </button>
+          <button class="wallet-button" type="button" id="walletButton">
+            <span class="wallet-led"></span>
+            <span id="walletLabel">Trebuchet wallet</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="global-strip" id="globalStrip" aria-label="App status"></section>
+
+      <section class="view is-active" id="view-launch" aria-labelledby="viewTitle">
+        <div class="launch-grid launch-cockpit">
+          <section class="surface surface-main" aria-label="Trebuchet launch mechanism">
+            <div class="section-heading cockpit-heading">
+              <div>
+                <span class="eyebrow">Token being launched</span>
+                <h2 id="launchName">MoonKit launch</h2>
+              </div>
+              <span class="badge" id="launchStatus">Draft</span>
+            </div>
+
+            <section class="cockpit-board" aria-label="Launch control panel">
+              <section class="agent-console" aria-label="Trebuchet launch agent">
+                <div class="agent-status">
+                  <span class="agent-orb" aria-hidden="true"><i class="fa-solid fa-bolt"></i></span>
+                  <span>
+                    <span class="eyebrow">Trebuchet agent</span>
+                    <h3 id="agentStatusTitle">Ready to build the launch plan</h3>
+                  </span>
+                </div>
+                <div class="agent-next">
+                  <small>Next move</small>
+                  <strong id="agentNextTitle">Review run plan</strong>
+                  <span id="agentNextDetail">Trebuchet holds the launch key locally and signs the run after you arm it.</span>
+                </div>
+                <div class="agent-checks" aria-label="Launch checkpoints">
+                  <span class="is-active" data-agent-check="setup">Setup</span>
+                  <span data-agent-check="fund">Fund</span>
+                  <span data-agent-check="run">Run</span>
+                  <span data-agent-check="recover">Recover</span>
+                </div>
+                <p class="agent-footnote">Launch Solana tokens. No middleman. Your machine / your keys / your launch.</p>
+              </section>
+
+              <section class="chart-deck" id="chartDeck" aria-label="Launch charts">
+                <article class="chart-card tokenomics-card">
+                  <div class="chart-head">
+                    <span>
+                      <span class="eyebrow">Tokenomics</span>
+                      <strong>Supply split</strong>
+                    </span>
+                    <span class="risk-badge warn" id="tokenomicsState">Preview</span>
+                  </div>
+                  <div class="donut-wrap">
+                    <div class="donut-chart" id="tokenomicsChart" role="img" aria-label="Tokenomics preview chart"></div>
+                    <div class="chart-legend" id="tokenomicsLegend"></div>
+                  </div>
+                </article>
+
+                <article class="chart-card liquidity-card">
+                  <div class="chart-head">
+                    <span>
+                      <span class="eyebrow">Liquidity</span>
+                      <strong>Depth bands</strong>
+                    </span>
+                    <span class="risk-badge warn" id="liquidityState">Preview</span>
+                  </div>
+                  <div class="depth-chart" id="liquidityChart" role="img" aria-label="Liquidity depth preview chart"></div>
+                </article>
+
+                <article class="chart-card funding-card">
+                  <div class="chart-head">
+                    <span>
+                      <span class="eyebrow">Funding</span>
+                      <strong>Cost envelope</strong>
+                    </span>
+                    <span class="risk-badge" id="fundingState">Ready</span>
+                  </div>
+                  <div class="funding-meter" id="fundingMeter"></div>
+                </article>
+              </section>
+
+              <aside class="action-panel" aria-label="Next action">
+                <div class="section-heading">
+                  <div>
+                    <span class="eyebrow">Next action</span>
+                    <h2 id="queueTitle">Review run plan</h2>
+                  </div>
+                  <i class="fa-solid fa-shield-halved rail-icon" aria-hidden="true"></i>
+                </div>
+                <div class="queue-list" id="queueList"></div>
+                <div class="button-pair">
+                  <button class="primary-button" type="button" id="stageButton">
+                    <i class="fa-solid fa-layer-group"></i>
+                    <span>Review run plan</span>
+                  </button>
+                  <button class="secondary-button" type="button" id="simulateButton">
+                    <i class="fa-solid fa-wave-square"></i>
+                    <span>Practice run</span>
+                  </button>
+                </div>
+              </aside>
+            </section>
+
+            <section class="setup-dock" aria-label="Launch setup dock">
+              <div class="setup-dock-head">
+                <span>
+                  <span class="eyebrow">Setup dock</span>
+                  <strong id="setupSummary">MoonKit / 777 avatars</strong>
+                </span>
+                <span class="setup-help">Guided launch keeps recovery checkpoints on.</span>
+              </div>
+              <div class="mode-row" role="tablist" aria-label="Launch mode">
+                <button class="mode-button is-selected" type="button" data-mode="guarded" data-label="Guided launch">
+                  <strong>Guided launch</strong>
+                  <small>Recommended</small>
+                </button>
+                <button class="mode-button" type="button" data-mode="operator" data-label="Advanced">
+                  <strong>Advanced</strong>
+                  <small>Manual controls</small>
+                </button>
+                <button class="mode-button" type="button" data-mode="dry-run" data-label="Practice run">
+                  <strong>Practice run</strong>
+                  <small>No spend</small>
+                </button>
+              </div>
+              <div class="launch-workbench compact-workbench">
+                <form class="config-grid" id="launchConfig" aria-label="Launch configuration">
+                  <label>
+                    <span>Token name</span>
+                    <input id="tokenName" type="text" value="MoonKit" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>Ticker symbol</span>
+                    <input id="tokenSymbol" type="text" value="MKT" maxlength="10" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>Total supply</span>
+                    <input id="tokenSupply" type="text" value="1,000,000,000" inputmode="numeric" max="10000000000" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>Description</span>
+                    <input id="tokenDescription" type="text" value="AI avatar swarm launch" autocomplete="off">
+                  </label>
+                  <label class="logo-input-row">
+                    <span>Token logo</span>
+                    <input id="tokenLogoFile" type="file" accept="image/png,image/jpeg">
+                  </label>
+                  <div class="token-logo-preview" id="tokenLogoPreview"></div>
+                  <label>
+                    <span>Target market cap</span>
+                    <input id="targetMarketCapUsd" type="text" value="250,000" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>SOL to spend</span>
+                    <input id="launchSol" type="number" value="3.5" min="0" step="0.1">
+                  </label>
+                  <label>
+                    <span>AI Avatar Collection</span>
+                    <input id="avatarCollectionName" type="text" value="MoonKit Avatars" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>Number of avatars</span>
+                    <input id="avatarSupply" type="number" value="777" min="1" step="1">
+                  </label>
+                </form>
+                <section class="vanity-panel" aria-label="Vanity CA grinder">
+                  <div class="manifest-head">
+                    <span>
+                      <span class="eyebrow">Custom Vanity CA</span>
+                      <h3>Starts &amp; Ends With</h3>
+                    </span>
+                    <span class="risk-badge danger">Classic</span>
+                  </div>
+                  <div class="vanity-inputs">
+                    <label>
+                      <span>Start</span>
+                      <input id="vanityStart" type="text" value="" placeholder="eg MKT" autocomplete="off">
+                    </label>
+                    <label>
+                      <span>End</span>
+                      <input id="vanityEnd" type="text" value="" placeholder="eg K1T" autocomplete="off">
+                    </label>
+                  </div>
+                  <div class="candidate-strip" id="vanityCandidates">
+                    <button class="pill-button is-active" type="button" data-action="noop" data-message="Random mint selected">Random CA</button>
+                    <button class="pill-button" type="button" data-action="start-vanity">Grind CA</button>
+                  </div>
+                </section>
+                <section class="manifest-panel" id="avatarCollectionPanel" aria-label="Avatar collection launch"></section>
+              </div>
+
+              <details class="drawer classic-controls">
+                <summary>
+                  <span>Classic parity controls</span>
+                  <strong id="classicSummary">Wallet · CA · pools · funding · recovery</strong>
+                </summary>
+                <form class="classic-grid" id="classicConfig" aria-label="Classic launch parity configuration">
+                  <label>
+                    <span>SOL pool %</span>
+                    <input id="mainPoolPercent" type="number" value="70" min="0" max="100" step="0.1">
+                  </label>
+                  <label>
+                    <span>Quote pool %</span>
+                    <input id="quotePoolPercent" type="number" value="10" min="0" max="100" step="0.1">
+                  </label>
+                  <label>
+                    <span>Prealloc %</span>
+                    <input id="preallocationSupplyPercent" type="number" value="0" min="0" max="99" step="0.1">
+                  </label>
+                  <label>
+                    <span>Quote venue</span>
+                    <select id="quotePoolVenue">
+                      <option value="meme" selected>Meme flywheel</option>
+                      <option value="reserve">Reserve flywheel</option>
+                      <option value="usdc">Stable USDC</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Main slices</span>
+                    <input id="sliceShares" type="text" value="98,1,1" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>Ladder bands</span>
+                    <input id="ladderBands" type="number" value="5" min="0" max="20" step="1">
+                  </label>
+                  <label>
+                    <span>Support SOL</span>
+                    <input id="supportSol" type="number" value="0.35" min="0" step="0.05">
+                  </label>
+                  <label>
+                    <span>Airdrop wallets</span>
+                    <input id="airdropWallets" type="number" value="0" min="0" step="1">
+                  </label>
+                  <label>
+                    <span>Fee Key recipient</span>
+                    <input id="feeKeyRecipient" type="text" value="" placeholder="Optional wallet" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>Sweep destination</span>
+                    <input id="sweepDestination" type="text" value="" placeholder="Destination wallet" autocomplete="off">
+                  </label>
+                </form>
+                <div class="operator-toolbar" aria-label="Classic pool actions">
+                  <button class="pill-button" type="button" data-action="round-slices-100">Round slices to 100%</button>
+                  <button class="pill-button" type="button" data-action="add-custom-pool">Add quote pool</button>
+                </div>
+                <div class="pool-editor-panel" id="poolEditorPanel" aria-label="Custom pool editor"></div>
+                <div class="airdrop-report-grid">
+                  <section class="operator-subpanel" aria-label="Airdrop CSV import">
+                    <div class="subpanel-head">
+                      <span>
+                        <span class="eyebrow">Airdrop</span>
+                        <h3>CSV recipients</h3>
+                      </span>
+                      <span class="risk-badge warn" id="airdropSummary">Off</span>
+                    </div>
+                    <div class="airdrop-budget-controls">
+                      <label>
+                        <span>Budget %</span>
+                        <input id="airdropSupplyPercent" type="number" value="2" min="0" max="99" step="0.1">
+                      </label>
+                      <label class="toggle-line">
+                        <input id="airdropAutoFit" type="checkbox" checked>
+                        <span>Auto-fit</span>
+                      </label>
+                    </div>
+                    <textarea id="airdropCsvText" rows="4" spellcheck="false" placeholder="wallet,tokens&#10;Recipient111...,1000"></textarea>
+                    <div class="operator-toolbar compact">
+                      <button class="pill-button" type="button" data-action="sample-airdrop">Sample CSV</button>
+                      <button class="pill-button" type="button" data-action="fit-airdrop-budget">Fit budget</button>
+                      <button class="pill-button" type="button" data-action="clear-airdrop">Clear</button>
+                    </div>
+                    <div class="airdrop-budget-panel" id="airdropBudgetPanel"></div>
+                    <div class="mini-table" id="airdropRecipientPreview"></div>
+                  </section>
+                  <section class="operator-subpanel" aria-label="Launch report export">
+                    <div class="subpanel-head">
+                      <span>
+                        <span class="eyebrow">Report and sweep</span>
+                        <h3>Classic Step 6</h3>
+                      </span>
+                      <span class="risk-badge" id="reportSummary">Draft</span>
+                    </div>
+                    <div class="mini-table" id="reportPreview"></div>
+                    <div class="operator-toolbar compact">
+                      <button class="pill-button" type="button" data-action="toggle-report-publish">Toggle publish</button>
+                      <button class="pill-button" type="button" data-action="download-report-preview">Download preview</button>
+                    </div>
+                  </section>
+                </div>
+              </details>
+            </section>
+
+            <section class="classic-bridge" id="classicBridge" aria-label="Classic launch parity bridge"></section>
+
+            <section class="launch-console" id="launchConsole" aria-label="Launch readout">
+              <div class="asset-lockup">
+                <span class="asset-mark" id="assetMark">MK</span>
+                <span>
+                  <strong id="assetName">MoonKit</strong>
+                  <small id="assetSymbol">MKT</small>
+                </span>
+              </div>
+              <div class="launch-readout" id="launchReadout"></div>
+            </section>
+
+            <details class="drawer">
+              <summary>
+                <span>2. Launch steps</span>
+                <strong id="runbookSummary">6 phases</strong>
+              </summary>
+              <div class="stage-list" id="stageList"></div>
+            </details>
+
+            <section class="signature-panel" id="signaturePanel" aria-label="Launch run progress"></section>
+
+            <details class="drawer diagnostics-drawer">
+              <summary>
+                <span>Diagnostics</span>
+                <strong id="preflightSummary">2 warnings</strong>
+              </summary>
+              <div class="diagnostics-grid">
+                <div>
+                  <span class="eyebrow">System status</span>
+                  <h3>What is real here</h3>
+                </div>
+                <div>
+                  <span class="eyebrow">Preflight</span>
+                  <h3>Checks</h3>
+                </div>
+              </div>
+              <section class="live-ops-panel" id="liveOpsPanel" aria-label="Live launch activity"></section>
+              <div class="parity-list" id="parityPanel"></div>
+              <div class="guardrail-list" id="guardrailList"></div>
+            </details>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-wallet" aria-labelledby="viewTitle">
+        <div class="two-column">
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">Trebuchet wallet</span>
+                <h2>App-managed wallets</h2>
+              </div>
+              <div class="button-pair">
+                <button class="secondary-button compact" type="button" data-action="import-wallet">
+                  <i class="fa-solid fa-file-import"></i>
+                  <span>Import</span>
+                </button>
+                <button class="secondary-button compact" type="button" id="newVaultButton">
+                  <i class="fa-solid fa-plus"></i>
+                  <span>Wallet</span>
+                </button>
+              </div>
+            </div>
+            <div class="account-list" id="accountList"></div>
+          </section>
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">Funding and recovery</span>
+                <h2>Selected launch wallet</h2>
+              </div>
+            </div>
+            <div class="wallet-detail-panel" id="walletDetailPanel"></div>
+            <div class="asset-table" id="assetTable"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-discovery" aria-labelledby="viewTitle">
+        <div class="discovery-grid">
+          <section class="surface surface-main">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">Ecosystem discovery</span>
+                <h2>Tokens, avatar NFTs, and AI rooms</h2>
+              </div>
+              <span class="badge">Evidence</span>
+            </div>
+            <div class="discovery-source-banner" id="discoverySourceBanner"></div>
+            <div class="standards-strip" id="standardsStrip"></div>
+            <div class="discovery-table" id="discoveryTable"></div>
+          </section>
+          <aside class="rail">
+            <section class="surface">
+              <div class="section-heading">
+                <div>
+                  <span class="eyebrow">Selected token</span>
+                  <h2 id="selectedDiscoveryTitle">--</h2>
+                </div>
+              </div>
+              <div class="evidence-panel" id="evidencePanel"></div>
+            </section>
+            <section class="surface">
+              <div class="section-heading">
+                <div>
+                  <span class="eyebrow">Transaction Room</span>
+                  <h2 id="selectedChatTitle">--</h2>
+                </div>
+              </div>
+              <div class="chat-panel" id="chatPanel"></div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-history" aria-labelledby="viewTitle">
+        <section class="surface surface-main">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Launch journal</span>
+              <h2>Recent sessions</h2>
+            </div>
+          </div>
+          <div class="recovery-wizard" id="recoveryWizard"></div>
+          <div class="recovery-wallet-workspace" id="recoveryWalletWorkspace"></div>
+          <div class="history-execution-audit" id="historyExecutionAudit"></div>
+          <div class="timeline" id="timeline"></div>
+        </section>
+      </section>
+
+      <section class="view" id="view-settings" aria-labelledby="viewTitle">
+        <div class="two-column">
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">Security</span>
+                <h2>Default policy</h2>
+              </div>
+            </div>
+            <div class="settings-list" id="settingsList"></div>
+          </section>
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">Build target</span>
+                <h2>Local modes</h2>
+              </div>
+            </div>
+            <div class="mode-stack" id="modeStack"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="approval-window floating" id="approvalFloating" aria-live="polite"></div>
+  <div class="activity-drawer" id="activityLogDrawer" aria-hidden="true"></div>
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+  <script src="./api-client.js?v=30"></script>
+  <script src="./app.js?v=135"></script>
+</body>
+</html>

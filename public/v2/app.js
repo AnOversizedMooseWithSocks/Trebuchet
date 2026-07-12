@@ -1,0 +1,19045 @@
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+const views = {
+  launch: { eyebrow: 'Step 1 of 6 · Setup', title: 'Launch your token' },
+  wallet: { eyebrow: 'Wallet', title: 'Trebuchet wallets and launch assets' },
+  discovery: { eyebrow: 'Discovery', title: 'Token ecosystem discovery' },
+  history: { eyebrow: 'History', title: 'Launch journal' },
+  settings: { eyebrow: 'Settings', title: 'Security defaults' },
+};
+
+const accounts = [
+  { id: 'launch', name: 'Launch Wallet', address: '7WAr...p9Qx', balance: 18.42, role: 'Trebuchet-managed signer', color: '#6be2a2' },
+  { id: 'ops', name: 'Imported Ops Wallet', address: '4Ops...8mZi', balance: 6.18, role: 'Imported local wallet', color: '#ffbd61' },
+  { id: 'cold', name: 'Sweep Destination', address: '9Cld...2HaP', balance: 42.03, role: 'Watched destination', color: '#7fb0ff' },
+];
+
+const assets = [
+  { type: 'Fee Key', name: 'MKT SOL LP', detail: 'Burn & Earn lock proof attached', state: 'Verified' },
+  { type: 'NFT Collection', name: 'MoonKit Avatars', detail: 'Local avatar DB, Metaplex metadata, AI runtime seeds', state: 'Draft' },
+  { type: 'Report', name: 'MoonKit launch report', detail: 'Mint, pools, locks, fee-key transfers', state: 'Draft' },
+  { type: 'Token', name: 'MKT reserve', detail: 'Unallocated supply sweep target', state: 'Pending' },
+];
+
+const launchStages = [
+  {
+    id: 'model',
+    title: 'Stage model',
+    detail: 'Token metadata, pool topology, airdrops, report preference, and launch-plan fingerprint.',
+    criteria: ['token-config-parity', 'pool-config-parity'],
+  },
+  {
+    id: 'wallet',
+    title: 'Prepare wallet',
+    detail: 'Trebuchet-managed signer, Recovery PIN, saved Vanity CA options, and local custody.',
+    criteria: ['wallet-lifecycle', 'vanity-options'],
+  },
+  {
+    id: 'fund',
+    title: 'Fund and verify',
+    detail: 'Classic estimate, SOL balance, quote-token acquire/manual prefund, and held-reserve backing.',
+    criteria: ['funding-and-quote', 'held-reserve-backing'],
+  },
+  {
+    id: 'live',
+    title: 'Run live launch',
+    detail: 'Non-demo v2 execution through token, pools, locks, Fee Keys, airdrop, and final sweep.',
+    requirements: ['live-proof'],
+  },
+  {
+    id: 'report',
+    title: 'Publish proof',
+    detail: 'Terminal-sweep-bound report or local dossier with final sweep evidence hash.',
+    requirements: ['report-proof'],
+    criteria: ['sweep-report-proof'],
+  },
+  {
+    id: 'compare',
+    title: 'Compare and retire',
+    detail: 'Completed Classic artifact comparison, passing audit, and all replacement criteria.',
+    requirements: ['classic-comparison', 'audit', 'replacement-criteria'],
+    criteria: ['classic-artifact-comparison', 'proof-audit'],
+  },
+];
+
+const baseTransactions = [
+  {
+    id: 'tx-config',
+    label: 'Seal launch configuration',
+    risk: 'Low',
+    cost: 0,
+    state: 'pending',
+    effects: ['Hashes token, pool, and collection settings', 'Stores the run checkpoint'],
+  },
+  {
+    id: 'tx-funding',
+    label: 'Verify funded launch wallet',
+    risk: 'Medium',
+    cost: 3.5,
+    state: 'pending',
+    effects: ['Checks launch wallet SOL and quote-token balances', 'Confirms run envelope spend limit'],
+  },
+  {
+    id: 'tx-mint',
+    label: 'Create mint and metadata',
+    risk: 'Low',
+    cost: 0.024,
+    state: 'pending',
+    effects: ['Trebuchet signs mint creation locally', 'Uploads metadata', 'Creates launch wallet token account'],
+  },
+  {
+    id: 'tx-authority',
+    label: 'Revoke authorities',
+    risk: 'Medium',
+    cost: 0.006,
+    state: 'pending',
+    effects: ['Revokes mint authority', 'Revokes freeze authority', 'Locks metadata policy'],
+  },
+  {
+    id: 'tx-avatar-collection',
+    label: 'Launch avatar NFT collection',
+    risk: 'Medium',
+    cost: 0.061,
+    state: 'pending',
+    effects: ['Creates avatar collection mint', 'Writes local DB manifest', 'Pins persona metadata'],
+  },
+  {
+    id: 'tx-pool',
+    label: 'Create Raydium CLMM pools',
+    risk: 'High',
+    cost: 0.34,
+    state: 'pending',
+    effects: ['Creates SOL pool plan', 'Creates quote venue accounts', 'Checks price band inputs'],
+  },
+  {
+    id: 'tx-lock',
+    label: 'Open, lock, and transfer Fee Keys',
+    risk: 'Medium',
+    cost: 2.458,
+    state: 'pending',
+    effects: ['Opens main and support liquidity positions', 'Burn & Earn locks LP', 'Transfers Fee Keys'],
+  },
+  {
+    id: 'tx-report',
+    label: 'Publish launch report',
+    risk: 'Low',
+    cost: 0.002,
+    state: 'pending',
+    effects: ['Writes report hash', 'Exports local audit file', 'Prepares share link'],
+  },
+];
+
+const guardrails = [
+  { id: 'rpc', title: 'Dedicated RPC', detail: 'Mainnet launch is using a non-public RPC endpoint.', state: 'pass' },
+  { id: 'authority', title: 'Authority posture', detail: 'Mint and freeze authorities are scheduled for revocation.', state: 'pass' },
+  { id: 'avatar-db', title: 'Avatar DB snapshot', detail: 'Collection launch references a local manifest hash before minting.', state: 'pass' },
+  { id: 'avatar-gate', title: 'NFT ownership gate', detail: 'Avatar runtime claim follows current collection ownership.', state: 'pass' },
+  { id: 'preallocation', title: 'Preallocation optics', detail: 'Team/support allocation exceeds default threshold.', state: 'warn' },
+  { id: 'wallet-control', title: 'Local signing wallet', detail: 'Trebuchet signs launch operations from its encrypted local wallet after the run is armed.', state: 'pass' },
+  { id: 'resume', title: 'Recovery journal', detail: 'Every durable chain phase will be checkpointed.', state: 'pass' },
+];
+
+const parityFeatures = [
+  { id: 'wallet', title: 'Trebuchet launch wallet', real: true, preview: true, detail: 'Generate/import locally, show funding address, unlock with PIN.' },
+  { id: 'grinder', title: 'Custom Vanity CA grinder', real: true, preview: true, detail: 'Starts, ends, starts-and-ends, saved candidates, native helper.' },
+  { id: 'token', title: 'Token metadata', real: true, preview: true, detail: 'Name, ticker, supply, description, target market cap, logo handoff.' },
+  { id: 'charts', title: 'Launch charts', real: true, preview: true, detail: 'Tokenomics, liquidity depth, funding, and run progress.' },
+  { id: 'pool-model', title: 'Pool topology', real: true, preview: true, detail: 'Main pool, ladder bands, quote pools, Fee Key routing.' },
+  { id: 'funding', title: 'Funding and acquire', real: true, preview: true, detail: 'Uses classic estimator and quote-token acquire job contract.' },
+  { id: 'execution', title: 'Local run execution', real: true, preview: true, detail: 'Mint, pools, locks, airdrops, sweep, reports after one armed run.' },
+  { id: 'recovery', title: 'Recovery journal', real: true, preview: true, detail: 'Reads local API inventory when available.' },
+  { id: 'sweep-report', title: 'Sweep and report', real: true, preview: true, detail: 'Classic transfer, Fee Key, airdrop, sweep, and report surfaces represented.' },
+];
+
+const classicParityPhases = [
+  { id: 'wallet', title: 'Wallet', detail: 'Generate, import, QR, PIN recovery', action: 'generate-wallet' },
+  { id: 'vanity', title: 'Vanity CA', detail: 'Split start/end grind and saved candidates', action: 'start-vanity' },
+  { id: 'token', title: 'Token', detail: 'Metadata, supply, logo, authorities', action: 'review-plan' },
+  { id: 'pools', title: 'Pools', detail: 'SOL, flywheel, slices, ladder, support', action: 'review-plan' },
+  { id: 'funding', title: 'Funding', detail: 'Estimate SOL and quote acquisition', action: 'estimate-funding' },
+  { id: 'execution', title: 'Execute', detail: 'Mint, create pools, lock, Fee Keys', action: 'check-readiness' },
+  { id: 'recovery', title: 'Recover', detail: 'Journal-aware resume and diagnostics', action: 'inspect-recovery' },
+  { id: 'sweep', title: 'Sweep', detail: 'Airdrop, report, Fee Keys, final sweep', action: 'review-plan' },
+];
+
+const DEFAULT_SOL_MINT = 'So11111111111111111111111111111111111111112';
+const DEFAULT_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const V2_REPORT_DATA_VERSION = 15;
+const CLASSIC_QUOTE_VENUES = Object.freeze({
+  meme: {
+    key: 'meme',
+    label: 'Meme flywheel',
+    symbol: 'MEME',
+    quoteToken: 'HipYKXiDh3Kjd1jb7ji6jCEsKQMSGWiFJMdtvH8yb5r',
+    quoteMint: 'HipYKXiDh3Kjd1jb7ji6jCEsKQMSGWiFJMdtvH8yb5r',
+  },
+  reserve: {
+    key: 'reserve',
+    label: 'Reserve flywheel',
+    symbol: 'RESERVE',
+    quoteToken: 'J1bZFRAFC8ALqAN7ktkcCpobgoeTGfP5Xh1BwCP1oqoj',
+    quoteMint: 'J1bZFRAFC8ALqAN7ktkcCpobgoeTGfP5Xh1BwCP1oqoj',
+  },
+  usdc: {
+    key: 'usdc',
+    label: 'Stable USDC',
+    symbol: 'USDC',
+    quoteToken: 'USDC',
+    quoteMint: DEFAULT_USDC_MINT,
+  },
+});
+const CLASSIC_LADDER_DEFAULT_SUPPLY_PERCENT = 50;
+const CLASSIC_LADDER_DEFAULT_CEILING_MULTIPLIER = 1000;
+const CLASSIC_LADDER_MAX_BANDS = 20;
+const CLASSIC_TOKEN_NAME_MAX_BYTES = 32;
+const CLASSIC_TOKEN_SYMBOL_MAX_BYTES = 10;
+const CLASSIC_TOKEN_DESCRIPTION_MAX_BYTES = 1000;
+const CLASSIC_MAX_WHOLE_TOKEN_SUPPLY = 10_000_000_000n;
+const CLASSIC_LOGO_MAX_BYTES = 100 * 1024;
+const CLASSIC_LOGO_MAX_DIMENSION = 1024;
+const CLASSIC_LOGO_MIN_DIMENSION = 64;
+const V2_REQUIRED_LAUNCH_PLAN_OPERATION_IDS = Object.freeze([
+  'v2-wallet-and-ca',
+  'v2-funding-check',
+  'v2-mint-metadata',
+  'v2-revoke-authorities',
+  'v2-avatar-collection',
+  'v2-create-liquidity-pools',
+  'v2-lock-liquidity',
+  'v2-report-sweep',
+]);
+const EXECUTION_LEDGER_STORAGE_KEY = 'trebuchet:v2:execution-ledger:v1';
+const EXECUTION_LEDGER_MAX_ENTRIES = 20;
+const EXECUTION_LEDGER_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const LAUNCH_PROOF_STORAGE_KEY = 'trebuchet:v2:launch-proof:v1';
+const LAUNCH_PROOF_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const LAUNCH_PROOF_STORAGE_LIMIT = 1000000;
+const LAUNCH_PROOF_IMPORT_LIMIT = 2000000;
+const WALLET_BALANCE_REFRESH_INTERVAL_MS = 8000;
+const WALLET_BALANCE_FRESH_MS = 60 * 1000;
+const CLASSIC_REPORT_COMPARISON_STORAGE_KEY = 'trebuchet:v2:classic-report-comparison:v1';
+const CLASSIC_REPORT_COMPARISON_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const CLASSIC_REPORT_COMPARISON_INPUT_LIMIT = 50000;
+const CLASSIC_REPORT_COMPARISON_ROW_LIMIT = 80;
+const CLASSIC_ARTIFACT_IMPORT_LIMIT = 1000000;
+const V2_HTML_PROOF_AIRDROP_SAMPLE_LIMIT = 100;
+const V2_VIEWPORT_SMOKE_REQUIRED_ASSETS = Object.freeze(['index.html', 'styles.css', 'api-client.js', 'app.js']);
+const V2_VIEWPORT_SMOKE_REQUIRED_CHECKS = Object.freeze([
+  'launchVisible',
+  'horizontalOverflow',
+  'tokenomicsChart',
+  'liquidityChart',
+  'fundingMeter',
+  'parityPanel',
+  'firstViewportFit',
+]);
+const DEFAULT_CLMM_FEE_TIERS = Object.freeze([
+  { index: 2, tradeFeeRate: 100, tickSpacing: 1 },
+  { index: 1, tradeFeeRate: 500, tickSpacing: 10 },
+  { index: 0, tradeFeeRate: 2500, tickSpacing: 60 },
+  { index: 3, tradeFeeRate: 10000, tickSpacing: 120 },
+]);
+
+const standards = [
+  { title: 'Token', detail: 'Mint, pools, holders, authority' },
+  { title: 'Avatar NFTs', detail: 'Collection, traits, ownership gate' },
+  { title: 'AI Swarm', detail: 'Wallet personas and room triggers' },
+  { title: 'Provenance', detail: 'Reports, metadata, local DB hash' },
+];
+
+const discoveryDataNotice = {
+  label: 'Mock dataset',
+  detail: 'Sample evidence only. Real Trebuchet report ingestion and chain/indexer verification are not connected yet.',
+};
+
+const discoveryTokens = [
+  {
+    id: 'mesh',
+    name: 'Kinetic Mesh',
+    symbol: 'MESH',
+    score: 94,
+    status: 'Pass',
+    confidence: 'High',
+    source: 'Mock Trebuchet report + chain sample',
+    dataSource: 'Mock sample',
+    color: '#6be2a2',
+    summary: 'Clean launch report, strong pool spread, revoked authorities, and steady holder growth.',
+    metrics: { liquidity: '4 pools', holders: '18.2k holders', authority: 'Revoked', depth: '$2.8m depth' },
+    evidence: [
+      ['Liquidity diversity', '31% largest pool, four routeable venues'],
+      ['Holder distribution', 'Top 10 at 33%, no hidden reserve cluster'],
+      ['Authority posture', 'Mint and freeze revoked, metadata disclosed'],
+      ['Launch provenance', 'Report hash and Fee Key mints verified'],
+    ],
+  },
+  {
+    id: 'atlas',
+    name: 'Atlas Yield',
+    symbol: 'ATY',
+    score: 88,
+    status: 'Pass',
+    confidence: 'Medium',
+    source: 'Mock chain + indexer sample',
+    dataSource: 'Mock sample',
+    color: '#7fb0ff',
+    summary: 'Good liquidity and transparent multisig policy, but one CLMM venue carries extra depth.',
+    metrics: { liquidity: '3 pools', holders: '9.7k holders', authority: 'Multisig', depth: '$1.4m depth' },
+    evidence: [
+      ['Liquidity diversity', '38% largest pool, quote diversity improving'],
+      ['Holder distribution', 'Top 10 at 39%, contributor wallets labeled'],
+      ['Authority posture', 'Metadata held by 3/5 multisig with disclosure'],
+      ['Launch provenance', 'No Trebuchet report; chain evidence only'],
+    ],
+  },
+  {
+    id: 'north',
+    name: 'Northstar',
+    symbol: 'NSTR',
+    score: 82,
+    status: 'Pass',
+    confidence: 'Medium',
+    source: 'Mock Trebuchet report sample',
+    dataSource: 'Mock sample',
+    color: '#ffbd61',
+    summary: 'Excellent locked-liquidity spread with smaller volume and incomplete holder labels.',
+    metrics: { liquidity: '5 pools', holders: '6.4k holders', authority: 'Revoked', depth: '$740k depth' },
+    evidence: [
+      ['Liquidity diversity', '27% largest pool, five locked ranges'],
+      ['Holder distribution', 'Top 10 at 41%, team labels incomplete'],
+      ['Authority posture', 'Mint/freeze revoked, metadata immutable'],
+      ['Launch provenance', 'Launch report and Fee Key transfers verified'],
+    ],
+  },
+  {
+    id: 'circuit',
+    name: 'Circuit Mint',
+    symbol: 'CIRC',
+    score: 71,
+    status: 'Watch',
+    confidence: 'Low',
+    source: 'Mock chain-only sample',
+    dataSource: 'Mock sample',
+    color: '#f36f5a',
+    summary: 'Promising depth, but top-pool concentration and timed authority controls need watching.',
+    metrics: { liquidity: '2 pools', holders: '4.1k holders', authority: 'Timed lock', depth: '$510k depth' },
+    evidence: [
+      ['Liquidity diversity', '46% largest pool, limited route diversity'],
+      ['Holder distribution', 'Top 10 at 48%, possible related wallets'],
+      ['Authority posture', 'Timed controls disclosed, not fully revoked'],
+      ['Launch provenance', 'No launch report or Fee Key proof found'],
+    ],
+  },
+];
+
+const avatarEcosystems = {
+  mesh: {
+    collection: {
+      name: 'Mesh Avatars',
+      symbol: 'MESH-AI',
+      supply: 2048,
+      minted: 1882,
+      source: 'local avatar DB',
+      manifest: 'db://avatars/mesh-v4',
+      gate: 'NFT holder claim',
+      assignment: 'wallet + token mint seed',
+    },
+    swarm: {
+      room: 'mesh-live',
+      activeAvatars: 426,
+      triggers: ['buy', 'send', 'LP add', 'NFT claim'],
+      events: [
+        {
+          from: 'MESH-042',
+          to: 'MESH-118',
+          amount: '42,000 MESH',
+          line: 'Route depth improved. Confidence moved from 91 to 94.',
+        },
+        {
+          from: 'MESH-118',
+          to: 'MESH-901',
+          amount: '8,400 MESH',
+          line: 'Holder cluster remains clean. No linked reserve cluster detected.',
+        },
+      ],
+    },
+    avatars: [
+      { name: 'MESH-042', role: 'liquidity scout', color: '#6be2a2' },
+      { name: 'MESH-118', role: 'flow monitor', color: '#7fb0ff' },
+      { name: 'MESH-901', role: 'provenance keeper', color: '#b09cff' },
+    ],
+  },
+  atlas: {
+    collection: {
+      name: 'Atlas Operators',
+      symbol: 'ATLAS-AI',
+      supply: 1024,
+      minted: 612,
+      source: 'local avatar DB',
+      manifest: 'db://avatars/atlas-v2',
+      gate: 'NFT holder claim',
+      assignment: 'wallet + collection mint seed',
+    },
+    swarm: {
+      room: 'atlas-yield',
+      activeAvatars: 118,
+      triggers: ['stake', 'send', 'treasury move'],
+      events: [
+        {
+          from: 'ATY-014',
+          to: 'ATY-233',
+          amount: '12,000 ATY',
+          line: 'Treasury routing changed. Disclosure found; concentration remains elevated.',
+        },
+        {
+          from: 'ATY-233',
+          to: 'ATY-771',
+          amount: '3,100 ATY',
+          line: 'Multisig posture logged. Waiting on second venue depth.',
+        },
+      ],
+    },
+    avatars: [
+      { name: 'ATY-014', role: 'treasury reader', color: '#7fb0ff' },
+      { name: 'ATY-233', role: 'policy witness', color: '#ffbd61' },
+      { name: 'ATY-771', role: 'risk monitor', color: '#f36f5a' },
+    ],
+  },
+  north: {
+    collection: {
+      name: 'Northstar Guides',
+      symbol: 'NSTR-AI',
+      supply: 777,
+      minted: 777,
+      source: 'local avatar DB',
+      manifest: 'db://avatars/northstar-v1',
+      gate: 'NFT holder claim',
+      assignment: 'wallet + token mint seed',
+    },
+    swarm: {
+      room: 'northstar-ranges',
+      activeAvatars: 203,
+      triggers: ['LP range', 'send', 'claim'],
+      events: [
+        {
+          from: 'NSTR-005',
+          to: 'NSTR-144',
+          amount: '7,770 NSTR',
+          line: 'Five bands are holding. Volume remains below trend.',
+        },
+        {
+          from: 'NSTR-144',
+          to: 'NSTR-602',
+          amount: '1,440 NSTR',
+          line: 'Wallet labels are sparse; holder grade stays provisional.',
+        },
+      ],
+    },
+    avatars: [
+      { name: 'NSTR-005', role: 'LP band watcher', color: '#ffbd61' },
+      { name: 'NSTR-144', role: 'volume analyst', color: '#6be2a2' },
+      { name: 'NSTR-602', role: 'wallet mapper', color: '#7fb0ff' },
+    ],
+  },
+  circuit: {
+    collection: {
+      name: 'Circuit Phantoms',
+      symbol: 'CIRC-AI',
+      supply: 512,
+      minted: 91,
+      source: 'local avatar DB',
+      manifest: 'db://avatars/circuit-draft',
+      gate: 'draft',
+      assignment: 'wallet + token mint seed',
+    },
+    swarm: {
+      room: 'circuit-watch',
+      activeAvatars: 24,
+      triggers: ['buy', 'authority change', 'send'],
+      events: [
+        {
+          from: 'CIRC-017',
+          to: 'CIRC-088',
+          amount: '5,000 CIRC',
+          line: 'Authority timer is visible. Revoke receipt not found.',
+        },
+        {
+          from: 'CIRC-088',
+          to: 'CIRC-309',
+          amount: '900 CIRC',
+          line: 'Second pool remains thin. Activity does not imply depth.',
+        },
+      ],
+    },
+    avatars: [
+      { name: 'CIRC-017', role: 'authority watcher', color: '#f36f5a' },
+      { name: 'CIRC-088', role: 'policy clock', color: '#b09cff' },
+      { name: 'CIRC-309', role: 'liquidity monitor', color: '#7fb0ff' },
+    ],
+  },
+};
+
+const signingPolicies = [
+  { title: 'Encrypted local keys', detail: 'Trebuchet stores launch-wallet secrets behind the Recovery PIN and device protection.', state: 'pass' },
+  { title: 'Managed wallet import', detail: 'Imported mnemonic, base58, or JSON keypairs become Trebuchet-controlled launch wallets after Recovery PIN unlock.', state: 'pass' },
+  { title: 'Fund before run', detail: 'Users transfer SOL or quote tokens into the selected Trebuchet-managed wallet.', state: 'pass' },
+  { title: 'Arm one run envelope', detail: 'A launch runs only after the user reviews decoded effects and spend limits.', state: 'pass' },
+  { title: 'Raw opaque operation', detail: 'Blocked until simulation and decoding succeed.', state: 'danger' },
+  { title: 'Third-party launch execution', detail: 'Blocked outside explicit Trebuchet launch sessions.', state: 'danger' },
+];
+
+const settings = [
+  { id: 'simulate', title: 'Require simulation before local signing', detail: 'Every app-signed operation needs decoded effects and balance deltas.', enabled: true },
+  { id: 'unsafe', title: 'Block unsafe preallocation by default', detail: 'Advanced override requires consequence acknowledgement.', enabled: true },
+  { id: 'journal', title: 'Encrypted recovery journal', detail: 'Persist resumable checkpoints for durable chain phases.', enabled: true },
+  { id: 'batch', title: 'One-click armed run', detail: 'After funding, Trebuchet may sign the decoded run envelope without per-transaction prompts.', enabled: true },
+];
+
+const localModes = [
+  { title: 'Electron local wallet', detail: 'Full launch orchestration, encrypted keys, journals, native helpers, and filesystem access.', state: 'Current' },
+  { title: 'SPA demo mode', detail: 'Browser-safe config, reports, discovery scoring, and dry runs without holding keys.', state: 'Preview' },
+  { title: 'Imported wallet support', detail: 'Import mnemonic, base58, or JSON local wallets with Recovery PIN unlock and explicit funding addresses.', state: 'Current' },
+  { title: 'External wallet funding', detail: 'External wallets fund Trebuchet wallets; they do not sign every launch transaction.', state: 'Current' },
+];
+
+const history = [
+  { title: 'v2 prototype rebuilt', detail: 'Trebuchet local wallet, Discovery evidence, and armed launch runs consolidated.', time: 'Just now' },
+  { title: 'Discovery scope tightened', detail: 'MVP now uses evidence, confidence, and on-chain provenance only.', time: 'Today' },
+  { title: 'macOS workaround scoped', detail: 'SPA/WASM direction added to avoid unsigned desktop friction.', time: 'Yesterday' },
+];
+
+const state = {
+  activeView: 'launch',
+  network: 'Mainnet',
+  connected: false,
+  accountId: accounts[0].id,
+  selectedDiscoveryId: discoveryTokens[0].id,
+  launchMode: 'guarded',
+  launchStage: 0,
+  simulated: false,
+  tokenLogo: null,
+  tokenLogoError: null,
+  approvalOpen: false,
+  activeApprovalId: null,
+  transactions: [],
+  launchPlan: null,
+  staging: false,
+  apiClient: null,
+  apiStatus: 'loading',
+  apiDetail: 'Checking local API...',
+  demoActive: false,
+  rpcActiveUrl: null,
+  rpcSaved: [],
+  rpcName: 'Mainnet',
+  rpcHealth: 'unknown',
+  rpcHealthLabel: 'unknown',
+  rpcLatencyMs: null,
+  rpcError: null,
+  rpcBusy: null,
+  rpcTestResult: null,
+  viewportSmoke: null,
+  appVersion: null,
+  releaseUrl: 'https://github.com/AnOversizedMooseWithSocks/Trebuchet/releases',
+  releaseTrust: {
+    status: 'unsigned-test-artifact',
+    label: 'Unsigned test artifact',
+    signingStatus: 'unsigned',
+    notarizationStatus: 'not-notarized',
+    platform: null,
+    detail: 'Release downloads should be treated as unsigned and not notarized unless the release notes explicitly say otherwise.',
+  },
+  updateCheck: {
+    available: false,
+    checking: false,
+    lastResult: null,
+    lastCheckedAt: null,
+    error: null,
+  },
+  secretPin: {
+    configured: false,
+    unlocked: false,
+    locked: false,
+    version: null,
+    kdf: null,
+    deviceSecretProtected: false,
+    deviceSecretAvailable: true,
+    busy: null,
+  },
+  prefs: {
+    publishLaunchReport: true,
+    checkForUpdatesOnStartup: true,
+  },
+  recovery: {
+    journals: [],
+    pendingWallets: [],
+    journalCount: 0,
+    activeJournalCount: 0,
+    failedJournalCount: 0,
+    pendingWalletCount: 0,
+  },
+  managedWallets: [],
+  selectedWalletPublicKey: null,
+  walletQr: {
+    publicKey: null,
+    qrCode: null,
+    loading: false,
+    error: null,
+  },
+  revealedWallet: null,
+  revealError: null,
+  revealingWalletPublicKey: null,
+  discardingWalletPublicKey: null,
+  sweepingWalletPublicKey: null,
+  lastRecoverySweep: null,
+  lastSecretPinReset: null,
+  lastRunEnvelope: null,
+  vanityCandidates: [],
+  selectedVanityPublicKey: null,
+  vanityAvailable: false,
+  vanityReason: null,
+  vanityRunning: false,
+  vanityProgress: null,
+  vanityProgressStats: null,
+  vanitySource: null,
+  classicFundingEstimate: null,
+  quoteAcquire: {
+    jobId: null,
+    job: null,
+    fingerprint: null,
+    running: false,
+    polling: false,
+    error: null,
+    lastUpdatedAt: null,
+    notifiedDone: false,
+  },
+  manualPrefund: {
+    walletPublicKey: null,
+    balance: null,
+    polling: false,
+    error: null,
+    lastUpdatedAt: null,
+  },
+  fundingWallet: {
+    walletPublicKey: null,
+    funder: null,
+    amount: null,
+    checking: false,
+    checkedAt: null,
+    exhausted: false,
+    error: null,
+  },
+  solflare: {
+    publicKey: null,
+    status: 'Not connected',
+    connecting: false,
+    disconnecting: false,
+    error: null,
+    connectedAt: null,
+  },
+  quoteTokenInfo: {},
+  clmmFeeTiers: DEFAULT_CLMM_FEE_TIERS.map((tier) => ({ ...tier })),
+  clmmFeeTiersSource: 'fallback',
+  clmmFeeTiersError: null,
+  cancelRefund: {
+    running: false,
+    lastResult: null,
+    error: null,
+    completedAt: null,
+  },
+  executionReadiness: null,
+  executionChecking: false,
+  realExecutionRunning: false,
+  fullRunRunning: false,
+  fullRunStep: null,
+  lastFullRun: null,
+  lastRealExecution: null,
+  executionLedger: [],
+  launchProof: null,
+  reportPublishing: false,
+  lastReportPublish: null,
+  classicReportComparison: {
+    input: '',
+    result: null,
+    comparedAt: null,
+    error: null,
+  },
+  airdropRunning: false,
+  lastAirdropResult: null,
+  demoLaunchRunning: false,
+  lastDemoLaunchRun: null,
+  lastLocalDossier: null,
+  recoveryActionId: null,
+  lastRecoveryResult: null,
+  recoveryWizardStep: null,
+  liveOps: {
+    lp: null,
+    lpCursor: 0,
+    lpEvents: [],
+    airdrop: null,
+    airdropSnapshots: [],
+    logs: [],
+    logCursor: 0,
+    walletPublicKey: null,
+    polling: false,
+    lastUpdatedAt: null,
+  },
+  activityLog: {
+    open: false,
+    filter: 'all',
+  },
+  lastClassicDiagnostic: null,
+  baseManualLadderText: '',
+  baseSupportDepth: 12,
+  customPools: [],
+  customPoolCounter: 0,
+  airdropCsvText: '',
+  airdropParseError: null,
+  airdropBudgetError: null,
+  airdropRecipients: [],
+};
+
+let liveOpsTimer = null;
+let quoteAcquireTimer = null;
+let solflareWalletProvider = null;
+let solflareStandardProvider = null;
+let solflareWalletStandardListenersStarted = false;
+const solflareWalletStandardWallets = [];
+const SOLFLARE_PROVIDER_WAIT_MS = 1500;
+
+function v2LocalStorage() {
+  try {
+    return window.localStorage || null;
+  } catch {
+    return null;
+  }
+}
+
+function compactLedgerText(value, maxLength = 180) {
+  const text = String(value || '')
+    .replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, (match) => `${match.slice(0, 4)}...${match.slice(-4)}`)
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+}
+
+function normalizeExecutionLedgerEntry(entry, { restoring = false } = {}) {
+  if (!entry || typeof entry !== 'object') return null;
+  const startedAt = Number(entry.startedAt || Date.parse(entry.startedIso || ''));
+  if (!Number.isFinite(startedAt) || startedAt <= 0) return null;
+  if (Date.now() - startedAt > EXECUTION_LEDGER_MAX_AGE_MS) return null;
+  const validStatuses = new Set(['running', 'complete', 'warn', 'error']);
+  const status = validStatuses.has(entry.status) ? entry.status : 'warn';
+  const endedAt = Number(entry.endedAt || Date.parse(entry.endedIso || ''));
+  const normalized = {
+    id: compactLedgerText(entry.id || `ledger-${startedAt}`, 80),
+    endpoint: entry.endpoint ? compactLedgerText(entry.endpoint, 80) : null,
+    status,
+    startedAt,
+    startedIso: new Date(startedAt).toISOString(),
+    phase: compactLedgerText(entry.phase || 'run', 32) || 'run',
+    label: compactLedgerText(entry.label || 'Classic operation', 90) || 'Classic operation',
+    detail: compactLedgerText(entry.detail || entry.error || 'Guarded local-wallet execution.'),
+    estimatedCostSol: Number.isFinite(Number(entry.estimatedCostSol)) ? Number(entry.estimatedCostSol) : null,
+    balanceDeltaSol: Number.isFinite(Number(entry.balanceDeltaSol)) ? Number(entry.balanceDeltaSol) : null,
+    observedOutflowSol: Number.isFinite(Number(entry.observedOutflowSol)) ? Number(entry.observedOutflowSol) : null,
+    balanceBeforeSol: Number.isFinite(Number(entry.balanceBeforeSol)) ? Number(entry.balanceBeforeSol) : null,
+    balanceAfterSol: Number.isFinite(Number(entry.balanceAfterSol)) ? Number(entry.balanceAfterSol) : null,
+    balanceObservationError: entry.balanceObservationError ? compactLedgerText(entry.balanceObservationError) : null,
+    attempt: Math.max(1, Math.min(99, Math.floor(Number(entry.attempt || 1)) || 1)),
+  };
+  if (entry.error) normalized.error = compactLedgerText(entry.error);
+  if (Number.isFinite(endedAt) && endedAt >= startedAt) {
+    normalized.endedAt = endedAt;
+    normalized.endedIso = new Date(endedAt).toISOString();
+    normalized.durationMs = Math.max(0, Number(entry.durationMs || endedAt - startedAt));
+  } else if (Number.isFinite(Number(entry.durationMs))) {
+    normalized.durationMs = Math.max(0, Number(entry.durationMs));
+  }
+  if (restoring && normalized.status === 'running') {
+    const interruptedAt = Date.now();
+    normalized.status = 'warn';
+    normalized.endedAt = interruptedAt;
+    normalized.endedIso = new Date(interruptedAt).toISOString();
+    normalized.durationMs = Math.max(0, interruptedAt - startedAt);
+    normalized.detail = 'Interrupted before completion; check journals and recovery state before retrying.';
+  }
+  return normalized;
+}
+
+function persistExecutionLedger() {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    const entries = state.executionLedger
+      .map((entry) => normalizeExecutionLedgerEntry(entry))
+      .filter(Boolean)
+      .slice(0, EXECUTION_LEDGER_MAX_ENTRIES);
+    storage.setItem(EXECUTION_LEDGER_STORAGE_KEY, JSON.stringify(entries));
+  } catch {
+    // Local audit persistence is best-effort and must never block launch recovery.
+  }
+}
+
+function restoreExecutionLedger() {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    const parsed = JSON.parse(storage.getItem(EXECUTION_LEDGER_STORAGE_KEY) || '[]');
+    if (!Array.isArray(parsed)) return;
+    state.executionLedger = parsed
+      .map((entry) => normalizeExecutionLedgerEntry(entry, { restoring: true }))
+      .filter(Boolean)
+      .sort((a, b) => Number(b.startedAt || 0) - Number(a.startedAt || 0))
+      .slice(0, EXECUTION_LEDGER_MAX_ENTRIES);
+    persistExecutionLedger();
+  } catch {
+    state.executionLedger = [];
+  }
+}
+
+function storedLaunchProofConfig(proof = null, config = currentLaunchConfig()) {
+  return proofConfigForFingerprint(proof, config && typeof config === 'object' ? config : { poolTopology: {} });
+}
+
+function storedLaunchProofHasSignal(proof = null, config = currentLaunchConfig()) {
+  if (!proof || typeof proof !== 'object') return false;
+  const proofConfig = storedLaunchProofConfig(proof, config);
+  return Boolean(
+    proof.journalId
+      || proof.token?.mint
+      || proof.liquidity?.poolCount
+      || proof.transfer
+      || reportPublishIsProofCurrent(proof.reportPublish, proof, proofConfig)
+      || localDossierIsProofCurrent(proof.localDossier, proof, proofConfig)
+  );
+}
+
+function pruneStoredLaunchProofArtifacts(proof = null, config = currentLaunchConfig()) {
+  return pruneLaunchProofEvidenceArtifacts(proof, storedLaunchProofConfig(proof, config));
+}
+
+function normalizeStoredLaunchProof(record = {}) {
+  const source = record && typeof record === 'object' ? record : {};
+  const rawProof = source.proof && typeof source.proof === 'object'
+    ? source.proof
+    : source;
+  if (!rawProof || typeof rawProof !== 'object') return null;
+  if (rawProof.source === 'demo-run') return null;
+  const rawProofConfig = storedLaunchProofConfig(rawProof);
+  if (!storedLaunchProofHasSignal(rawProof, rawProofConfig)) return null;
+  const savedAt = Number(source.savedAt || Date.parse(source.savedIso || rawProof.updatedAt || '')) || Date.now();
+  if (!Number.isFinite(savedAt) || Date.now() - savedAt > LAUNCH_PROOF_MAX_AGE_MS) return null;
+  try {
+    const serialized = JSON.stringify(rawProof);
+    if (!serialized || serialized.length > LAUNCH_PROOF_STORAGE_LIMIT) return null;
+    const parsedProof = JSON.parse(serialized);
+    const proofConfig = storedLaunchProofConfig(parsedProof, rawProofConfig);
+    const proof = pruneStoredLaunchProofArtifacts(parsedProof, proofConfig);
+    if (!storedLaunchProofHasSignal(proof, proofConfig)) return null;
+    return {
+      proof,
+      savedAt,
+      savedIso: new Date(savedAt).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistLaunchProof(proof = state.launchProof) {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    const normalized = normalizeStoredLaunchProof({ proof, savedAt: Date.now() });
+    if (!normalized) {
+      storage.removeItem(LAUNCH_PROOF_STORAGE_KEY);
+      return;
+    }
+    storage.setItem(LAUNCH_PROOF_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {
+    // Proof persistence is a local convenience; journals remain the source of truth.
+  }
+}
+
+function restoreLaunchProof() {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    const parsed = JSON.parse(storage.getItem(LAUNCH_PROOF_STORAGE_KEY) || '{}');
+    const normalized = normalizeStoredLaunchProof(parsed);
+    if (!normalized) {
+      storage.removeItem(LAUNCH_PROOF_STORAGE_KEY);
+      return;
+    }
+    state.launchProof = normalized.proof;
+    const proofConfig = storedLaunchProofConfig(normalized.proof);
+    state.lastReportPublish = reportPublishIsProofCurrent(normalized.proof?.reportPublish, normalized.proof, proofConfig)
+      ? normalized.proof.reportPublish
+      : null;
+    state.lastLocalDossier = localDossierIsProofCurrent(normalized.proof?.localDossier, normalized.proof, proofConfig)
+      ? normalized.proof.localDossier
+      : null;
+    storage.setItem(LAUNCH_PROOF_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {
+    storage.removeItem(LAUNCH_PROOF_STORAGE_KEY);
+  }
+}
+
+function clearStoredLaunchProof() {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    storage.removeItem(LAUNCH_PROOF_STORAGE_KEY);
+  } catch {
+    // Clearing local proof cache is best-effort.
+  }
+}
+
+function normalizeClassicComparisonRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const validStates = new Set(['pass', 'warn', 'missing', 'mismatch']);
+  return {
+    id: compactLedgerText(row.id || 'field', 80),
+    label: compactLedgerText(row.label || 'Classic field', 90),
+    expected: row.expected == null ? null : compactLedgerText(row.expected, 120),
+    actual: row.actual == null ? null : compactLedgerText(row.actual, 120),
+    state: validStates.has(row.state) ? row.state : 'warn',
+    detail: compactLedgerText(row.detail || 'Review this field.', 180),
+  };
+}
+
+function classicComparisonStatusFromCounts({ mismatchCount = 0, missingCount = 0, warnCount = 0 } = {}) {
+  if (Number(mismatchCount) > 0) return 'mismatch';
+  if (Number(missingCount) > 0) return 'missing';
+  if (Number(warnCount) > 0) return 'warn';
+  return 'pass';
+}
+
+function normalizeClassicReportComparison(comparison = {}) {
+  const comparedAt = Number(Date.parse(comparison.comparedAt || comparison.result?.comparedAt || ''));
+  const input = String(comparison.input || '');
+  const result = comparison.result && typeof comparison.result === 'object' ? comparison.result : null;
+  const normalized = {
+    input: input.length <= CLASSIC_REPORT_COMPARISON_INPUT_LIMIT ? input : '',
+    result: null,
+    comparedAt: Number.isFinite(comparedAt) ? new Date(comparedAt).toISOString() : null,
+    error: comparison.error ? compactLedgerText(comparison.error, 180) : null,
+  };
+  if (input.length > CLASSIC_REPORT_COMPARISON_INPUT_LIMIT && !normalized.error) {
+    normalized.error = 'Classic artifact text was too large to retain locally; comparison result was kept.';
+  }
+  if (!result) return normalized;
+  if (Number.isFinite(comparedAt) && Date.now() - comparedAt > CLASSIC_REPORT_COMPARISON_MAX_AGE_MS) {
+    return { input: '', result: null, comparedAt: null, error: null };
+  }
+  const rows = Array.isArray(result.rows)
+    ? result.rows.map(normalizeClassicComparisonRow).filter(Boolean).slice(0, CLASSIC_REPORT_COMPARISON_ROW_LIMIT)
+    : [];
+  const passCount = Math.max(0, Math.floor(Number(result.passCount || 0)) || 0);
+  const warnCount = Math.max(0, Math.floor(Number(result.warnCount || rows.filter((row) => row.state === 'warn').length)) || 0);
+  const missingCount = Math.max(0, Math.floor(Number(result.missingCount || rows.filter((row) => row.state === 'missing').length)) || 0);
+  const mismatchCount = Math.max(0, Math.floor(Number(result.mismatchCount || rows.filter((row) => row.state === 'mismatch').length)) || 0);
+  normalized.result = {
+    status: classicComparisonStatusFromCounts({ mismatchCount, missingCount, warnCount }),
+    comparedAt: normalized.comparedAt || new Date().toISOString(),
+    artifactKind: compactLedgerText(result.artifactKind || 'artifact', 24),
+    artifactSource: compactLedgerText(result.artifactSource || 'unknown', 32),
+    structuredEvidence: result.structuredEvidence === true,
+    proofFingerprint: typeof result.proofFingerprint === 'string' ? result.proofFingerprint.slice(0, 10000) : null,
+    passCount,
+    warnCount,
+    missingCount,
+    mismatchCount,
+    fieldCount: Math.max(0, Math.floor(Number(result.fieldCount || rows.length)) || rows.length),
+    classicMint: result.classicMint ? compactLedgerText(result.classicMint, 80) : null,
+    classicPoolCount: Math.max(0, Math.floor(Number(result.classicPoolCount || 0)) || 0),
+    rows,
+  };
+  return normalized;
+}
+
+function persistClassicReportComparison() {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    const comparison = normalizeClassicReportComparison(state.classicReportComparison);
+    if (!comparison.result && !comparison.input && !comparison.error) {
+      storage.removeItem(CLASSIC_REPORT_COMPARISON_STORAGE_KEY);
+      return;
+    }
+    storage.setItem(CLASSIC_REPORT_COMPARISON_STORAGE_KEY, JSON.stringify(comparison));
+  } catch {
+    // Report comparison persistence is advisory and should never block recovery.
+  }
+}
+
+function restoreClassicReportComparison() {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    const parsed = JSON.parse(storage.getItem(CLASSIC_REPORT_COMPARISON_STORAGE_KEY) || '{}');
+    state.classicReportComparison = normalizeClassicReportComparison(parsed);
+  } catch {
+    state.classicReportComparison = {
+      input: '',
+      result: null,
+      comparedAt: null,
+      error: null,
+    };
+  }
+}
+
+function clearExecutionAudit() {
+  state.executionLedger = [];
+  persistExecutionLedger();
+  renderSignaturePanel();
+  renderHistory();
+  notify('Execution audit cleared');
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function walletAccounts() {
+  if (state.managedWallets.length) {
+    return state.managedWallets.map((wallet, index) => ({
+      id: wallet.publicKey,
+      name: wallet.label || (index === 0 ? 'Launch Wallet' : `Local Wallet ${index + 1}`),
+      address: shortAddress(wallet.publicKey),
+      publicKey: wallet.publicKey,
+      balance: Number(wallet.balanceSol || 0),
+      role: wallet.source === 'imported-local'
+        ? 'Imported local wallet'
+        : wallet.hasSecretKey ? 'Trebuchet-managed signer' : 'Locked local wallet',
+      color: index === 0 ? '#6be2a2' : index === 1 ? '#ffbd61' : '#7fb0ff',
+      hasSecretKey: wallet.hasSecretKey === true,
+      hasMnemonic: wallet.hasMnemonic === true || typeof wallet.mnemonic === 'string',
+      decryptionFailed: wallet.decryptionFailed === true,
+      secretPinLocked: wallet.secretPinLocked === true,
+      qrCode: wallet.qrCode || null,
+      createdAt: wallet.createdAt || null,
+      source: wallet.source || 'local',
+    }));
+  }
+  return accounts;
+}
+
+function account() {
+  const rows = walletAccounts();
+  return rows.find((item) => item.id === state.accountId) || rows[0] || accounts[0];
+}
+
+function selectedDiscovery() {
+  return discoveryTokens.find((item) => item.id === state.selectedDiscoveryId) || discoveryTokens[0];
+}
+
+function selectedEcosystem() {
+  return avatarEcosystems[selectedDiscovery().id] || avatarEcosystems[discoveryTokens[0].id];
+}
+
+function selectedLaunchWalletPublicKey() {
+  return state.selectedWalletPublicKey || state.managedWallets[0]?.publicKey || null;
+}
+
+function selectedManagedWallet() {
+  const publicKey = selectedLaunchWalletPublicKey();
+  return state.managedWallets.find((wallet) => wallet.publicKey === publicKey) || null;
+}
+
+function pendingRecoveryWallet(publicKey) {
+  return state.recovery.pendingWallets.find((wallet) => wallet.publicKey === publicKey) || null;
+}
+
+function recoveryWalletState(wallet) {
+  if (wallet?.decryptionFailed) {
+    return {
+      label: 'Secret missing',
+      className: 'danger',
+      detail: 'Local metadata exists, but Trebuchet cannot decrypt the saved secret here.',
+    };
+  }
+  if (state.secretPin.locked || wallet?.secretPinLocked) {
+    return {
+      label: 'PIN locked',
+      className: 'warn',
+      detail: 'Unlock the Recovery PIN before revealing this launch wallet.',
+    };
+  }
+  if (wallet?.publicKey && wallet.publicKey === selectedLaunchWalletPublicKey()) {
+    return {
+      label: 'Selected',
+      className: '',
+      detail: 'This wallet is active for funding, recovery, and guarded launch execution.',
+    };
+  }
+  return {
+    label: 'Recoverable',
+    className: 'warn',
+    detail: 'Saved launch wallet secret is available through the guarded reveal flow.',
+  };
+}
+
+function fmtSol(value) {
+  return `${value.toFixed(3)} SOL`;
+}
+
+function clampPercent(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function parseWholeNumber(value) {
+  const cleaned = String(value || '').replace(/[^\d]/g, '');
+  const parsed = Number(cleaned || 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function parseNumericInput(value, fallback = 0) {
+  const parsed = Number(String(value ?? '').replace(/[$,%\s]/g, ''));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clampNumber(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
+function parsePercentInput(value, fallback = 0) {
+  return clampNumber(parseNumericInput(value, fallback), 0, 100);
+}
+
+function parsePositiveInteger(value, fallback = 0) {
+  const parsed = Math.floor(parseNumericInput(value, fallback));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function isTerminalJournal(journal) {
+  return ['completed', 'archived'].includes(String(journal?.status || '').toLowerCase());
+}
+
+function canResumeJournal(journal) {
+  if (!journal || state.demoActive || isTerminalJournal(journal)) return false;
+  if (!journalHasResumeMaterial(journal)) return false;
+  return !journalResumePlan(journal).manualRecoveryRequired;
+}
+
+function canDismissJournal(journal) {
+  return Boolean(journal?.id) && !isTerminalJournal(journal);
+}
+
+function journalHasResumeMaterial(journal) {
+  return Boolean(journal?.poolPlan || journal?.lp || journal?.token || journal?.stage);
+}
+
+function journalResultList(journal) {
+  const lp = journal?.lp || {};
+  if (Array.isArray(lp.results) && lp.results.length > 0) return lp.results;
+  if (Array.isArray(lp.partialResults) && lp.partialResults.length > 0) return lp.partialResults;
+  return [];
+}
+
+function journalAllocationForEvent(journal, event) {
+  const allocations = journal?.poolPlan?.allocations;
+  const index = Number(event?.allocationIndex);
+  return Number.isInteger(index) && Array.isArray(allocations) ? allocations[index] : null;
+}
+
+function journalDistributionForEvent(journal, event) {
+  const allocation = journalAllocationForEvent(journal, event);
+  return Array.isArray(allocation?.distribution) && allocation.distribution.length > 0
+    ? allocation.distribution
+    : [{ sharePercent: 100, recipient: null }];
+}
+
+function journalResultHasOpenedPhase1Position(result) {
+  return [
+    ...(Array.isArray(result?.mainPositions) ? result.mainPositions : []),
+    ...(Array.isArray(result?.ladderPositions) ? result.ladderPositions : []),
+    ...(Array.isArray(result?.supportPositions) ? result.supportPositions : []),
+  ].some((position) => position?.nftMint);
+}
+
+function journalIsResumeCheckpointResult(result) {
+  return Boolean(result?.poolId)
+    && (result.phase1Complete !== false || journalResultHasOpenedPhase1Position(result));
+}
+
+function mergeJournalResultCheckpoint(base, overlay) {
+  if (!base) return overlay;
+  const merged = { ...base, ...overlay };
+  [
+    ['mainPositions', 'sliceIndex'],
+    ['ladderPositions', 'bandIndex'],
+    ['supportPositions', 'supportIndex'],
+  ].forEach(([key, indexKey]) => {
+    const byIndex = new Map();
+    [
+      ...(Array.isArray(base?.[key]) ? base[key] : []),
+      ...(Array.isArray(overlay?.[key]) ? overlay[key] : []),
+    ].forEach((position, fallbackIndex) => {
+      const index = Number(position?.[indexKey] ?? (indexKey === 'supportIndex' ? fallbackIndex : NaN));
+      if (Number.isFinite(index)) byIndex.set(index, position);
+    });
+    merged[key] = [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, position]) => position);
+  });
+  merged.txIds = { ...(base.txIds || {}), ...(overlay.txIds || {}) };
+  merged.bootstrap = overlay.bootstrap || base.bootstrap || null;
+  return merged;
+}
+
+function upsertJournalPlanResult(results, nextResult) {
+  const index = results.findIndex((result) => result?.allocationIndex === nextResult?.allocationIndex);
+  if (index >= 0) results[index] = mergeJournalResultCheckpoint(results[index], nextResult);
+  else results.push(nextResult);
+  results.sort((a, b) => Number(a.allocationIndex ?? 0) - Number(b.allocationIndex ?? 0));
+}
+
+function applyJournalEventToPlanResults(results, event, journal) {
+  if (!event?.stage) return;
+  const allocationIndex = Number(event.allocationIndex);
+  let result = results.find((item) => Number(item?.allocationIndex) === allocationIndex);
+
+  if (event.stage === 'phase1_pool_done' && event.result) {
+    upsertJournalPlanResult(results, { ...event.result, phase1Complete: true });
+    return;
+  }
+
+  if (event.stage === 'pool_create_done' && event.poolId && Number.isInteger(allocationIndex)) {
+    const allocation = journalAllocationForEvent(journal, event) || {};
+    upsertJournalPlanResult(results, {
+      allocationIndex,
+      quoteSymbol: allocation.quoteSymbolOverride || allocation.quoteSymbol || allocation.quoteToken || null,
+      quoteAddress: allocation.quoteMint || allocation.quoteToken || null,
+      supplyPercent: allocation.supplyPercent ?? null,
+      poolId: event.poolId,
+      mainPositions: [],
+      ladderPositions: [],
+      supportPositions: [],
+      bootstrap: null,
+      txIds: { createPool: event.txId || null },
+      phase1Complete: false,
+    });
+    return;
+  }
+
+  if ((!result || !result.poolId) && event.poolId && Number.isInteger(allocationIndex)) {
+    const allocation = journalAllocationForEvent(journal, event) || {};
+    upsertJournalPlanResult(results, {
+      allocationIndex,
+      quoteSymbol: allocation.quoteSymbolOverride || allocation.quoteSymbol || allocation.quoteToken || null,
+      quoteAddress: allocation.quoteMint || allocation.quoteToken || null,
+      supplyPercent: allocation.supplyPercent ?? null,
+      poolId: event.poolId,
+      mainPositions: [],
+      ladderPositions: [],
+      supportPositions: [],
+      bootstrap: null,
+      txIds: { createPool: null },
+      phase1Complete: false,
+    });
+    result = results.find((item) => Number(item?.allocationIndex) === allocationIndex);
+  }
+  if (!result || !result.poolId) return;
+
+  if (event.stage === 'main_open_done') {
+    const sliceIndex = Number(event.sliceIndex);
+    if (!Number.isInteger(sliceIndex) || !event.nftMint) return;
+    const slice = journalDistributionForEvent(journal, event)[sliceIndex] || {};
+    upsertJournalPlanResult(results, {
+      ...result,
+      phase1Complete: false,
+      mainPositions: [
+        ...(Array.isArray(result.mainPositions) ? result.mainPositions : []).filter(
+          (position) => Number(position?.sliceIndex) !== sliceIndex,
+        ),
+        {
+          sliceIndex,
+          sharePercent: Number.isFinite(Number(slice.sharePercent)) ? Number(slice.sharePercent) : null,
+          tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+          tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+          nftMint: event.nftMint,
+          locked: false,
+          recipient: slice.recipient || null,
+          transferredTo: null,
+          baseAmountRaw: event.baseAmountRaw || null,
+          txIds: { open: event.txId || null, lock: null, transfer: null },
+        },
+      ],
+    });
+    return;
+  }
+
+  if (event.stage === 'ladder_open_done') {
+    const bandIndex = Number(event.bandIndex);
+    if (!Number.isInteger(bandIndex) || !event.nftMint) return;
+    upsertJournalPlanResult(results, {
+      ...result,
+      phase1Complete: false,
+      ladderPositions: [
+        ...(Array.isArray(result.ladderPositions) ? result.ladderPositions : []).filter(
+          (position) => Number(position?.bandIndex) !== bandIndex,
+        ),
+        {
+          bandIndex,
+          tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+          tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+          nftMint: event.nftMint,
+          locked: false,
+          baseAmountRaw: event.baseAmountRaw || null,
+          txIds: { open: event.txId || null, lock: null },
+        },
+      ],
+    });
+    return;
+  }
+
+  if (event.stage === 'support_open_done') {
+    if (!event.nftMint) return;
+    upsertJournalPlanResult(results, {
+      ...result,
+      phase1Complete: false,
+      supportPositions: [{
+        supportIndex: 0,
+        tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+        tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+        depthPct: Number.isFinite(Number(event.depthPct)) ? Number(event.depthPct) : null,
+        quoteRaw: event.quoteAmountRaw || null,
+        nftMint: event.nftMint,
+        locked: false,
+        txIds: { open: event.txId || null, lock: null },
+      }],
+    });
+    return;
+  }
+
+  if (event.stage === 'bootstrap_open_done') {
+    upsertJournalPlanResult(results, {
+      ...result,
+      bootstrap: {
+        nftMint: event.nftMint || null,
+        locked: false,
+        tickLower: Number.isFinite(event.tickLower) ? event.tickLower : null,
+        tickUpper: Number.isFinite(event.tickUpper) ? event.tickUpper : null,
+        txIds: { open: event.txId || null, lock: null },
+      },
+    });
+  }
+}
+
+function journalEventDerivedResults(journal) {
+  const results = [];
+  (Array.isArray(journal?.events) ? journal.events : []).forEach((event) => {
+    applyJournalEventToPlanResults(results, event, journal);
+  });
+  return results.filter(journalIsResumeCheckpointResult);
+}
+
+function journalPriorResults(journal) {
+  const byAllocation = new Map();
+  journalResultList(journal).filter(journalIsResumeCheckpointResult).forEach((result) => {
+    byAllocation.set(result.allocationIndex, result);
+  });
+  journalEventDerivedResults(journal).forEach((result) => {
+    byAllocation.set(
+      result.allocationIndex,
+      mergeJournalResultCheckpoint(byAllocation.get(result.allocationIndex), result),
+    );
+  });
+  return [...byAllocation.values()]
+    .filter(journalIsResumeCheckpointResult)
+    .sort((a, b) => Number(a.allocationIndex ?? 0) - Number(b.allocationIndex ?? 0));
+}
+
+function journalPoolCount(journal, priorResults = journalPriorResults(journal)) {
+  const allocations = journal?.poolPlan?.allocations;
+  if (Array.isArray(allocations) && allocations.length > 0) return allocations.length;
+  const maxIndex = priorResults.reduce((max, result) => {
+    const index = Number(result?.allocationIndex);
+    return Number.isFinite(index) ? Math.max(max, index) : max;
+  }, -1);
+  return maxIndex >= 0 ? maxIndex + 1 : priorResults.length;
+}
+
+function journalUnsafePoolEvents(journal, priorResults = journalPriorResults(journal)) {
+  const completed = new Set(priorResults.map((result) => result.allocationIndex));
+  return Array.isArray(journal?.events)
+    ? journal.events.filter(
+      (event) => event?.stage === 'pool_create_done' && !completed.has(event.allocationIndex),
+    )
+    : [];
+}
+
+function completedLpJournal(journal) {
+  return ['lp_created', 'transfer_started', 'transfer_partial', 'transfer_failed'].includes(journal?.stage)
+    && Array.isArray(journal?.lp?.results)
+    && journal.lp.results.length > 0
+    && !journal.lp.failedPhase;
+}
+
+function failedPhaseLabel(phase) {
+  const labels = {
+    pre_flight: 'Preflight',
+    main_positions: 'Pool positions',
+    bootstrap: 'Bootstrap',
+    locks: 'Burn & Earn locks',
+    transfers: 'Fee Key transfers',
+    resume: 'Resume',
+  };
+  return labels[phase] || humanizeStage(phase || 'checkpoint');
+}
+
+function journalFailureLabel(failure) {
+  const pool = Number.isFinite(Number(failure?.allocationIndex))
+    ? `Pool ${Number(failure.allocationIndex) + 1}`
+    : 'Pool';
+  const type = failure?.positionType ? humanizeStage(failure.positionType) : 'position';
+  if (Number.isFinite(Number(failure?.sliceIndex))) {
+    return `${pool} ${type} slice ${Number(failure.sliceIndex) + 1}`;
+  }
+  if (Number.isFinite(Number(failure?.bandIndex))) {
+    return `${pool} ladder band ${Number(failure.bandIndex) + 1}`;
+  }
+  if (Number.isFinite(Number(failure?.supportIndex))) {
+    return `${pool} support ${Number(failure.supportIndex) + 1}`;
+  }
+  return `${pool} ${type}`;
+}
+
+function pushUnique(list, item) {
+  if (item && !list.includes(item)) list.push(item);
+}
+
+function journalResumePlan(journal) {
+  const priorResults = journalPriorResults(journal);
+  const poolCount = journalPoolCount(journal, priorResults);
+  const unsafeEvents = journalUnsafePoolEvents(journal, priorResults);
+  const failedPhase = journal?.lp?.failedPhase || journal?.errorDetails?.failedPhase || '';
+  const failedAllocationIndex = Number(journal?.lp?.failedAllocationIndex ?? journal?.errorDetails?.failedAllocationIndex);
+  const failedSliceIndex = Number(journal?.errorDetails?.sliceIndex);
+  const missingPools = poolCount > 0 ? Math.max(0, poolCount - priorResults.length) : 0;
+  const items = [];
+
+  if (!journalHasResumeMaterial(journal)) {
+    return {
+      state: 'warn',
+      badge: 'No plan',
+      title: 'No resumable checkpoint',
+      detail: 'This journal does not include enough token or pool state for automatic resume.',
+      items: ['Use the wallet recovery controls for manual inspection.'],
+      manualRecoveryRequired: true,
+    };
+  }
+
+  if (unsafeEvents.length > 0) {
+    pushUnique(items, `${unsafeEvents.length} pool create checkpoint lacks a completed position result.`);
+    pushUnique(items, 'Automatic resume is blocked to avoid duplicate pool work.');
+    if (unsafeEvents[0]?.poolId) pushUnique(items, `Recorded pool: ${shortAddress(unsafeEvents[0].poolId)}`);
+    return {
+      state: 'danger',
+      badge: 'Manual',
+      title: 'Manual recovery required',
+      detail: 'Trebuchet saw a pool get created before it recorded the matching LP positions.',
+      items,
+      manualRecoveryRequired: true,
+    };
+  }
+
+  if (completedLpJournal(journal)) {
+    pushUnique(items, `${priorResults.length} pool result${priorResults.length === 1 ? '' : 's'} already recorded.`);
+    pushUnique(items, 'Resume skips pool creation and opens the final transfer/sweep path.');
+    return {
+      state: 'pass',
+      badge: 'Recover',
+      title: 'Continue to final transfer',
+      detail: 'Liquidity is recorded. Recovery will restore the session for report, airdrop, and sweep.',
+      items,
+      manualRecoveryRequired: false,
+    };
+  }
+
+  if (poolCount > 0) {
+    pushUnique(items, `${priorResults.length}/${poolCount} pool result${poolCount === 1 ? '' : 's'} carried forward.`);
+  }
+  if (missingPools > 0) {
+    pushUnique(items, `Next run skips recorded pools and attempts ${missingPools} missing pool${missingPools === 1 ? '' : 's'}.`);
+  }
+  if (Number.isFinite(failedAllocationIndex)) {
+    const sliceText = Number.isFinite(failedSliceIndex) ? `, slice ${failedSliceIndex + 1}` : '';
+    pushUnique(items, `Last failure: Pool ${failedAllocationIndex + 1}${sliceText}.`);
+  }
+
+  const bootstrapFailures = Array.isArray(journal?.lp?.bootstrapFailures) ? journal.lp.bootstrapFailures : [];
+  const lockFailures = Array.isArray(journal?.lp?.lockFailures) ? journal.lp.lockFailures : [];
+  const transferFailures = Array.isArray(journal?.lp?.transferFailures) ? journal.lp.transferFailures : [];
+  if (bootstrapFailures.length) {
+    pushUnique(items, `Retry ${bootstrapFailures.length} missing bootstrap${bootstrapFailures.length === 1 ? '' : 's'}.`);
+  }
+  if (lockFailures.length) {
+    pushUnique(items, `Retry ${lockFailures.length} Burn & Earn lock${lockFailures.length === 1 ? '' : 's'}: ${lockFailures.slice(0, 2).map(journalFailureLabel).join(', ')}.`);
+  }
+  if (transferFailures.length) {
+    pushUnique(items, `Fee Key transfer retry/sweep fallback for ${transferFailures.length} recipient${transferFailures.length === 1 ? '' : 's'}.`);
+  }
+
+  const recentEvent = Array.isArray(journal?.events)
+    ? journal.events.slice().reverse().find((event) => event?.stage)
+    : null;
+  if (recentEvent) pushUnique(items, `Last checkpoint: ${progressEventLabel(recentEvent)}.`);
+  if (!items.length) pushUnique(items, 'Resume uses the saved launch wallet and journaled pool plan.');
+
+  if (failedPhase === 'pre_flight') {
+    return {
+      state: 'warn',
+      badge: 'Retry',
+      title: 'Fix preflight and retry',
+      detail: 'No durable pool work should have been sent before this failure.',
+      items,
+      manualRecoveryRequired: false,
+    };
+  }
+
+  return {
+    state: failedPhase ? 'warn' : 'pass',
+    badge: failedPhase ? 'Resume' : 'Ready',
+    title: failedPhase ? `Resume ${failedPhaseLabel(failedPhase)}` : 'Resume saved launch',
+    detail: failedPhase
+      ? 'Trebuchet will reuse recorded pool state and retry only incomplete durable work.'
+      : 'Trebuchet will rebuild the classic launch session from this journal.',
+    items,
+    manualRecoveryRequired: false,
+  };
+}
+
+function parseSliceShares(value) {
+  const shares = String(value || '')
+    .split(/[,\s/|]+|[-–—]+/)
+    .map((part) => parseNumericInput(part, NaN))
+    .filter((part) => Number.isFinite(part) && part > 0);
+  const safeShares = shares.length ? shares : [100];
+  const total = safeShares.reduce((sum, item) => sum + item, 0);
+  if (total <= 0) return [100];
+  const normalized = safeShares.map((item) => Number(((item / total) * 100).toFixed(2)));
+  const drift = Number((100 - normalized.reduce((sum, item) => sum + item, 0)).toFixed(2));
+  normalized[normalized.length - 1] = Number((normalized[normalized.length - 1] + drift).toFixed(2));
+  return normalized;
+}
+
+function formatPercent(value) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n)) return '0';
+  return n.toFixed(2).replace(/\.?0+$/, '');
+}
+
+function normalizedSliceText(value) {
+  return parseSliceShares(value).map(formatPercent).join(',');
+}
+
+function isProbablySolanaAddress(value) {
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(value || '').trim());
+}
+
+function parseManualLadderBands(value) {
+  const bands = [];
+  String(value || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      if (line.startsWith('#')) return;
+      const parts = line.split(/[,\t ]+/).map((part) => part.trim()).filter(Boolean);
+      if (!parts.length || /supply/i.test(parts[0])) return;
+      const supplyPercent = parseNumericInput(parts[0], NaN);
+      const lowerMultiplier = parseNumericInput(parts[1], NaN);
+      const upperMultiplier = parseNumericInput(parts[2], NaN);
+      if (
+        Number.isFinite(supplyPercent)
+        && supplyPercent > 0
+        && Number.isFinite(lowerMultiplier)
+        && lowerMultiplier >= 1
+        && Number.isFinite(upperMultiplier)
+        && upperMultiplier > lowerMultiplier
+      ) {
+        bands.push({
+          supplyPercent: Number(supplyPercent.toFixed(4)),
+          lowerMultiplier: Number(lowerMultiplier.toFixed(4)),
+          upperMultiplier: Number(upperMultiplier.toFixed(4)),
+        });
+      }
+    });
+  return bands;
+}
+
+function classicSimpleLadderConfig(bandCount) {
+  const count = Math.floor(Number(bandCount || 0));
+  if (count <= 0) return { mode: 'off' };
+  return {
+    mode: 'simple',
+    bandCount: count,
+    supplyPercent: CLASSIC_LADDER_DEFAULT_SUPPLY_PERCENT,
+    ceilingMultiplier: CLASSIC_LADDER_DEFAULT_CEILING_MULTIPLIER,
+  };
+}
+
+function parseAirdropCsv(text) {
+  const recipientsByWallet = new Map();
+  const errors = [];
+  String(text || '')
+    .split(/\r?\n/)
+    .forEach((rawLine, index) => {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) return;
+      const parts = line.split(/[,\t]/).map((part) => part.trim()).filter(Boolean);
+      if (!parts.length) return;
+      if (index === 0 && /wallet|address|recipient/i.test(parts[0])) return;
+      const wallet = parts[0];
+      if (!isProbablySolanaAddress(wallet)) {
+        errors.push(`line ${index + 1}: wallet does not look like a Solana address`);
+        return;
+      }
+      const tokenAmount = parts[1] == null || parts[1] === ''
+        ? null
+        : parseNumericInput(parts[1], NaN);
+      if (tokenAmount != null && (!Number.isFinite(tokenAmount) || tokenAmount < 0)) {
+        errors.push(`line ${index + 1}: token amount is invalid`);
+        return;
+      }
+      const previous = recipientsByWallet.get(wallet);
+      if (previous) {
+        previous.tokens = previous.tokens == null || tokenAmount == null
+          ? previous.tokens ?? tokenAmount
+          : previous.tokens + tokenAmount;
+      } else {
+        recipientsByWallet.set(wallet, { wallet, tokens: tokenAmount });
+      }
+    });
+  return {
+    recipients: [...recipientsByWallet.values()],
+    error: errors[0] || null,
+    errorCount: errors.length,
+  };
+}
+
+const AIRDROP_ATA_RENT_SOL = 0.00203928;
+const AIRDROP_TX_FEE_SOL = 0.000005;
+const AIRDROP_RECIPIENTS_PER_TX = 10;
+
+function computeAirdropExecutionCostSol(recipientCount) {
+  const count = Math.max(0, Math.floor(Number(recipientCount) || 0));
+  if (!count) return 0;
+  return count * AIRDROP_ATA_RENT_SOL + Math.ceil(count / AIRDROP_RECIPIENTS_PER_TX) * AIRDROP_TX_FEE_SOL;
+}
+
+function ceilPercentTenth(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  return Math.min(99, Math.ceil(number * 10) / 10);
+}
+
+function currentAirdropBudgetConfig() {
+  const percentInput = document.getElementById('airdropSupplyPercent');
+  const autoFitInput = document.getElementById('airdropAutoFit');
+  return {
+    requestedSupplyPercent: parsePercentInput(percentInput?.value, 2),
+    autoFit: autoFitInput ? autoFitInput.checked !== false : true,
+  };
+}
+
+function computeAirdropBudget(parsedRecipients, recipientCount, supply, requestedSupplyPercent, autoFit) {
+  const explicitTokens = parsedRecipients.reduce(
+    (sum, row) => sum + (row.tokens == null ? 0 : Number(row.tokens) || 0),
+    0,
+  );
+  const blankRecipientCount = parsedRecipients.filter((row) => row.tokens == null).length;
+  const requiredSupplyPercent = supply > 0 && explicitTokens > 0
+    ? ceilPercentTenth((explicitTokens / supply) * 100)
+    : 0;
+  const effectiveSupplyPercent = recipientCount > 0
+    ? autoFit ? Math.max(requestedSupplyPercent, requiredSupplyPercent) : requestedSupplyPercent
+    : 0;
+  const budgetTokens = supply * (effectiveSupplyPercent / 100);
+  const remainingTokens = budgetTokens - explicitTokens;
+  const overBudget = explicitTokens > budgetTokens + 0.000001;
+  const equalTokens = blankRecipientCount > 0
+    ? Math.max(0, remainingTokens) / blankRecipientCount
+    : 0;
+
+  return {
+    requestedSupplyPercent,
+    requiredSupplyPercent,
+    supplyPercent: effectiveSupplyPercent,
+    autoFit,
+    budgetTokens,
+    explicitTokens,
+    remainingTokens,
+    blankRecipientCount,
+    equalTokens,
+    overBudget,
+    executionCostSol: computeAirdropExecutionCostSol(recipientCount),
+    budgetError: overBudget
+      ? `CSV token amounts need ${requiredSupplyPercent.toFixed(requiredSupplyPercent % 1 === 0 ? 0 : 1)}% of supply. Enable Auto-fit, raise the budget, or reduce recipient amounts.`
+      : null,
+  };
+}
+
+function currentAirdropPlan() {
+  const parsed = parseAirdropCsv(state.airdropCsvText);
+  const manualCount = parsePositiveInteger($('#airdropWallets').value, 0);
+  const recipientCount = parsed.recipients.length || manualCount;
+  const enabled = recipientCount > 0;
+  const supply = parseWholeNumber($('#tokenSupply').value) || 1000000000;
+  const budgetConfig = currentAirdropBudgetConfig();
+  const budget = computeAirdropBudget(
+    parsed.recipients,
+    recipientCount,
+    supply,
+    enabled ? budgetConfig.requestedSupplyPercent : 0,
+    budgetConfig.autoFit,
+  );
+  const recipients = parsed.recipients.map((row) => ({
+    wallet: row.wallet,
+    tokens: Number((row.tokens == null ? budget.equalTokens : row.tokens).toFixed(9)),
+  }));
+  state.airdropParseError = parsed.error;
+  state.airdropRecipients = recipients;
+  state.airdropBudgetError = budget.budgetError;
+  return {
+    enabled,
+    recipientCount,
+    supplyPercent: budget.supplyPercent,
+    requestedSupplyPercent: budget.requestedSupplyPercent,
+    requiredSupplyPercent: budget.requiredSupplyPercent,
+    autoFit: budget.autoFit,
+    source: parsed.recipients.length ? 'csv' : enabled ? 'manual-count' : 'off',
+    recipients,
+    parseError: parsed.error,
+    parseErrorCount: parsed.errorCount,
+    budgetError: budget.budgetError,
+    budgetTokens: budget.budgetTokens,
+    explicitTokens: budget.explicitTokens,
+    remainingTokens: budget.remainingTokens,
+    blankRecipientCount: budget.blankRecipientCount,
+    executionCostSol: budget.executionCostSol,
+    totalTokens: recipients.reduce((sum, row) => sum + (Number(row.tokens) || 0), 0),
+  };
+}
+
+function currentPreallocationPlan() {
+  const input = document.getElementById('preallocationSupplyPercent');
+  const supplyPercent = parsePercentInput(input?.value, 0);
+  return {
+    enabled: supplyPercent > 0,
+    supplyPercent,
+    source: supplyPercent > 0 ? 'held-reserve' : 'off',
+  };
+}
+
+function compactAmount(value) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return '0';
+  return new Intl.NumberFormat(undefined, {
+    notation: amount >= 1000000 ? 'compact' : 'standard',
+    maximumFractionDigits: amount >= 1000000 ? 1 : 0,
+  }).format(amount);
+}
+
+function shortAddress(value) {
+  const text = String(value || '');
+  if (window.TrebuchetV2Api?.shortAddress) return window.TrebuchetV2Api.shortAddress(text);
+  if (text.length <= 12) return text || 'Unknown';
+  return `${text.slice(0, 4)}...${text.slice(-4)}`;
+}
+
+function solflarePublicKeyText(publicKey) {
+  if (!publicKey) return '';
+  if (typeof publicKey === 'string') return publicKey;
+  if (typeof publicKey.toBase58 === 'function') return publicKey.toBase58();
+  if (typeof publicKey.toString === 'function') return publicKey.toString();
+  return '';
+}
+
+function collectSolflareProviderCandidates() {
+  const candidates = [];
+  const add = (provider) => {
+    if (!provider || candidates.includes(provider)) return;
+    candidates.push(provider);
+  };
+
+  add(window.solflare);
+  add(window.solana);
+
+  const providers = window.solana?.providers;
+  if (Array.isArray(providers)) {
+    providers.forEach(add);
+  } else if (providers && typeof providers === 'object') {
+    Object.values(providers).forEach(add);
+  }
+
+  return candidates;
+}
+
+function isSolflareProvider(provider) {
+  if (!provider || typeof provider.connect !== 'function') return false;
+  const name = String(provider.name || provider.walletName || '').toLowerCase();
+  return provider === window.solflare || provider.isSolflare === true || name.includes('solflare');
+}
+
+function isSolflareStandardWallet(wallet) {
+  const name = String(wallet?.name || '').toLowerCase();
+  const chains = Array.isArray(wallet?.chains) ? wallet.chains : [];
+  return name.includes('solflare') && chains.some((chain) => String(chain).startsWith('solana:'));
+}
+
+function solflareStandardFeature(wallet, name) {
+  const feature = wallet?.features?.[name];
+  return feature && typeof feature === 'object' ? feature : null;
+}
+
+function solflareStandardWalletAddress(wallet) {
+  const account = wallet?.accounts?.[0];
+  return solflarePublicKeyText(account?.address || account?.publicKey);
+}
+
+function createSolflareStandardProvider(wallet) {
+  if (solflareStandardProvider?.wallet === wallet) return solflareStandardProvider;
+  solflareStandardProvider = {
+    isSolflare: true,
+    name: wallet?.name || 'Solflare',
+    wallet,
+    get publicKey() {
+      return solflareStandardWalletAddress(wallet);
+    },
+    get isConnected() {
+      return Boolean(solflareStandardWalletAddress(wallet));
+    },
+    async connect() {
+      const feature = solflareStandardFeature(wallet, 'standard:connect');
+      if (!feature || typeof feature.connect !== 'function') {
+        throw new Error('Solflare does not expose a Wallet Standard connect method.');
+      }
+      const result = await feature.connect();
+      const account = (result?.accounts || wallet.accounts || [])[0];
+      return { publicKey: account?.address || account?.publicKey };
+    },
+    async disconnect() {
+      const feature = solflareStandardFeature(wallet, 'standard:disconnect');
+      if (feature && typeof feature.disconnect === 'function') await feature.disconnect();
+    },
+  };
+  return solflareStandardProvider;
+}
+
+function registerSolflareStandardWallets(...wallets) {
+  wallets.forEach((wallet) => {
+    if (wallet && !solflareWalletStandardWallets.includes(wallet)) {
+      solflareWalletStandardWallets.push(wallet);
+    }
+  });
+}
+
+function startSolflareWalletStandardDiscovery() {
+  if (solflareWalletStandardListenersStarted || typeof window === 'undefined') return;
+  solflareWalletStandardListenersStarted = true;
+
+  const api = Object.freeze({ register: (...wallets) => registerSolflareStandardWallets(...wallets) });
+  window.addEventListener('wallet-standard:register-wallet', (event) => {
+    if (typeof event.detail === 'function') event.detail(api);
+  });
+
+  try {
+    window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: api }));
+  } catch {
+    // Wallet Standard discovery is opportunistic; injected providers still work.
+  }
+}
+
+function getSolflareProvider() {
+  startSolflareWalletStandardDiscovery();
+  return collectSolflareProviderCandidates().find(isSolflareProvider)
+    || solflareWalletStandardWallets.filter(isSolflareStandardWallet).map(createSolflareStandardProvider).find(Boolean)
+    || null;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function waitForSolflareProvider(timeoutMs = SOLFLARE_PROVIDER_WAIT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  let provider = getSolflareProvider();
+  while (!provider && Date.now() < deadline) {
+    await wait(100);
+    provider = getSolflareProvider();
+  }
+  return provider;
+}
+
+function setConnectedSolflareWallet(provider, publicKey) {
+  const address = solflarePublicKeyText(publicKey || provider?.publicKey);
+  if (!address) throw new Error('Solflare did not return a public key.');
+  solflareWalletProvider = provider;
+  state.solflare = {
+    publicKey: address,
+    status: shortAddress(address),
+    connecting: false,
+    disconnecting: false,
+    error: null,
+    connectedAt: new Date().toISOString(),
+  };
+  window.connectedSolflareWallet = { publicKey: address, connectedAt: state.solflare.connectedAt };
+  return state.solflare;
+}
+
+function clearSolflareWallet(message = 'Not connected') {
+  solflareWalletProvider = null;
+  state.solflare = {
+    publicKey: null,
+    status: message,
+    connecting: false,
+    disconnecting: false,
+    error: null,
+    connectedAt: null,
+  };
+  window.connectedSolflareWallet = null;
+}
+
+function syncConnectedSolflareProvider(provider, { publicKey = null, quiet = false } = {}) {
+  const nextPublicKey = publicKey
+    || provider?.publicKey
+    || provider?.wallet?.accounts?.[0]?.address
+    || provider?.wallet?.accounts?.[0]?.publicKey;
+  if (nextPublicKey) {
+    const wallet = setConnectedSolflareWallet(provider, nextPublicKey);
+    if (!quiet) notify(`Solflare connected: ${shortAddress(wallet.publicKey)}`);
+  } else {
+    clearSolflareWallet();
+    if (!quiet) notify('Solflare disconnected');
+  }
+  renderAll();
+}
+
+function wireSolflareProviderEvents(provider = getSolflareProvider()) {
+  if (!provider || provider._trebuchetV2SolflareWired) return;
+  provider._trebuchetV2SolflareWired = true;
+
+  if (provider.wallet) {
+    const events = solflareStandardFeature(provider.wallet, 'standard:events');
+    if (events && typeof events.on === 'function') {
+      events.on('change', () => syncConnectedSolflareProvider(provider, { quiet: true }));
+    }
+    return;
+  }
+
+  if (typeof provider.on !== 'function') return;
+  provider.on('connect', (publicKey) => syncConnectedSolflareProvider(provider, {
+    publicKey: provider.publicKey || publicKey,
+    quiet: true,
+  }));
+  provider.on('disconnect', () => {
+    clearSolflareWallet();
+    renderAll();
+  });
+  provider.on('accountChanged', (publicKey) => syncConnectedSolflareProvider(provider, {
+    publicKey,
+    quiet: true,
+  }));
+}
+
+function initializeSolflareWallet() {
+  const provider = getSolflareProvider();
+  wireSolflareProviderEvents(provider);
+  if (provider?.isConnected && provider.publicKey) {
+    setConnectedSolflareWallet(provider, provider.publicKey);
+  }
+}
+
+function safeRpcUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) return 'No RPC';
+  try {
+    const parsed = new URL(text);
+    const maskedSearch = parsed.search ? '?...' : '';
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}${maskedSearch}`;
+  } catch {
+    return shortAddress(text);
+  }
+}
+
+function isPublicRpcUrl(value) {
+  try {
+    const host = new URL(value).hostname.replace(/^www\./, '');
+    return new Set([
+      'api.mainnet-beta.solana.com',
+      'solana-api.projectserum.com',
+      'rpc.ankr.com',
+      'solana.public-rpc.com',
+    ]).has(host);
+  } catch {
+    return false;
+  }
+}
+
+function avatarInitials(value) {
+  const parts = String(value || 'AI')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  return (parts.map((part) => part[0]).join('') || 'AI').toUpperCase();
+}
+
+function formatDate(value) {
+  if (!value) return 'Unknown';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function humanizeStage(value) {
+  return String(value || 'unknown').replaceAll('_', ' ');
+}
+
+function progressEventLabel(event) {
+  const pool = Number.isFinite(Number(event?.allocationIndex))
+    ? `Pool ${Number(event.allocationIndex) + 1}`
+    : 'Pool';
+  const stage = String(event?.stage || '');
+  if (stage === 'pool_create_done') return `${pool} created`;
+  if (stage === 'main_open_done') return `${pool} slice ${Number(event.sliceIndex || 0) + 1} opened`;
+  if (stage === 'ladder_open_done') return `${pool} ladder ${Number(event.bandIndex || 0) + 1} opened`;
+  if (stage === 'support_open_done') return `${pool} support opened`;
+  if (stage === 'bootstrap_open_done') return `${pool} bootstrap opened`;
+  if (stage === 'main_lock_done') return `${pool} slice ${Number(event.sliceIndex || 0) + 1} locked`;
+  if (stage === 'ladder_lock_done') return `${pool} ladder ${Number(event.bandIndex || 0) + 1} locked`;
+  if (stage === 'support_lock_done') return `${pool} support locked`;
+  if (stage === 'bootstrap_lock_done') return `${pool} bootstrap locked`;
+  if (stage === 'fee_key_transfer_done') return `${pool} Fee Key transferred`;
+  return `${pool} ${humanizeStage(stage)}`;
+}
+
+function airdropProgressLevel(airdrop) {
+  const status = String(airdrop?.status || '').toLowerCase();
+  if (['failed', 'error'].includes(status)) return 'error';
+  if (['warn', 'warning', 'partial'].includes(status) || Number(airdrop?.failedCount || 0) > 0) return 'warn';
+  return 'progress';
+}
+
+function airdropProgressLogLabel(airdrop) {
+  const status = String(airdrop?.status || 'running').toLowerCase();
+  const total = Math.max(0, Number(airdrop?.total || 0));
+  const completed = Math.max(0, Number(airdrop?.completed || 0));
+  const failed = Math.max(0, Number(airdrop?.failedCount || 0));
+  const seen = completed + failed;
+  const parts = [`Airdrop ${humanizeStage(status)}`];
+  if (total > 0) parts.push(`${seen}/${total} recipients`);
+  if (completed > 0) parts.push(`${completed} delivered`);
+  if (failed > 0) parts.push(`${failed} failed`);
+  if (airdrop?.lastWallet) parts.push(`last ${shortAddress(airdrop.lastWallet)}`);
+  if (Number(airdrop?.lastTokens || 0) > 0) parts.push(`${compactAmount(airdrop.lastTokens)} tokens`);
+  return parts.join(' / ');
+}
+
+function airdropProgressSnapshotKey(airdrop) {
+  return [
+    String(airdrop?.status || 'running').toLowerCase(),
+    Number(airdrop?.total || 0),
+    Number(airdrop?.completed || 0),
+    Number(airdrop?.failedCount || 0),
+    String(airdrop?.lastWallet || ''),
+    Number(airdrop?.lastTokens || 0),
+  ].join('|');
+}
+
+function rememberAirdropProgress(airdrop) {
+  if (!airdrop) return;
+  const snapshot = {
+    ...airdrop,
+    key: airdropProgressSnapshotKey(airdrop),
+    ts: new Date().toISOString(),
+  };
+  const existing = state.liveOps.airdropSnapshots[state.liveOps.airdropSnapshots.length - 1];
+  if (existing?.key === snapshot.key) {
+    state.liveOps.airdropSnapshots[state.liveOps.airdropSnapshots.length - 1] = {
+      ...existing,
+      ...snapshot,
+      ts: existing.ts || snapshot.ts,
+    };
+    return;
+  }
+  state.liveOps.airdropSnapshots = [...state.liveOps.airdropSnapshots, snapshot].slice(-20);
+}
+
+function stateClass(value) {
+  const normalized = String(value || '').toLowerCase();
+  if (['failed', 'error', 'blocked', 'danger'].includes(normalized)) return 'danger';
+  if (['pending', 'warn', 'recovery', 'active', 'slow', 'static'].includes(normalized)) return 'warn';
+  return '';
+}
+
+function costFromOperation(item) {
+  const value = Number(item?.costSol ?? item?.cost ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function transactionCost(...ids) {
+  return ids.reduce((sum, id) => (
+    sum + costFromOperation(baseTransactions.find((item) => item.id === id))
+  ), 0);
+}
+
+function executionLedgerPhase({ kind, endpoint } = {}) {
+  if (kind === 'airdrop' || kind === 'airdrop-retry') return 'airdrop';
+  if (kind === 'report') return 'report';
+  return {
+    '/api/create-token': 'mint',
+    '/api/create-lp': 'liquidity',
+    '/api/resume-launch': 'liquidity',
+    '/api/transfer-assets': 'sweep',
+  }[endpoint] || 'run';
+}
+
+function executionLedgerDescriptor(input = {}) {
+  const { kind = 'endpoint', endpoint, retry, recipientCount } = input;
+  if (kind === 'cancel-refund') {
+    return {
+      label: 'Cancel and refund',
+      phase: 'refund',
+      estimatedCostSol: null,
+      detail: 'Sweeping the selected launch wallet to the configured destination.',
+    };
+  }
+  if (kind === 'report') {
+    return {
+      label: 'Publish launch report',
+      phase: 'report',
+      estimatedCostSol: transactionCost('tx-report'),
+      detail: 'Writing the launch dossier and proof bundle.',
+    };
+  }
+  if (kind === 'airdrop' || kind === 'airdrop-retry') {
+    const airdrop = currentClassicModel().airdrop || {};
+    const count = Number(recipientCount || airdrop.recipientCount || 0);
+    return {
+      label: retry || kind === 'airdrop-retry' ? 'Retry airdrop' : 'Run airdrop',
+      phase: 'airdrop',
+      estimatedCostSol: Number(airdrop.executionCostSol || 0) || null,
+      detail: `${count} recipient${count === 1 ? '' : 's'} queued for token transfer.`,
+    };
+  }
+  if (endpoint === '/api/create-token') {
+    return {
+      label: fullRunEndpointLabel(endpoint),
+      phase: executionLedgerPhase({ endpoint }),
+      estimatedCostSol: transactionCost('tx-mint', 'tx-authority'),
+      detail: 'Mint, metadata, token account, and authority transitions.',
+    };
+  }
+  if (endpoint === '/api/create-lp' || endpoint === '/api/resume-launch') {
+    return {
+      label: fullRunEndpointLabel(endpoint),
+      phase: executionLedgerPhase({ endpoint }),
+      estimatedCostSol: transactionCost('tx-pool', 'tx-lock'),
+      detail: 'Pools, positions, locks, and Fee Key transfer checkpoints.',
+    };
+  }
+  if (endpoint === '/api/transfer-assets') {
+    return {
+      label: fullRunEndpointLabel(endpoint),
+      phase: executionLedgerPhase({ endpoint }),
+      estimatedCostSol: null,
+      detail: 'Final sweep to the verified destination wallet.',
+    };
+  }
+  return {
+    label: input.label || 'Classic operation',
+    phase: executionLedgerPhase(input),
+    estimatedCostSol: null,
+    detail: input.detail || 'Guarded classic endpoint execution.',
+  };
+}
+
+function startExecutionLedgerEntry(input = {}) {
+  const descriptor = executionLedgerDescriptor(input);
+  const label = input.label || descriptor.label;
+  const retryKey = input.endpoint || label;
+  const attempt = state.executionLedger.filter((entry) => (
+    (retryKey && (entry.endpoint === retryKey || entry.label === label))
+    && Date.now() - Number(entry.startedAt || 0) < EXECUTION_LEDGER_MAX_AGE_MS
+  )).length + 1;
+  const entry = {
+    id: `ledger-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    endpoint: input.endpoint || null,
+    status: 'running',
+    startedAt: Date.now(),
+    startedIso: new Date().toISOString(),
+    ...descriptor,
+    label,
+    detail: input.detail || descriptor.detail,
+    attempt,
+  };
+  state.executionLedger = [entry, ...state.executionLedger].slice(0, EXECUTION_LEDGER_MAX_ENTRIES);
+  persistExecutionLedger();
+  return entry.id;
+}
+
+function finishExecutionLedgerEntry(id, updates = {}) {
+  if (!id) return;
+  const entry = state.executionLedger.find((item) => item.id === id);
+  if (!entry) return;
+  const endedAt = Date.now();
+  entry.status = updates.status || 'complete';
+  entry.endedAt = endedAt;
+  entry.endedIso = new Date(endedAt).toISOString();
+  entry.durationMs = Math.max(0, endedAt - Number(entry.startedAt || endedAt));
+  if (updates.detail) entry.detail = updates.detail;
+  if (updates.error) entry.error = updates.error;
+  if (Number.isFinite(Number(updates.balanceDeltaSol))) entry.balanceDeltaSol = Number(updates.balanceDeltaSol);
+  if (Number.isFinite(Number(updates.observedOutflowSol))) entry.observedOutflowSol = Number(updates.observedOutflowSol);
+  if (Number.isFinite(Number(updates.balanceBeforeSol))) entry.balanceBeforeSol = Number(updates.balanceBeforeSol);
+  if (Number.isFinite(Number(updates.balanceAfterSol))) entry.balanceAfterSol = Number(updates.balanceAfterSol);
+  if (updates.balanceObservationError) entry.balanceObservationError = updates.balanceObservationError;
+  persistExecutionLedger();
+}
+
+function ledgerObservationFromExecution(executed) {
+  const observed = executed?.observedWalletDelta || executed?.executionObservation?.observedWalletDelta || null;
+  if (!observed || typeof observed !== 'object') return {};
+  const fields = {};
+  if (Number.isFinite(Number(observed.deltaSol))) fields.balanceDeltaSol = Number(observed.deltaSol);
+  if (Number.isFinite(Number(observed.outflowSol))) fields.observedOutflowSol = Number(observed.outflowSol);
+  if (Number.isFinite(Number(observed.beforeSol))) fields.balanceBeforeSol = Number(observed.beforeSol);
+  if (Number.isFinite(Number(observed.afterSol))) fields.balanceAfterSol = Number(observed.afterSol);
+  if (observed.error) fields.balanceObservationError = observed.error;
+  return fields;
+}
+
+function observedExecutionSpendSummary(entries = state.executionLedger) {
+  const rows = Array.isArray(entries) ? entries : [];
+  return rows.reduce((summary, entry) => {
+    if (!entry || entry.status === 'running') return summary;
+    if (Number.isFinite(Number(entry.observedOutflowSol))) {
+      const outflow = Math.max(0, Number(entry.observedOutflowSol));
+      summary.outflowSol += outflow;
+      summary.measuredCount += 1;
+      return summary;
+    }
+    const delta = Number(entry.balanceDeltaSol);
+    if (Number.isFinite(delta)) {
+      if (delta < 0) summary.outflowSol += Math.abs(delta);
+      if (delta > 0) summary.inflowSol += delta;
+      summary.measuredCount += 1;
+      return summary;
+    }
+    if (entry.balanceObservationError) summary.errorCount += 1;
+    return summary;
+  }, {
+    outflowSol: 0,
+    inflowSol: 0,
+    measuredCount: 0,
+    errorCount: 0,
+  });
+}
+
+function formatSignedSol(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  const sign = numeric > 0 ? '+' : numeric < 0 ? '-' : '';
+  return `${sign}${fmtSol(Math.abs(numeric))}`;
+}
+
+function formatLedgerCost(entry) {
+  if (Number.isFinite(Number(entry?.balanceDeltaSol))) {
+    return `observed ${formatSignedSol(entry.balanceDeltaSol)}`;
+  }
+  if (entry?.balanceObservationError) return 'observed unavailable';
+  const value = Number(entry?.estimatedCostSol);
+  return Number.isFinite(value) && value > 0 ? `~${fmtSol(value)}` : 'variable';
+}
+
+function formatLedgerDuration(entry) {
+  const now = Date.now();
+  const duration = entry?.status === 'running'
+    ? now - Number(entry.startedAt || now)
+    : Number(entry?.durationMs || 0);
+  if (!Number.isFinite(duration) || duration <= 0) return entry?.status === 'running' ? 'running' : '-';
+  if (duration < 1000) return `${Math.max(1, Math.round(duration))} ms`;
+  if (duration < 60000) return `${(duration / 1000).toFixed(duration < 10000 ? 1 : 0)}s`;
+  return `${Math.round(duration / 60000)}m`;
+}
+
+function executionLedgerIcon(status) {
+  if (status === 'complete') return 'fa-check';
+  if (status === 'error') return 'fa-triangle-exclamation';
+  if (status === 'warn') return 'fa-circle-exclamation';
+  return 'fa-spinner';
+}
+
+function executionLedgerAttemptLabel(entry) {
+  const attempt = Number(entry?.attempt || 1);
+  return attempt > 1 ? `attempt ${attempt}` : '';
+}
+
+function riskClass(value) {
+  if (['High', 'Watch', 'Low confidence'].includes(value)) return 'danger';
+  if (['Medium', 'Warn', 'Medium confidence'].includes(value)) return 'warn';
+  return '';
+}
+
+function defaultSignatureRows() {
+  return state.transactions.length
+    ? state.transactions
+    : baseTransactions.map((tx) => ({ ...tx, state: 'queued', source: 'draft' }));
+}
+
+function readinessPhaseState(id) {
+  const phase = Array.isArray(state.executionReadiness?.phases)
+    ? state.executionReadiness.phases.find((item) => item.id === id)
+    : null;
+  return String(phase?.state || '').toLowerCase();
+}
+
+function isReadinessPhaseComplete(id) {
+  return ['complete', 'completed', 'done'].includes(readinessPhaseState(id));
+}
+
+function isReadinessPhaseBlocked(id) {
+  return readinessPhaseState(id) === 'blocked';
+}
+
+function runStepState({ complete = false, running = false, blocked = false, ready = false } = {}) {
+  if (complete) return 'signed';
+  if (blocked) return 'blocked';
+  if (running || ready) return 'pending';
+  return 'queued';
+}
+
+function airdropCompletionStatus(proof = currentLaunchProof(), topology = currentClassicModel()) {
+  const airdrop = proof?.airdrop || {};
+  const proofRecipients = Array.isArray(airdrop.recipients) ? airdrop.recipients : [];
+  const topologyRecipients = Array.isArray(topology?.airdrop?.recipients) ? topology.airdrop.recipients : [];
+  const configured = Boolean(
+    topology?.airdrop?.enabled
+      || Number(airdrop.plannedRecipientCount || 0) > 0
+      || proofRecipients.length > 0
+      || topologyRecipients.length > 0,
+  );
+  if (!configured) {
+    return { configured: false, planned: 0, delivered: 0, failed: 0, pending: 0, complete: true, retryRequired: false, missing: [] };
+  }
+  const planned = Math.max(0, Number(
+    airdrop.plannedRecipientCount
+      || topology?.airdrop?.recipientCount
+      || proofRecipients.length
+      || topologyRecipients.length
+      || 0,
+  ));
+  const evidence = comparisonAirdropDeliveryEvidenceState({
+    ...airdrop,
+    recipients: proofRecipients.length ? proofRecipients : topologyRecipients,
+    plannedRecipientCount: planned,
+  });
+  const pending = Math.max(0, evidence.planned - evidence.delivered - evidence.failed);
+  return {
+    configured: true,
+    planned: evidence.planned,
+    delivered: evidence.delivered,
+    failed: evidence.failed,
+    pending,
+    complete: evidence.complete,
+    retryRequired: evidence.failed > 0,
+    missing: evidence.missing || [],
+    transactionCount: evidence.transactionCount,
+    deliveredRowCount: evidence.deliveredRowCount,
+    recipientCount: evidence.recipientCount,
+  };
+}
+
+function airdropCompletionIssue(status = {}, actionLabel = 'final sweep') {
+  if (!status?.configured || status.complete) return null;
+  if (status.retryRequired) {
+    return `Airdrop has ${status.failed} failed recipient${status.failed === 1 ? '' : 's'}; retry before ${actionLabel}.`;
+  }
+  if (status.pending > 0) {
+    return `${status.pending} airdrop recipient${status.pending === 1 ? '' : 's'} still pending; run airdrop before ${actionLabel}.`;
+  }
+  const missing = Array.isArray(status.missing) && status.missing.length
+    ? status.missing.join(', ')
+    : 'recipient and transaction evidence';
+  return `Airdrop proof is incomplete (${missing}); refresh or rerun airdrop before ${actionLabel}.`;
+}
+
+function liveAirdropComplete(topology, proof) {
+  const status = airdropCompletionStatus(proof, topology);
+  return status.complete;
+}
+
+function liveRunProgressContext() {
+  const config = currentLaunchConfig();
+  const topology = config.poolTopology;
+  const proof = currentLaunchProof();
+  const proofConfig = proofConfigForFingerprint(proof, config);
+  const proofTopology = proofConfig.poolTopology || topology;
+  const readiness = state.executionReadiness;
+  const quoteRoutes = quoteAcquireRoutes();
+  const quoteStatus = quoteAcquireStatus(config);
+  const quoteProgress = quoteStatus.progress;
+  const quoteRunning = state.quoteAcquire.running || state.quoteAcquire.job?.status === 'running';
+  const quoteFailed = Boolean(state.quoteAcquire.error || quoteProgress.failed);
+  const quoteAcquireReady = quoteStatus.ready;
+  const manualItems = quoteManualPrefundItems();
+  const manualSummary = manualPrefundSummary(manualItems);
+  const manualReady = !manualItems.length || manualSummary.className === '';
+  const selectedWalletPublicKey = selectedLaunchWalletPublicKey();
+  const selectedWallet = selectedManagedWallet();
+  const walletSecretLocked = state.secretPin.locked || selectedWallet?.secretPinLocked === true;
+  const walletSecretAvailable = state.demoActive || selectedWallet?.hasSecretKey === true;
+  const walletSecretMissing = Boolean(selectedWalletPublicKey && (!selectedWallet || selectedWallet.decryptionFailed || !walletSecretAvailable));
+  const walletReady = Boolean(selectedWalletPublicKey && selectedWallet && walletSecretAvailable && !walletSecretLocked && !selectedWallet.decryptionFailed);
+  const funding = fundingMeterSnapshot(config);
+  const fundingBalanceKnown = state.demoActive || (state.apiStatus === 'connected' && funding.hasWalletBalance === true && funding.walletBalanceFresh === true);
+  const fundingSolReady = Number(funding.missingSol || 0) <= 0.001;
+  const fundingEstimateStatus = classicFundingEstimateStatus(config);
+  const fundingReady = fundingEstimateStatus.matchesConfig
+    && !quoteRunning
+    && !quoteFailed
+    && quoteAcquireReady
+    && manualReady
+    && fundingSolReady
+    && fundingBalanceKnown;
+  const fundingBlocked = Boolean(
+    quoteFailed
+    || isReadinessPhaseBlocked('funding')
+    || (fundingEstimateStatus.hasEstimate && (!fundingEstimateStatus.matchesConfig || !fundingBalanceKnown || !fundingSolReady || !quoteAcquireReady || !manualReady))
+  );
+  const tokenMint = String(proof?.token?.mint || '').trim();
+  const completedDemoRun = demoRunHasCompletedReadiness();
+  const tokenAuthorityFields = ['mintAuthorityRenounced', 'freezeAuthorityDisabled', 'metadataUpdateAuthorityRevoked', 'metadataImmutable'];
+  const tokenAuthorityPassCount = tokenAuthorityFields.filter((field) => proof?.token?.[field] === true).length;
+  const tokenAuthorityComplete = tokenAuthorityPassCount === tokenAuthorityFields.length;
+  const tokenPhaseComplete = isReadinessPhaseComplete('token');
+  const tokenComplete = Boolean(completedDemoRun || (tokenMint && tokenAuthorityComplete));
+  const tokenNeedsAuthorityProof = Boolean((tokenMint || tokenPhaseComplete) && !tokenComplete);
+  const tokenRunning = state.realExecutionRunning && state.executionReadiness?.nextEndpoint === '/api/create-token';
+  const proofResults = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const plannedPools = buildV2ReportPoolPlan(proofConfig, proofResults, proof);
+  const poolTarget = Math.max(1, plannedPools.length || proofTopology.pools?.length || topology.pools.length);
+  const plannedPositionCount = plannedPools.reduce((sum, pool) => sum + Number(pool.plannedPositionCount || 0), 0);
+  const liquidityEvidence = comparisonLiquidityEvidenceState(proof, {
+    plannedPoolCount: poolTarget,
+    plannedPositionCount,
+  });
+  const recordedPositionCount = liquidityEvidence.positionCount;
+  const lockedPositionCount = liquidityEvidence.lockedPositionCount;
+  const feeKeyCount = liquidityEvidence.feeKeyCount;
+  const liquidityTxEvidence = v2LiquidityTransactionEvidenceCounts(proofResults);
+  const poolCreateTxCount = liquidityTxEvidence.poolCreateTxCount;
+  const openTxCount = liquidityTxEvidence.openTxCount;
+  const lockTxCount = liquidityTxEvidence.lockTxCount;
+  const feeKeyRecipientTarget = liquidityTxEvidence.feeKeyRecipientRows.length;
+  const feeKeyRecipientTransferred = liquidityTxEvidence.feeKeyRecipientTransferred;
+  const feeKeyRecipientsDelivered = feeKeyRecipientTarget <= 0 || feeKeyRecipientTransferred >= feeKeyRecipientTarget;
+  const recordedPoolIds = launchProofPoolIds(proof);
+  const recordedPoolIdCount = recordedPoolIds.length;
+  const reportedPoolCount = Number(liquidityEvidence.poolCount || 0);
+  const liquidityRunning = /liquidity|resume/i.test(state.fullRunStep || '')
+    || (state.realExecutionRunning && ['/api/create-lp', '/api/resume-launch'].includes(state.executionReadiness?.nextEndpoint))
+    || String(state.liveOps.lp?.status || '').toLowerCase() === 'running'
+    || state.liveOps.lpEvents.length > 0;
+  const liquidityPhaseComplete = isReadinessPhaseComplete('liquidity') || proof?.liquidity?.complete === true;
+  const poolsRecorded = recordedPoolIdCount === poolTarget
+    && reportedPoolCount === recordedPoolIdCount
+    && poolCreateTxCount >= poolTarget
+    && !liquidityEvidence.missing.includes('pool count');
+  const positionsRecorded = plannedPositionCount > 0
+    ? recordedPositionCount >= plannedPositionCount
+      && openTxCount >= recordedPositionCount
+      && !liquidityEvidence.missing.some((item) => ['position count', 'position records'].includes(item))
+    : recordedPositionCount > 0
+      && openTxCount >= recordedPositionCount
+      && !liquidityEvidence.missing.some((item) => ['position count', 'position records'].includes(item));
+  const liquidityComplete = Boolean(completedDemoRun || (poolsRecorded && positionsRecorded));
+  const liquidityNeedsPositionProof = Boolean((liquidityPhaseComplete || poolsRecorded) && !liquidityComplete);
+  const lockEventCount = state.liveOps.lpEvents.filter((event) => /_lock_done$|fee_key_transfer_done/.test(String(event.stage || ''))).length;
+  const locksRecorded = recordedPositionCount > 0
+    && lockedPositionCount >= recordedPositionCount
+    && lockTxCount >= recordedPositionCount
+    && !liquidityEvidence.missing.includes('lock count');
+  const feeKeysRecorded = locksRecorded
+    && feeKeyCount >= lockedPositionCount
+    && !liquidityEvidence.missing.includes('fee key count');
+  const lockComplete = Boolean(
+    completedDemoRun
+    || (locksRecorded && feeKeysRecorded && feeKeyRecipientsDelivered)
+  );
+  const lockNeedsProof = Boolean((liquidityComplete || liquidityPhaseComplete) && recordedPositionCount > 0 && !lockComplete);
+  const airdropRunning = Boolean(state.airdropRunning)
+    || /airdrop/i.test(state.fullRunStep || '')
+    || ['running', 'active'].includes(String(state.liveOps.airdrop?.status || '').toLowerCase());
+  const airdropStatus = airdropCompletionStatus(proof, proofTopology);
+  const airdropIssue = airdropCompletionIssue(airdropStatus);
+  const airdropComplete = liveAirdropComplete(proofTopology, proof);
+  const report = currentReportPublish(proof, proofConfig, { allowTransient: true });
+  const reportUri = report?.htmlUri || report?.jsonUri || null;
+  const localDossier = currentLocalDossier(proof, proofConfig);
+  const reportLocalOnly = state.prefs.publishLaunchReport === false;
+  const reportPublishEvidence = proofHasReportPublishEvidence(proof, proofConfig);
+  const reportReady = Boolean(
+    airdropStatus.complete
+    && ((proof?.canPublishReport && reportPublishEvidence) || (reportLocalOnly && reportPublishEvidence))
+  );
+  const terminalSweepComplete = Boolean(completedDemoRun || transferHasWalletEmptyFinalSweepEvidence(proof?.transfer));
+  const reportArtifactRecord = report || localDossier || null;
+  const reportArtifactSweepBound = Boolean(
+    completedDemoRun
+    || (terminalSweepComplete && reportArtifactRecord && reportArtifactMatchesTerminalSweep(reportArtifactRecord, proof))
+  );
+  const reportNeedsFinalArtifact = Boolean(
+    terminalSweepComplete
+    && (reportUri || localDossier)
+    && !reportArtifactSweepBound
+  );
+  const reportDone = Boolean(reportUri || localDossier) && !reportNeedsFinalArtifact;
+  const sweepReadinessComplete = isReadinessPhaseComplete('sweep');
+  const sweepNeedsProof = sweepReadinessComplete && !terminalSweepComplete;
+  const sweepRunning = /sweep/i.test(state.fullRunStep || '')
+    || (state.realExecutionRunning && state.executionReadiness?.nextEndpoint === '/api/transfer-assets');
+  const hasLiveEvidence = Boolean(
+    readiness
+    || proof
+    || state.fullRunRunning
+    || state.realExecutionRunning
+    || state.demoLaunchRunning
+    || state.reportPublishing
+    || state.airdropRunning
+    || state.lastFullRun
+    || state.lastRealExecution
+    || state.lastDemoLaunchRun
+    || state.quoteAcquire.job
+    || state.classicFundingEstimate
+    || state.liveOps.lpEvents.length
+    || state.liveOps.airdrop
+  );
+
+  const rows = [
+    {
+      id: 'live-wallet',
+      label: 'Wallet and CA',
+      state: runStepState({ complete: walletReady, blocked: isReadinessPhaseBlocked('wallet') || walletSecretLocked || walletSecretMissing }),
+      stage: 'config',
+      effects: [walletReady
+        ? 'Trebuchet-managed wallet and signing secret are ready.'
+        : !selectedWalletPublicKey
+          ? 'Generate or import a Trebuchet-managed wallet.'
+          : !selectedWallet
+            ? 'Selected address is not in Trebuchet managed-wallet storage.'
+            : walletSecretLocked
+              ? 'Unlock the Recovery PIN before Trebuchet can sign launch calls.'
+              : walletSecretMissing
+                ? 'Managed wallet exists, but its signing secret is unavailable.'
+                : 'Generate or import a Trebuchet-managed wallet.'],
+    },
+    {
+      id: 'live-funding',
+      label: 'Funding and quote acquire',
+      state: runStepState({ complete: fundingReady, running: quoteRunning, blocked: fundingBlocked, ready: fundingEstimateStatus.hasEstimate }),
+      stage: 'fund',
+      effects: [quoteRunning
+        ? `${quoteProgress.completed}/${quoteProgress.total} quote routes acquired.`
+        : fundingReady
+          ? 'Funding estimate, wallet SOL, and quote-token requirements are ready.'
+          : !fundingEstimateStatus.hasEstimate
+            ? 'Run estimate, acquire routes, or satisfy manual prefund.'
+            : fundingEstimateStatus.stale
+              ? 'Funding estimate is stale for the current token, pools, market cap, or airdrop model.'
+            : !fundingBalanceKnown
+              ? funding.walletBalanceStale
+                ? 'Selected launch-wallet balance is stale; wait for the local app refresh or click Check balance.'
+                : 'Selected launch-wallet balance has not been verified yet.'
+              : !fundingSolReady
+                ? `Launch wallet is short ${funding.missingSol.toFixed(3)} SOL.`
+                : quoteStatus.stale
+                  ? 'Quote acquire is stale for the selected wallet or launch model; run it again.'
+                : !quoteAcquireReady
+                  ? `${quoteRoutes.length} quote acquire route${quoteRoutes.length === 1 ? '' : 's'} still need successful completion.`
+                  : !manualReady
+                    ? `Manual quote prefund is ${manualSummary.label}.`
+                    : 'Run estimate, acquire routes, or satisfy manual prefund.'],
+    },
+    {
+      id: 'live-token',
+      label: 'Create token',
+      state: runStepState({
+        complete: tokenComplete,
+        running: tokenRunning,
+        blocked: isReadinessPhaseBlocked('token') || (tokenNeedsAuthorityProof && !tokenRunning),
+        ready: state.executionReadiness?.nextEndpoint === '/api/create-token',
+      }),
+      stage: 'mint',
+      effects: [tokenComplete
+        ? `Mint ${shortAddress(tokenMint || state.lastDemoLaunchRun?.token?.tokenMint || state.executionReadiness?.tokenMint)} and authority posture are recorded.`
+        : tokenNeedsAuthorityProof
+          ? tokenMint
+            ? `Mint ${shortAddress(tokenMint)} recorded; authority proof is ${tokenAuthorityPassCount}/${tokenAuthorityFields.length}.`
+            : 'Token phase is past; mint and authority proof are still missing.'
+          : 'Create mint, metadata, and revoke authorities.'],
+    },
+    {
+      id: 'live-liquidity',
+      label: 'Pools and positions',
+      state: runStepState({
+        complete: liquidityComplete,
+        running: liquidityRunning,
+        blocked: isReadinessPhaseBlocked('liquidity') || (liquidityNeedsPositionProof && !liquidityRunning),
+        ready: ['/api/create-lp', '/api/resume-launch'].includes(state.executionReadiness?.nextEndpoint),
+      }),
+      stage: 'liquidity',
+      effects: [liquidityComplete
+        ? `${recordedPositionCount}/${plannedPositionCount || recordedPositionCount} planned positions recorded with ${openTxCount} open tx${openTxCount === 1 ? '' : 's'} across ${recordedPoolIdCount}/${poolTarget} pool IDs.`
+        : liquidityNeedsPositionProof
+          ? `${recordedPoolIdCount}/${poolTarget} pool IDs recorded; pool-create tx proof is ${poolCreateTxCount}/${poolTarget}, position-open tx proof is ${openTxCount}/${recordedPositionCount || plannedPositionCount || '?'}.`
+          : liquidityRunning ? `${state.liveOps.lpEvents.length} LP checkpoint${state.liveOps.lpEvents.length === 1 ? '' : 's'} seen.` : 'Open pools, main slices, ladders, support, and bootstrap positions.'],
+    },
+    {
+      id: 'live-locks',
+      label: 'Locks and Fee Keys',
+      state: runStepState({
+        complete: lockComplete,
+        running: lockEventCount > 0 && !lockComplete,
+        blocked: lockNeedsProof && !liquidityRunning,
+        ready: liquidityRunning || liquidityComplete,
+      }),
+      stage: 'liquidity',
+      effects: [lockComplete
+        ? `${lockedPositionCount}/${recordedPositionCount} positions locked with ${lockTxCount} lock tx${lockTxCount === 1 ? '' : 's'}; ${feeKeyCount} Fee Key NFT${feeKeyCount === 1 ? '' : 's'} recorded${feeKeyRecipientTarget > 0 ? `; ${feeKeyRecipientTransferred}/${feeKeyRecipientTarget} recipient transfer${feeKeyRecipientTarget === 1 ? '' : 's'} delivered.` : '.'}`
+        : lockNeedsProof
+          ? locksRecorded && feeKeysRecorded && !feeKeyRecipientsDelivered
+            ? `${feeKeyRecipientTransferred}/${feeKeyRecipientTarget} Fee Key recipient transfer${feeKeyRecipientTarget === 1 ? '' : 's'} recorded; retry or forward from sweep destination before completion.`
+            : locksRecorded
+              ? `${feeKeyCount}/${lockedPositionCount} Fee Key NFT${lockedPositionCount === 1 ? '' : 's'} recorded; waiting for remaining transfer proof.`
+            : `${lockedPositionCount}/${recordedPositionCount} positions are locked; lock tx proof is ${lockTxCount}/${recordedPositionCount}.`
+          : `${lockEventCount} lock or Fee Key checkpoint${lockEventCount === 1 ? '' : 's'} seen.`],
+    },
+    {
+      id: 'live-airdrop',
+      label: 'Airdrop recipients',
+      state: runStepState({
+        complete: airdropComplete,
+        running: airdropRunning,
+        blocked: airdropStatus.retryRequired,
+        ready: topology.airdrop.enabled,
+      }),
+      stage: 'sweep',
+      effects: [airdropIssue
+        || (airdropComplete && airdropStatus.configured
+          ? `${airdropStatus.delivered}/${airdropStatus.planned} airdrop recipient${airdropStatus.planned === 1 ? '' : 's'} delivered with transaction proof.`
+          : topology.airdrop.enabled ? `${topology.airdrop.recipientCount} recipient${topology.airdrop.recipientCount === 1 ? '' : 's'} planned.` : 'No airdrop configured for this launch.')],
+    },
+    {
+      id: 'live-report',
+      label: 'Publish dossier',
+      state: runStepState({
+        complete: reportDone,
+        running: state.reportPublishing || /report/i.test(state.fullRunStep || ''),
+        blocked: reportNeedsFinalArtifact,
+        ready: reportReady || reportNeedsFinalArtifact,
+      }),
+      stage: 'sweep',
+      effects: [reportNeedsFinalArtifact
+        ? 'Terminal sweep is recorded; download a fresh proof dossier so the artifact carries the final sweep hash.'
+        : reportDone
+        ? reportUri
+          ? 'Permanent launch dossier proof is attached.'
+          : 'Local launch dossier proof is attached.'
+        : reportLocalOnly && reportReady
+          ? 'Report publishing is off; download the local HTML/JSON dossier before review.'
+          : reportReady ? 'Proof is ready for report publishing.' : 'Wait for token and liquidity proof.'],
+    },
+    {
+      id: 'live-sweep',
+      label: 'Sweep assets',
+      state: runStepState({
+        complete: terminalSweepComplete,
+        running: sweepRunning,
+        blocked: isReadinessPhaseBlocked('sweep') || sweepNeedsProof,
+        ready: state.executionReadiness?.nextEndpoint === '/api/transfer-assets',
+      }),
+      stage: 'sweep',
+      effects: [terminalSweepComplete
+        ? 'Final transfer/sweep is recorded.'
+        : sweepNeedsProof
+          ? 'Readiness says sweep is past; wallet-empty, error-free final-sweep proof is still missing.'
+          : 'Sweep remaining assets to the verified destination wallet.'],
+    },
+  ];
+
+  const activeRow = rows.find((row) => ['pending', 'blocked'].includes(row.state)) || rows.find((row) => row.state !== 'signed') || rows[rows.length - 1];
+  const source = state.fullRunRunning
+    ? state.fullRunStep || 'Full launch running'
+    : state.realExecutionRunning
+      ? 'execute-next running'
+      : state.demoLaunchRunning
+        ? 'demo launch running'
+        : state.quoteAcquire.running
+          ? 'quote acquire running'
+          : readiness
+            ? 'execution readiness'
+            : proof
+              ? proof.source || 'launch proof'
+              : 'classic progress';
+
+  return {
+    active: hasLiveEvidence,
+    rows,
+    activeId: activeRow?.id || null,
+    source,
+    focusLabel: state.fullRunRunning || state.realExecutionRunning || state.demoLaunchRunning ? 'Current operation' : 'Next checkpoint',
+    headingLabel: 'Live launch progress',
+  };
+}
+
+function signatureRows() {
+  const live = liveRunProgressContext();
+  if (!state.transactions.length && live.active) return live.rows;
+  return defaultSignatureRows();
+}
+
+function signatureStats() {
+  const rows = signatureRows();
+  const total = rows.length || 8;
+  const signed = rows.filter((tx) => tx.state === 'signed').length;
+  const pending = rows.filter((tx) => tx.state !== 'signed').length;
+  const percent = total > 0 ? Math.round((signed / total) * 100) : 0;
+  return { rows, total, signed, pending, percent };
+}
+
+function runProgressContext() {
+  const live = liveRunProgressContext();
+  const useLive = !state.transactions.length && live.active;
+  const rows = useLive ? live.rows : defaultSignatureRows();
+  const total = rows.length || 8;
+  const signed = rows.filter((tx) => tx.state === 'signed').length;
+  const pending = rows.filter((tx) => tx.state !== 'signed').length;
+  const percent = total > 0 ? Math.round((signed / total) * 100) : 0;
+  const activeId = state.activeApprovalId
+    || (useLive ? live.activeId : null)
+    || rows.find((tx) => tx.state !== 'signed')?.id
+    || rows[0]?.id
+    || null;
+  return {
+    rows,
+    total,
+    signed,
+    pending,
+    percent,
+    activeId,
+    isLive: useLive,
+    source: useLive
+      ? live.source
+      : state.transactions.length
+        ? state.launchPlan?.source === 'local-api' ? 'local API' : 'static preview'
+        : 'not staged',
+    focusLabel: useLive ? live.focusLabel : state.transactions.length ? 'Next operation' : 'First operation',
+    headingLabel: useLive ? live.headingLabel : 'Local wallet run',
+  };
+}
+
+function agentCheckForStage(stage, activeTx = null) {
+  if (state.recovery.failedJournalCount > 0 && !state.fullRunRunning && !state.realExecutionRunning && !state.demoLaunchRunning) {
+    return 'recover';
+  }
+  const normalized = String(stage || activeTx?.stage || '').toLowerCase();
+  if (normalized === 'fund') return 'fund';
+  if (['mint', 'liquidity', 'sweep'].includes(normalized)) return 'run';
+  if (normalized === 'recover' || normalized === 'recovery') return 'recover';
+  return 'setup';
+}
+
+function renderAgentConsole() {
+  const context = runProgressContext();
+  const activeTx = context.rows.find((tx) => tx.id === context.activeId) || context.rows[0] || null;
+  const waitingForPlan = !state.transactions.length && !context.isLive;
+  const complete = context.percent >= 100 && context.pending === 0;
+  const blocked = activeTx?.state === 'blocked';
+  const running = state.fullRunRunning || state.realExecutionRunning || state.demoLaunchRunning || state.quoteAcquire.running;
+  const statusTitle = complete
+    ? 'Run evidence complete'
+    : blocked
+      ? `Blocked at ${activeTx?.label || 'next checkpoint'}`
+      : running
+        ? `Running ${activeTx?.label || context.headingLabel}`
+        : state.transactions.length
+          ? 'Run envelope staged'
+          : context.isLive
+            ? 'Watching launch proof'
+            : 'Ready to build launch plan';
+  const nextTitle = waitingForPlan
+    ? 'Review run plan'
+    : complete
+      ? 'Review proof'
+      : activeTx?.label || 'Review run plan';
+  const nextDetail = waitingForPlan
+    ? 'Trebuchet will stage one decoded local-wallet run before you arm it.'
+    : complete
+      ? 'All visible run checkpoints are complete; inspect the proof and Classic retirement gate.'
+      : activeTx?.effects?.[0] || 'Trebuchet will show the next local-wallet operation here.';
+  const activeCheck = agentCheckForStage(activeTx?.stage, activeTx);
+
+  $('#agentStatusTitle').textContent = statusTitle;
+  $('#agentNextTitle').textContent = nextTitle;
+  $('#agentNextDetail').textContent = nextDetail;
+  $$('[data-agent-check]').forEach((item) => {
+    item.classList.toggle('is-active', item.dataset.agentCheck === activeCheck);
+  });
+}
+
+function notify(message) {
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  $('#toastStack').appendChild(toast);
+  setTimeout(() => toast.remove(), 2600);
+}
+
+function updateResultLabel(result = state.updateCheck.lastResult) {
+  if (state.updateCheck.checking) return { label: 'Checking', className: 'warn' };
+  if (!result) return { label: state.updateCheck.available ? 'Ready' : 'Local app', className: state.updateCheck.available ? '' : 'warn' };
+  if (result.status === 'available') return { label: 'Update', className: 'warn' };
+  if (result.status === 'current') return { label: 'Current', className: '' };
+  if (result.status === 'no-asset') return { label: 'Manual', className: 'warn' };
+  if (result.status === 'error') return { label: 'Failed', className: 'danger' };
+  return { label: 'Review', className: 'warn' };
+}
+
+function updateResultDetail(result = state.updateCheck.lastResult) {
+  if (state.updateCheck.checking) return 'Checking GitHub releases through the Electron main process.';
+  if (!result) {
+    return state.updateCheck.available
+      ? 'Manual update checks use the classic release checker and show results here.'
+      : 'Connect through the local OS X app to enable update checks.';
+  }
+  if (result.status === 'available') {
+    return `Version v${result.latest || '?'} is available${result.downloadFilename ? ` / ${result.downloadFilename}` : ''}.`;
+  }
+  if (result.status === 'current') return `You're running the latest version: v${result.current || state.appVersion || '?'}.`;
+  if (result.status === 'no-asset') return `Version v${result.latest || '?'} is available, but no matching installer was found for this machine.`;
+  if (result.status === 'error') return result.message || 'Update check failed.';
+  return 'Unexpected update-check response; use the release page for manual verification.';
+}
+
+function releaseTrustSummary(trust = state.releaseTrust) {
+  const record = trust && typeof trust === 'object' ? trust : {};
+  const label = record.label || record.status || 'Signing unknown';
+  const signing = record.signingStatus || 'unknown';
+  const notarization = record.notarizationStatus || 'unknown';
+  const unsafe = /unsigned|unknown/i.test(`${label} ${signing}`)
+    || /not-notarized|unknown/i.test(String(notarization));
+  return {
+    label,
+    detail: record.detail || 'Check the release notes before installing this build.',
+    className: unsafe ? 'warn' : '',
+  };
+}
+
+function applyUpdateResult(info = {}) {
+  if (!info || typeof info !== 'object') return;
+  state.updateCheck = {
+    ...state.updateCheck,
+    checking: false,
+    lastResult: info,
+    lastCheckedAt: new Date().toISOString(),
+    error: info.status === 'error' ? info.message || 'Update check failed' : null,
+  };
+  if (typeof info.checkOnStartup === 'boolean') {
+    state.prefs.checkForUpdatesOnStartup = info.checkOnStartup;
+  }
+  if (info.releaseUrl) state.releaseUrl = info.releaseUrl;
+  if (state.activeView === 'settings') renderSettings();
+  const label = updateResultLabel(info);
+  notify(label.label === 'Update' ? 'Update available' : updateResultDetail(info));
+}
+
+window.__showUpdateResult = applyUpdateResult;
+
+function applySecretPinStatus(status = {}) {
+  state.secretPin = {
+    configured: status.configured === true,
+    unlocked: status.unlocked === true,
+    locked: status.locked === true,
+    version: status.version || null,
+    kdf: status.kdf || null,
+    deviceSecretProtected: status.deviceSecretProtected === true,
+    deviceSecretAvailable: status.deviceSecretAvailable !== false,
+    busy: null,
+  };
+}
+
+function secretPinMeta() {
+  if (state.apiStatus !== 'connected') {
+    return {
+      label: 'Preview',
+      className: 'warn',
+      detail: 'Open through the local Trebuchet app.',
+      primaryAction: 'noop',
+      primaryLabel: 'Local app',
+      disabled: true,
+    };
+  }
+  if (!state.secretPin.configured) {
+    return {
+      label: 'Not set',
+      className: 'warn',
+      detail: 'OS/device protection only; no Recovery PIN is configured.',
+      primaryAction: 'setup-secret-pin',
+      primaryLabel: 'Set PIN',
+      disabled: false,
+    };
+  }
+  if (state.secretPin.locked) {
+    return {
+      label: 'Locked',
+      className: 'danger',
+      detail: 'Saved wallet and Vanity CA secrets need PIN unlock.',
+      primaryAction: 'unlock-secret-pin',
+      primaryLabel: 'Unlock',
+      disabled: false,
+    };
+  }
+  return {
+    label: 'Unlocked',
+    className: '',
+    detail: state.secretPin.deviceSecretProtected
+      ? 'PIN and device secret active.'
+      : 'PIN active; device secret is using local fallback.',
+    primaryAction: 'lock-secret-pin',
+    primaryLabel: 'Lock',
+    disabled: false,
+  };
+}
+
+function promptRecoveryPin(label) {
+  if (typeof window.prompt !== 'function') {
+    notify('PIN prompt is unavailable');
+    return null;
+  }
+  const pin = window.prompt(`${label} Recovery PIN (4 digits)`);
+  if (!pin) return null;
+  if (!/^\d{4}$/.test(pin)) {
+    notify('Recovery PIN must be exactly 4 digits');
+    return null;
+  }
+  return pin;
+}
+
+function logoSummary(logo = state.tokenLogo) {
+  if (!logo) return 'No logo selected';
+  const kb = Math.max(1, Math.ceil(Number(logo.sizeBytes || 0) / 1024));
+  return `${logo.name || 'token-logo'} / ${kb}KB`;
+}
+
+function readImageDimensions(file) {
+  return new Promise((resolve, reject) => {
+    if (typeof URL === 'undefined' || typeof Image === 'undefined') {
+      reject(new Error('Logo dimension check is unavailable in this runtime'));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not decode image - file may be corrupt'));
+    };
+    image.src = url;
+  });
+}
+
+async function validateLogoFile(file) {
+  if (!file) return null;
+  const allowedTypes = new Set(['image/png', 'image/jpeg']);
+  if (!allowedTypes.has(file.type)) {
+    throw new Error('Logo must be a PNG or JPG image');
+  }
+  if (file.size <= 0 || file.size > CLASSIC_LOGO_MAX_BYTES) {
+    const kb = Math.max(1, Math.ceil(Number(file.size || 0) / 1024));
+    throw new Error(`Logo is ${kb}KB; max is 100KB`);
+  }
+  const dimensions = await readImageDimensions(file);
+  if (dimensions.width > CLASSIC_LOGO_MAX_DIMENSION || dimensions.height > CLASSIC_LOGO_MAX_DIMENSION) {
+    throw new Error(`Logo is ${dimensions.width}x${dimensions.height}px; max is ${CLASSIC_LOGO_MAX_DIMENSION}x${CLASSIC_LOGO_MAX_DIMENSION}px`);
+  }
+  if (dimensions.width < CLASSIC_LOGO_MIN_DIMENSION || dimensions.height < CLASSIC_LOGO_MIN_DIMENSION) {
+    throw new Error(`Logo is ${dimensions.width}x${dimensions.height}px; minimum is ${CLASSIC_LOGO_MIN_DIMENSION}x${CLASSIC_LOGO_MIN_DIMENSION}px`);
+  }
+  return file;
+}
+
+function validateProofFile(file) {
+  if (!file) return null;
+  const name = String(file.name || '');
+  const type = String(file.type || '');
+  const jsonLike = type === 'application/json'
+    || type === 'text/json'
+    || (!type && /\.json$/i.test(name))
+    || /\.json$/i.test(name);
+  const htmlLike = type === 'text/html'
+    || (!type && /\.html?$/i.test(name))
+    || /\.html?$/i.test(name);
+  if (!jsonLike && !htmlLike) {
+    throw new Error('Proof import must be a Trebuchet JSON proof or v2 HTML dossier');
+  }
+  if (file.size <= 0 || file.size > LAUNCH_PROOF_IMPORT_LIMIT) {
+    throw new Error('Proof import must be 2MB or smaller');
+  }
+  return file;
+}
+
+function validateClassicArtifactFile(file) {
+  if (!file) return null;
+  const name = String(file.name || '');
+  const type = String(file.type || '');
+  const artifactLike = type === 'application/json'
+    || type === 'text/json'
+    || type === 'text/html'
+    || type === 'text/plain'
+    || (!type && /\.(json|html?|txt)$/i.test(name))
+    || /\.(json|html?|txt)$/i.test(name);
+  if (!artifactLike) {
+    throw new Error('Classic artifact must be JSON, HTML, or text');
+  }
+  if (file.size <= 0 || file.size > CLASSIC_ARTIFACT_IMPORT_LIMIT) {
+    throw new Error('Classic artifact must be 1MB or smaller');
+  }
+  return file;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (typeof FileReader !== 'function') {
+      reject(new Error('Logo picker is unavailable in this runtime'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Logo read failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsText(file, label = 'File') {
+  return new Promise((resolve, reject) => {
+    if (typeof FileReader !== 'function') {
+      reject(new Error(`${label} picker is unavailable in this runtime`));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(`${label} read failed`));
+    reader.readAsText(file);
+  });
+}
+
+async function selectTokenLogo(file) {
+  try {
+    const safeFile = await validateLogoFile(file);
+    if (!safeFile) return;
+    const dataUrl = await readFileAsDataUrl(safeFile);
+    state.tokenLogo = {
+      name: safeFile.name || 'token-logo',
+      mimeType: safeFile.type,
+      sizeBytes: safeFile.size,
+      dataUrl,
+    };
+    state.tokenLogoError = null;
+    invalidateClassicOutputs();
+    refreshClassicPreview({ includePoolEditor: true });
+    notify('Token logo attached');
+  } catch (error) {
+    state.tokenLogo = null;
+    state.tokenLogoError = error.message || 'Token logo failed validation';
+    const input = document.getElementById('tokenLogoFile');
+    if (input) input.value = '';
+    invalidateClassicOutputs();
+    refreshClassicPreview({ includePoolEditor: true });
+    notify(state.tokenLogoError);
+  }
+}
+
+function clearTokenLogo() {
+  state.tokenLogo = null;
+  state.tokenLogoError = null;
+  const input = document.getElementById('tokenLogoFile');
+  if (input) input.value = '';
+  invalidateClassicOutputs();
+  refreshClassicPreview({ includePoolEditor: true });
+  notify('Token logo cleared');
+}
+
+async function copyText(value, label = 'Value') {
+  const text = String(value || '');
+  if (!text) {
+    notify('Nothing to copy');
+    return;
+  }
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(text);
+    notify(`${label} copied`);
+  } catch {
+    if (typeof window.prompt === 'function') {
+      window.prompt(`Copy ${label}`, text);
+    } else {
+      notify('Clipboard unavailable');
+    }
+  }
+}
+
+function currentVanityConfig() {
+  const prefix = $('#vanityStart').value.trim();
+  const suffix = $('#vanityEnd').value.trim();
+  const selected = state.vanityCandidates.find((item) => item.publicKey === state.selectedVanityPublicKey) || null;
+  return {
+    mode: prefix && suffix ? 'both' : prefix ? 'prefix' : suffix ? 'suffix' : 'random',
+    prefix,
+    suffix,
+    selectedPublicKey: selected?.publicKey || null,
+    candidateCount: state.vanityCandidates.length,
+    candidates: state.vanityCandidates.map((item) => ({
+      publicKey: item.publicKey,
+      target: item.target || null,
+      prefix: item.prefix || null,
+      suffix: item.suffix || null,
+      mode: item.mode || null,
+      rarity: item.rarity || null,
+      attempts: item.attempts || null,
+      persisted: item.persisted === true,
+    })),
+  };
+}
+
+const KNOWN_SAFE_QUOTE_SYMBOLS = new Set(['SOL', 'USDC', 'USDT']);
+
+function normalizeClmmFeeTier(tier) {
+  if (!tier || typeof tier !== 'object') return null;
+  const index = Math.floor(Number(tier.index));
+  const tradeFeeRate = Math.floor(Number(tier.tradeFeeRate));
+  const tickSpacing = Math.floor(Number(tier.tickSpacing));
+  if (!Number.isInteger(index) || index < 0) return null;
+  if (!Number.isInteger(tradeFeeRate) || tradeFeeRate <= 0) return null;
+  if (!Number.isInteger(tickSpacing) || tickSpacing <= 0) return null;
+  return { index, tradeFeeRate, tickSpacing };
+}
+
+function normalizeClmmFeeTiers(tiers) {
+  const normalized = Array.isArray(tiers)
+    ? tiers.map(normalizeClmmFeeTier).filter(Boolean)
+    : [];
+  const unique = new Map();
+  normalized.forEach((tier) => {
+    if (!unique.has(tier.index)) unique.set(tier.index, tier);
+  });
+  const list = [...unique.values()].sort((a, b) => a.tradeFeeRate - b.tradeFeeRate || a.index - b.index);
+  return list.length ? list : DEFAULT_CLMM_FEE_TIERS.map((tier) => ({ ...tier }));
+}
+
+function feeTierLabel(tier) {
+  const feePercent = Number(tier.tradeFeeRate || 0) / 10000;
+  return `${feePercent}% / spacing ${tier.tickSpacing}${Number(tier.index) === 3 ? ' (default)' : ''}`;
+}
+
+function feeTierOptionsHtml(selectedIndex) {
+  const tiers = normalizeClmmFeeTiers(state.clmmFeeTiers);
+  const selected = Math.floor(Number(selectedIndex));
+  const hasSelected = tiers.some((tier) => tier.index === selected);
+  const options = tiers.map((tier) => `
+    <option value="${tier.index}" ${tier.index === selected ? 'selected' : ''}>${escapeHtml(feeTierLabel(tier))}</option>
+  `).join('');
+  return `${options}${Number.isInteger(selected) && !hasSelected ? `<option value="${selected}" selected>Custom index ${selected}</option>` : ''}`;
+}
+
+function customQuoteLookupValue(pool = {}) {
+  const mint = String(pool.quoteMint || '').trim();
+  if (mint) return mint;
+  const symbol = String(pool.quoteSymbol || '').trim().toUpperCase();
+  return symbol;
+}
+
+function customQuoteInfoRecord(pool = {}) {
+  const record = state.quoteTokenInfo?.[pool.id] || null;
+  if (!record) return null;
+  const lookup = customQuoteLookupValue(pool);
+  if (!lookup || record.query !== lookup) return null;
+  return record;
+}
+
+function customQuoteResolvedInfo(pool = {}) {
+  const record = customQuoteInfoRecord(pool);
+  return record?.info && typeof record.info === 'object' ? record.info : null;
+}
+
+function customQuoteInfoBadge(pool = {}) {
+  const lookup = customQuoteLookupValue(pool);
+  const symbol = String(pool.quoteSymbol || '').trim().toUpperCase();
+  const record = customQuoteInfoRecord(pool);
+  if (!lookup || (!pool.quoteMint && !KNOWN_SAFE_QUOTE_SYMBOLS.has(symbol))) {
+    return { label: 'Needs mint', className: 'warn', detail: 'Enter a quote mint, or use SOL/USDC/USDT, then verify before launch.' };
+  }
+  if (record?.loading) return { label: 'Checking', className: 'warn', detail: 'Resolving metadata, authorities, and Raydium route.' };
+  if (record?.error) return { label: 'Check failed', className: 'danger', detail: record.error };
+  const info = customQuoteResolvedInfo(pool);
+  if (!info) return { label: 'Unverified', className: 'warn', detail: 'Run the classic quote-token info check before executing this custom pool.' };
+  if (info.compatible === false) return { label: 'Incompatible', className: 'danger', detail: 'Token is not compatible with the Raydium CLMM launch path.' };
+  if (info.freezeAuthorityBlock === true) return { label: 'Freeze block', className: 'danger', detail: 'Quote token freeze authority can strand launch-wallet balances.' };
+  if (info.raydiumTradeable === 'no') return { label: 'No route', className: 'danger', detail: 'Raydium could not route this quote token during the Step 2 probe.' };
+  if (info.compatible == null || info.raydiumTradeable === 'unknown' || info.freezeAuthorityBlock == null) {
+    return { label: 'Verify warning', className: 'warn', detail: 'Metadata resolved, but route or authority safety could not be fully verified.' };
+  }
+  if (info.mintAuthorityWarning === true) {
+    return { label: 'Mint warning', className: 'warn', detail: 'Quote token mint authority is still active; supply can be inflated.' };
+  }
+  return { label: 'Verified', className: '', detail: 'Classic quote-token metadata, compatibility, authority, and route checks passed.' };
+}
+
+function poolQuoteRouteKey(pool = {}) {
+  const mint = String(pool.quoteMint || '').trim();
+  const token = String(pool.quoteToken || '').trim();
+  const symbol = String(pool.quoteSymbol || pool.quoteSymbolOverride || '').trim();
+  const raw = mint || token || symbol;
+  if (!raw) return '';
+  const key = quoteKey(raw);
+  const upper = raw.toUpperCase();
+  if (key === quoteKey(DEFAULT_SOL_MINT) || upper === 'SOL') return 'SOL';
+  if (key === quoteKey(DEFAULT_USDC_MINT) || upper === 'USDC') return 'USDC';
+  if (upper === 'USDT') return 'USDT';
+  if (!mint && symbol && token && quoteKey(symbol) === quoteKey(token)) return symbol.toUpperCase();
+  if (!mint && !token && symbol) return symbol.toUpperCase();
+  return raw;
+}
+
+function poolQuoteRouteLabel(pool = {}) {
+  return String(pool.quoteSymbol || pool.quoteToken || pool.quoteMint || 'quote').trim() || 'quote';
+}
+
+function feeTierDisplay(index) {
+  const feeTier = normalizeClmmFeeTiers(state.clmmFeeTiers).find((tier) => tier.index === Math.floor(Number(index)));
+  return feeTier ? feeTierLabel(feeTier) : `fee tier ${Math.floor(Number(index) || 0)}`;
+}
+
+function duplicatePoolRouteIssues(pools = []) {
+  const seen = new Map();
+  const issues = [];
+  pools.forEach((pool, index) => {
+    if (Number(pool.supplyPercent || 0) <= 0) return;
+    const quote = poolQuoteRouteKey(pool);
+    if (!quote) return;
+    const feeTier = Math.floor(Number(pool.ammConfigIndex || 0));
+    const key = `${quote}|${feeTier}`;
+    if (seen.has(key)) {
+      const firstIndex = seen.get(key);
+      const label = poolQuoteRouteLabel(pool);
+      issues.push({
+        state: 'danger',
+        poolId: pool.id || `pool-${index + 1}`,
+        title: `Pool ${index + 1} duplicates Pool ${firstIndex + 1}`,
+        detail: `Same ${label} quote and ${feeTierDisplay(feeTier)}. Pick a different quote or fee tier; Raydium uses both to identify a pool.`,
+      });
+      return;
+    }
+    seen.set(key, index);
+  });
+  return issues;
+}
+
+function feeKeyRecipientIssues(pools = []) {
+  const issues = [];
+  pools.forEach((pool, poolIndex) => {
+    const distribution = Array.isArray(pool.distribution) ? pool.distribution : [];
+    distribution.forEach((slice, sliceIndex) => {
+      const recipient = String(slice?.recipient || '').trim();
+      if (!recipient || isProbablySolanaAddress(recipient)) return;
+      issues.push({
+        state: 'danger',
+        poolId: pool.id || `pool-${poolIndex + 1}`,
+        title: `Pool ${poolIndex + 1} recipient invalid`,
+        detail: `Slice ${sliceIndex + 1} Fee Key recipient does not look like a valid Solana address.`,
+      });
+    });
+  });
+  return issues;
+}
+
+function sweepDestinationIssues(topology = {}) {
+  const destination = String(topology.sweepDestination || '').trim();
+  if (!destination || isProbablySolanaAddress(destination)) return [];
+  return [{
+    state: 'danger',
+    poolId: 'sweep-destination',
+    title: 'Sweep destination invalid',
+    detail: 'Sweep destination does not look like a valid Solana address.',
+  }];
+}
+
+function airdropRecipientIssues(topology = {}) {
+  const airdrop = topology.airdrop || {};
+  if (!airdrop.enabled) return [];
+  const issues = [];
+  if (airdrop.parseError) {
+    issues.push({
+      state: 'danger',
+      poolId: 'airdrop',
+      title: 'Airdrop CSV invalid',
+      detail: `Airdrop CSV has an error: ${airdrop.parseError}`,
+    });
+  }
+  if (airdrop.budgetError) {
+    issues.push({
+      state: 'danger',
+      poolId: 'airdrop',
+      title: 'Airdrop budget invalid',
+      detail: `Airdrop budget is invalid: ${airdrop.budgetError}`,
+    });
+  }
+  const seen = new Set();
+  const recipients = Array.isArray(airdrop.recipients) ? airdrop.recipients : [];
+  recipients.forEach((row, index) => {
+    const wallet = String(row?.wallet || row?.recipient || '').trim();
+    const tokens = Number(row?.tokens ?? row?.amount);
+    if (!wallet || !isProbablySolanaAddress(wallet)) {
+      issues.push({
+        state: 'danger',
+        poolId: 'airdrop',
+        title: `Airdrop row ${index + 1} invalid`,
+        detail: `Airdrop recipient ${index + 1}: wallet does not look like a valid Solana address.`,
+      });
+      return;
+    }
+    if (seen.has(wallet)) {
+      issues.push({
+        state: 'danger',
+        poolId: 'airdrop',
+        title: `Airdrop row ${index + 1} duplicate`,
+        detail: `Airdrop recipient ${index + 1}: duplicate wallet ${wallet.slice(0, 8)}...`,
+      });
+    }
+    seen.add(wallet);
+    if (!Number.isFinite(tokens) || tokens <= 0) {
+      issues.push({
+        state: 'danger',
+        poolId: 'airdrop',
+        title: `Airdrop row ${index + 1} invalid`,
+        detail: `Airdrop recipient ${index + 1}: token amount must be greater than 0.`,
+      });
+    }
+  });
+  return issues;
+}
+
+function topologyAllocationIssues(topology = {}) {
+  const pools = Array.isArray(topology.pools) ? topology.pools : [];
+  const rowTotalPoolPercent = pools.reduce((sum, pool) => sum + Number(pool?.supplyPercent || 0), 0);
+  const summaryTotalPoolPercent = Number.isFinite(Number(topology.totalPoolPercent))
+    ? Number(topology.totalPoolPercent)
+    : null;
+  const totalPoolPercent = rowTotalPoolPercent > 0
+    ? rowTotalPoolPercent
+    : (summaryTotalPoolPercent || 0);
+  const preallocationPercent = Number(topology.preallocation?.supplyPercent || 0);
+  const airdropPercent = Number(topology.airdrop?.supplyPercent || 0);
+  const heldReservePercent = (Number.isFinite(preallocationPercent) ? preallocationPercent : 0)
+    + (Number.isFinite(airdropPercent) ? airdropPercent : 0);
+  const supplyUsed = totalPoolPercent + heldReservePercent;
+  const issues = [];
+  if (
+    rowTotalPoolPercent > 0
+    && summaryTotalPoolPercent != null
+    && Math.abs(rowTotalPoolPercent - summaryTotalPoolPercent) > 0.01
+  ) {
+    issues.push({
+      state: 'danger',
+      poolId: 'pool-allocation',
+      title: 'Pool allocation mismatch',
+      detail: `Pool rows add to ${rowTotalPoolPercent.toFixed(2)}% but the topology summary says ${summaryTotalPoolPercent.toFixed(2)}%. Refresh the launch plan before replacing Classic.`,
+    });
+  }
+  if (totalPoolPercent <= 0) {
+    issues.push({
+      state: 'danger',
+      poolId: 'pool-allocation',
+      title: 'No liquidity allocation',
+      detail: 'At least one Classic pool must receive token supply.',
+    });
+  }
+  if (supplyUsed > 100.0001) {
+    issues.push({
+      state: 'danger',
+      poolId: 'pool-allocation',
+      title: 'Supply overallocated',
+      detail: `Pools, preallocation, and airdrop reserve ${supplyUsed.toFixed(2)}% of supply; reduce them to 100% or less.`,
+    });
+  }
+  return issues;
+}
+
+function customQuoteSafetySummary(topology = currentClassicModel()) {
+  const issues = [];
+  topologyAllocationIssues(topology).forEach((issue) => issues.push(issue));
+  state.customPools.forEach((pool) => {
+    const supplyPercent = parsePercentInput(pool.supplyPercent, 0);
+    if (supplyPercent <= 0) return;
+    const badge = customQuoteInfoBadge(pool);
+    if (badge.className === 'danger') {
+      issues.push({
+        state: 'danger',
+        poolId: pool.id,
+        title: `${pool.quoteSymbol || pool.quoteMint || 'Custom quote'} blocked`,
+        detail: badge.detail,
+      });
+    } else if (badge.className === 'warn') {
+      issues.push({
+        state: 'warn',
+        poolId: pool.id,
+        title: `${pool.quoteSymbol || pool.quoteMint || 'Custom quote'} needs review`,
+        detail: badge.detail,
+      });
+    }
+  });
+  duplicatePoolRouteIssues(topology.pools).forEach((issue) => issues.push(issue));
+  feeKeyRecipientIssues(topology.pools).forEach((issue) => issues.push(issue));
+  sweepDestinationIssues(topology).forEach((issue) => issues.push(issue));
+  airdropRecipientIssues(topology).forEach((issue) => issues.push(issue));
+  return {
+    blockers: issues.filter((item) => item.state === 'danger'),
+    warnings: issues.filter((item) => item.state === 'warn'),
+  };
+}
+
+function selectedClassicQuoteVenue() {
+  const key = String($('#quotePoolVenue')?.value || 'meme').trim().toLowerCase();
+  return CLASSIC_QUOTE_VENUES[key] || CLASSIC_QUOTE_VENUES.meme;
+}
+
+function currentClassicModel() {
+  const mainPoolPercent = parsePercentInput($('#mainPoolPercent').value, 70);
+  const quotePoolPercent = parsePercentInput($('#quotePoolPercent').value, 10);
+  const quoteVenue = selectedClassicQuoteVenue();
+  const sliceShares = parseSliceShares($('#sliceShares').value);
+  const ladderBands = clampNumber(parsePositiveInteger($('#ladderBands').value, 0), 0, CLASSIC_LADDER_MAX_BANDS);
+  const supportSol = Math.max(0, parseNumericInput($('#supportSol').value, 0));
+  const feeKeyRecipient = $('#feeKeyRecipient').value.trim();
+  const sweepDestination = $('#sweepDestination').value.trim();
+  const targetMarketCapUsd = Math.max(0, parseNumericInput($('#targetMarketCapUsd').value, 250000));
+  const manualBands = parseManualLadderBands(state.baseManualLadderText);
+  const supportDepth = clampNumber(parseNumericInput(state.baseSupportDepth, 12), 1, 50);
+  const airdrop = currentAirdropPlan();
+  const preallocation = currentPreallocationPlan();
+
+  const distribution = sliceShares.map((sharePercent, index) => ({
+    sharePercent,
+    recipient: index === sliceShares.length - 1 && feeKeyRecipient ? feeKeyRecipient : null,
+  }));
+  const solPool = {
+    id: 'sol-main',
+    quoteToken: 'SOL',
+    quoteSymbol: 'SOL',
+    supplyPercent: mainPoolPercent,
+    ammConfigIndex: 8,
+    distribution,
+    bootstrap: { mode: 'minimal' },
+    ladder: manualBands.length
+      ? { mode: 'manual', bands: manualBands }
+      : ladderBands > 0
+      ? classicSimpleLadderConfig(ladderBands)
+      : { mode: 'off' },
+    support: supportSol > 0
+      ? { mode: 'custom', solValue: supportSol, depthPct: supportDepth }
+      : { mode: 'off' },
+  };
+  const pools = [solPool];
+  if (quotePoolPercent > 0) {
+    pools.push({
+      id: `${quoteVenue.key}-flywheel`,
+      quoteToken: quoteVenue.quoteToken,
+      quoteMint: quoteVenue.quoteMint,
+      quoteSymbol: quoteVenue.symbol,
+      supplyPercent: quotePoolPercent,
+      ammConfigIndex: 5,
+      distribution: [{ sharePercent: 100, recipient: feeKeyRecipient || null }],
+      bootstrap: { mode: 'minimal' },
+      ladder: { mode: 'off' },
+      support: { mode: 'off' },
+    });
+  }
+  state.customPools.forEach((pool, index) => {
+    const resolvedInfo = customQuoteResolvedInfo(pool);
+    const quoteSymbol = String(resolvedInfo?.symbol || pool.quoteSymbol || `Q${index + 1}`).trim().toUpperCase();
+    const quoteMint = String(resolvedInfo?.address || pool.quoteMint || '').trim();
+    const supplyPercent = parsePercentInput(pool.supplyPercent, 0);
+    if (supplyPercent <= 0) return;
+    const customManualBands = parseManualLadderBands(pool.ladderText);
+    const customBandCount = clampNumber(parsePositiveInteger(pool.ladderBands, 0), 0, CLASSIC_LADDER_MAX_BANDS);
+    const customSupportSol = Math.max(0, parseNumericInput(pool.supportSol, 0));
+    pools.push({
+      id: pool.id || `custom-${index + 1}`,
+      quoteToken: quoteMint || quoteSymbol,
+      quoteMint: quoteMint || null,
+      quoteSymbol,
+      quoteDecimals: Number.isFinite(Number(resolvedInfo?.decimals)) ? Number(resolvedInfo.decimals) : null,
+      quotePriceUsd: resolvedInfo?.priceUsd ?? null,
+      quotePriceSource: resolvedInfo?.priceSource || null,
+      quoteCompatibility: resolvedInfo ? {
+        compatible: resolvedInfo.compatible ?? null,
+        raydiumTradeable: resolvedInfo.raydiumTradeable || 'unknown',
+        freezeAuthorityBlock: resolvedInfo.freezeAuthorityBlock ?? null,
+        mintAuthorityWarning: resolvedInfo.mintAuthorityWarning ?? null,
+        isToken2022: resolvedInfo.isToken2022 === true,
+      } : null,
+      supplyPercent,
+      ammConfigIndex: Math.floor(parseNumericInput(pool.ammConfigIndex, 5)),
+      distribution: parseSliceShares(pool.sliceShares || '100').map((sharePercent, sliceIndex) => ({
+        sharePercent,
+        recipient: sliceIndex === 0 && pool.feeKeyRecipient ? String(pool.feeKeyRecipient).trim() : null,
+      })),
+      bootstrap: { mode: 'minimal' },
+      ladder: customManualBands.length
+        ? { mode: 'manual', bands: customManualBands }
+        : customBandCount > 0
+          ? classicSimpleLadderConfig(customBandCount)
+          : { mode: 'off' },
+      support: customSupportSol > 0
+        ? {
+          mode: 'custom',
+          solValue: customSupportSol,
+          depthPct: clampNumber(parseNumericInput(pool.supportDepth, 12), 1, 50),
+        }
+        : { mode: 'off' },
+    });
+  });
+
+  const totalPoolPercent = pools.reduce((sum, pool) => sum + Number(pool.supplyPercent || 0), 0);
+  const heldReservePercent = preallocation.supplyPercent + airdrop.supplyPercent;
+  const reservePercent = clampNumber(100 - totalPoolPercent - heldReservePercent, 0, 100);
+  const allocations = pools.map((pool) => {
+    const quoteDecimalsOverride = Number.isFinite(Number(pool.quoteDecimals))
+      ? Math.max(0, Math.floor(Number(pool.quoteDecimals)))
+      : undefined;
+    const quoteUsdOverride = Number.isFinite(Number(pool.quotePriceUsd)) && Number(pool.quotePriceUsd) > 0
+      ? Number(pool.quotePriceUsd)
+      : undefined;
+    return {
+      quoteToken: pool.quoteToken,
+      quoteMint: pool.quoteMint || undefined,
+      quoteDecimals: quoteDecimalsOverride,
+      quoteDecimalsOverride,
+      quoteUsdOverride,
+      quoteCompatibility: pool.quoteCompatibility || undefined,
+      supplyPercent: pool.supplyPercent,
+      ammConfigIndex: pool.ammConfigIndex,
+      quoteSymbolOverride: pool.quoteSymbol,
+      distribution: pool.distribution,
+      bootstrap: pool.bootstrap,
+      ladder: pool.ladder,
+      support: pool.support,
+    };
+  });
+
+  return {
+    targetMarketCapUsd,
+    pools,
+    allocations,
+    totalPoolPercent,
+    reservePercent,
+    preallocation,
+    airdrop: {
+      enabled: airdrop.enabled,
+      recipientCount: airdrop.recipientCount,
+      supplyPercent: airdrop.supplyPercent,
+      requestedSupplyPercent: airdrop.requestedSupplyPercent,
+      requiredSupplyPercent: airdrop.requiredSupplyPercent,
+      autoFit: airdrop.autoFit,
+      budgetTokens: airdrop.budgetTokens,
+      explicitTokens: airdrop.explicitTokens,
+      remainingTokens: airdrop.remainingTokens,
+      executionCostSol: airdrop.executionCostSol,
+      budgetError: airdrop.budgetError,
+      source: airdrop.source,
+      recipients: airdrop.recipients,
+    },
+    feeKeyRecipient: feeKeyRecipient || null,
+    sweepDestination: sweepDestination || null,
+    report: {
+      publish: state.prefs.publishLaunchReport !== false,
+      download: true,
+    },
+    roundTo100: true,
+  };
+}
+
+function currentLaunchConfig() {
+  const tokenSymbol = ($('#tokenSymbol').value.trim() || 'TOK').toUpperCase();
+  const collectionName = $('#avatarCollectionName').value.trim() || `${tokenSymbol} Avatars`;
+  const parsedAvatarSupply = Math.floor(Number($('#avatarSupply').value || 1));
+  const avatarSupply = Number.isFinite(parsedAvatarSupply) && parsedAvatarSupply > 0
+    ? parsedAvatarSupply
+    : 1;
+  const classic = currentClassicModel();
+  return {
+    token: {
+      name: $('#tokenName').value,
+      symbol: tokenSymbol,
+      supply: $('#tokenSupply').value,
+      description: $('#tokenDescription').value,
+      logo: state.tokenLogo,
+    },
+    launchSol: Number($('#launchSol').value || 0),
+    mode: state.launchMode,
+    vanity: currentVanityConfig(),
+    poolTopology: classic,
+    funding: {
+      launchSol: Number($('#launchSol').value || 0),
+      targetMarketCapUsd: classic.targetMarketCapUsd,
+      estimate: state.classicFundingEstimate,
+    },
+    recovery: {
+      activeJournalCount: state.recovery.activeJournalCount,
+      failedJournalCount: state.recovery.failedJournalCount,
+      pendingWalletCount: state.recovery.pendingWalletCount,
+    },
+    avatarCollection: {
+      enabled: true,
+      name: collectionName,
+      symbol: `${tokenSymbol}-AI`.slice(0, 10),
+      supply: avatarSupply,
+      source: 'local-db',
+      manifest: `db://avatars/${tokenSymbol.toLowerCase()}-draft`,
+      assignmentSeed: 'wallet + token mint seed',
+    },
+  };
+}
+
+function operationsToTransactions(operations) {
+  return (Array.isArray(operations) ? operations : []).map((item) => ({
+    id: item.id,
+    label: item.label,
+    risk: item.risk || 'Low',
+    cost: costFromOperation(item),
+    state: item.state || 'pending',
+    stage: item.stage || 'config',
+    effects: Array.isArray(item.effects) && item.effects.length
+      ? item.effects
+      : ['No decoded effects supplied'],
+    source: item.source || 'launch-plan',
+    signer: item.signer || 'trebuchet-managed-launch-wallet',
+    authorization: item.authorization || { type: 'run-envelope', requiredUserAction: 'fund-and-arm' },
+    simulation: item.simulation || null,
+    checks: Array.isArray(item.checks) ? item.checks : [],
+  }));
+}
+
+function fallbackLaunchPlan() {
+  const config = currentLaunchConfig();
+  const symbol = String(config.token.symbol || 'TOK').trim().toUpperCase() || 'TOK';
+  return {
+    contractVersion: 0,
+    id: `static-${symbol}`,
+    source: 'static-preview',
+    runtime: 'static',
+    mode: config.mode,
+    token: {
+      name: String(config.token.name || 'Untitled').trim() || 'Untitled',
+      symbol,
+      supply: String(config.token.supply || '1000000000').replaceAll(',', ''),
+      decimals: 9,
+    },
+    avatarCollection: config.avatarCollection,
+    funding: {
+      launchSol: config.launchSol,
+      estimatedSolCost: baseTransactions.reduce((total, tx) => total + tx.cost, 0),
+    },
+    guardrails: [],
+    operations: baseTransactions.map((tx) => ({
+      ...tx,
+      costSol: tx.cost,
+      source: 'static-preview',
+      stage: tx.id === 'tx-config'
+        ? 'config'
+        : tx.id === 'tx-funding'
+          ? 'fund'
+          : tx.id === 'tx-avatar-collection'
+        ? 'avatars'
+        : tx.id === 'tx-pool' || tx.id === 'tx-lock'
+          ? 'liquidity'
+          : tx.id === 'tx-report' ? 'sweep' : 'mint',
+    })),
+  };
+}
+
+function applyLaunchPlan(plan, config = currentLaunchConfig()) {
+  const rawPlan = plan || fallbackLaunchPlan();
+  const effectivePlan = rawPlan?.source === 'local-api'
+    ? rawPlan
+    : stampLaunchPlanConfigFingerprint(rawPlan, config);
+  const transactions = operationsToTransactions(effectivePlan?.operations);
+  state.launchPlan = effectivePlan;
+  state.connected = true;
+  state.simulated = true;
+  state.launchStage = Math.max(state.launchStage, 1);
+  state.transactions = transactions.length
+    ? transactions
+    : operationsToTransactions(fallbackLaunchPlan().operations);
+  state.activeApprovalId = state.transactions[0]?.id || null;
+  state.approvalOpen = Boolean(state.activeApprovalId);
+}
+
+function setView(view) {
+  if (!views[view]) return;
+  state.activeView = view;
+  document.body.dataset.activeView = view;
+  if (view !== 'launch') {
+    state.approvalOpen = false;
+  }
+  $$('.nav-item').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.view === view);
+  });
+  $$('.view').forEach((panel) => {
+    panel.classList.toggle('is-active', panel.id === `view-${view}`);
+  });
+  $('#viewEyebrow').textContent = views[view].eyebrow;
+  $('#viewTitle').textContent = views[view].title;
+  renderExtension();
+  drawLaunchCanvas();
+}
+
+function renderGlobalStrip() {
+  const { pending, signed, total } = signatureStats();
+  const current = account();
+  const apiLabel = state.apiStatus === 'connected'
+    ? 'Local API connected'
+    : state.apiStatus === 'loading'
+      ? 'Checking local API'
+      : 'Static preview';
+  const recoveryLabel = `${state.recovery.activeJournalCount} active / ${state.recovery.pendingWalletCount} wallets`;
+  $('#globalStrip').innerHTML = [
+    ['Wallet', state.connected ? `${current.name} ${current.address}` : 'Locked'],
+    ['Run', `${signed}/${total} done / ${pending} queued`],
+    ['API', apiLabel],
+    ['Recovery', recoveryLabel],
+  ].map(([label, value]) => `
+    <span class="global-metric">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </span>
+  `).join('');
+}
+
+function renderLaunchPreview() {
+  const name = $('#tokenName').value.trim() || 'Untitled';
+  const symbol = ($('#tokenSymbol').value.trim() || 'TOK').toUpperCase();
+  const { signed, total, pending, percent } = signatureStats();
+  const config = currentLaunchConfig();
+  const logo = config.token.logo;
+  $('#assetName').textContent = name;
+  $('#assetSymbol').textContent = symbol;
+  const assetMark = $('#assetMark');
+  assetMark.classList.toggle('has-logo', Boolean(logo?.dataUrl));
+  assetMark.innerHTML = logo?.dataUrl
+    ? `<img src="${escapeHtml(logo.dataUrl)}" alt="">`
+    : escapeHtml(symbol.slice(0, 2));
+  $('#launchName').textContent = `${name} token launch`;
+  $('#launchStatus').textContent = state.transactions.length ? 'Staged' : state.simulated ? 'Simulated' : 'Draft';
+  $('#launchStatus').className = `badge ${state.transactions.length ? 'warn' : ''}`;
+  renderAgentConsole();
+  $('#setupSummary').textContent = `${symbol} / ${config.avatarCollection.supply.toLocaleString()} avatars`;
+  $('#runbookSummary').textContent = `${launchStages.length} phases`;
+  $('#launchReadout').innerHTML = `
+    <span><strong>${signed}/${total}</strong><small>Run</small></span>
+    <span><strong>${pending}</strong><small>Queued</small></span>
+    <span><strong>${percent}%</strong><small>Complete</small></span>
+    <span><strong>${config.launchSol.toFixed(2)} SOL</strong><small>Launch</small></span>
+  `;
+}
+
+function renderTokenLogoPreview() {
+  const target = $('#tokenLogoPreview');
+  const logo = state.tokenLogo;
+  const error = state.tokenLogoError;
+  target.className = `token-logo-preview ${logo ? 'has-logo' : ''} ${error ? 'danger' : ''}`;
+  target.innerHTML = `
+    <span class="token-logo-thumb">
+      ${logo?.dataUrl ? `<img src="${escapeHtml(logo.dataUrl)}" alt="">` : '<i class="fa-solid fa-image"></i>'}
+    </span>
+    <span>
+      <small>${escapeHtml(error ? 'Logo rejected' : logo ? 'Logo attached' : 'Token logo')}</small>
+      <strong>${escapeHtml(error || logoSummary(logo))}</strong>
+    </span>
+    ${logo || error ? '<button class="pill-button" type="button" data-action="clear-token-logo">Clear</button>' : ''}
+  `;
+}
+
+function fundingMeterSnapshot(config = currentLaunchConfig()) {
+  const launchSol = Number.isFinite(config.launchSol) ? config.launchSol : 0;
+  const detailedBalance = selectedWalletDetailedBalance();
+  const walletSol = Number(detailedBalance?.balance?.sol);
+  const walletBalanceFresh = Boolean(detailedBalance?.fresh);
+  const walletBalanceStale = Boolean(detailedBalance?.stale);
+  const hasWalletBalance = walletBalanceFresh && Number.isFinite(walletSol) && state.apiStatus === 'connected';
+  const availableSol = hasWalletBalance ? walletSol : launchSol;
+  const fundingEstimateStatus = classicFundingEstimateStatus(config);
+  const estimatedCost = (fundingEstimateStatus.matchesConfig ? Number(state.classicFundingEstimate?.totalSol) : 0)
+    || Number(state.launchPlan?.funding?.estimatedSolCost)
+    || baseTransactions.reduce((total, tx) => total + tx.cost, 0);
+  const missingSol = Math.max(0, estimatedCost - availableSol);
+  const routes = quoteAcquireRoutes();
+  const quoteStatus = quoteAcquireStatus(config);
+  const acquire = quoteStatus.progress;
+  const routeTotal = Math.max(acquire.total, routes.length);
+  const jobResults = Array.isArray(state.quoteAcquire.job?.results) ? state.quoteAcquire.job.results : [];
+  const acquiredCount = jobResults.filter((result) => result && result.success !== false).length;
+  const failedCount = jobResults.filter((result) => result && result.success === false).length;
+  const manualItems = quoteManualPrefundItems();
+  const manual = manualPrefundSummary(manualItems);
+  const observedSpend = observedExecutionSpendSummary();
+  const observedLabel = observedSpend.measuredCount
+    ? `${fmtSol(observedSpend.outflowSol)} spent${observedSpend.inflowSol > 0 ? ` / ${fmtSol(observedSpend.inflowSol)} in` : ''}`
+    : observedSpend.errorCount
+      ? 'Unavailable'
+      : 'Waiting';
+  const observedClass = observedSpend.measuredCount
+    ? ''
+    : observedSpend.errorCount ? 'warn' : '';
+
+  const acquireLabel = state.quoteAcquire.job
+    ? quoteStatus.stale
+      ? 'Run again'
+      : `${acquiredCount}/${routeTotal} acquired${failedCount ? ` / ${failedCount} failed` : ''}`
+    : fundingEstimateStatus.stale
+      ? 'Re-estimate'
+      : fundingEstimateStatus.hasEstimate
+        ? (routes.length
+          ? `${routes.length} route${routes.length === 1 ? '' : 's'} ready`
+          : 'None')
+        : 'Estimate first';
+  const acquireClass = failedCount || state.quoteAcquire.error
+    ? 'danger'
+    : fundingEstimateStatus.stale || quoteStatus.stale
+      ? 'warn'
+    : routes.length && (!state.quoteAcquire.job || acquiredCount < routeTotal)
+      ? 'warn'
+      : '';
+  const manualLabel = manualItems.length
+    ? `${manualItems.length} token${manualItems.length === 1 ? '' : 's'} / ${manual.label}`
+    : 'None';
+  const badge = state.quoteAcquire.error
+    ? { label: 'Acquire error', className: 'danger' }
+    : fundingEstimateStatus.matchesConfig && !hasWalletBalance
+      ? { label: walletBalanceStale ? 'Stale balance' : 'Check wallet', className: 'warn' }
+    : missingSol > 0.001
+      ? { label: 'Needs SOL', className: 'warn' }
+      : manual.className === 'danger'
+        ? { label: 'Quote short', className: 'danger' }
+        : manual.className === 'warn'
+          ? { label: 'Check quote', className: 'warn' }
+          : acquireClass === 'warn'
+            ? { label: 'Acquire', className: 'warn' }
+            : { label: 'Ready', className: '' };
+
+  return {
+    availableSol,
+    availableLabel: hasWalletBalance ? 'Wallet SOL' : 'Planned SOL',
+    availableClass: fundingEstimateStatus.matchesConfig && !hasWalletBalance ? 'warn' : '',
+    hasWalletBalance,
+    walletBalanceFresh,
+    walletBalanceStale,
+    walletBalanceCheckedAt: detailedBalance?.checkedAt || null,
+    estimatedCost,
+    fundedPercent: estimatedCost > 0 ? clampPercent((availableSol / estimatedCost) * 100) : 0,
+    missingSol,
+    missingClass: missingSol > 0.001 ? 'warn' : '',
+    acquireLabel,
+    acquireClass,
+    manualLabel,
+    manualClass: manualItems.length ? manual.className : '',
+    observedSpend,
+    observedLabel,
+    observedClass,
+    badge,
+  };
+}
+
+function selectedWalletDetailedBalance() {
+  const snapshot = manualPrefundBalanceSnapshotStatus();
+  if (!snapshot.matchesWallet || !snapshot.hasBalance) return null;
+  return {
+    walletPublicKey: snapshot.walletPublicKey,
+    balance: snapshot.balance,
+    checkedAt: snapshot.checkedAt,
+    ageMs: snapshot.ageMs,
+    fresh: snapshot.fresh,
+    stale: snapshot.stale,
+  };
+}
+
+function liquidityDepthRows(topology) {
+  return topology.pools.map((pool, poolIndex) => {
+    const events = state.liveOps.lpEvents.filter((event) => Number(event?.allocationIndex) === poolIndex);
+    const ladderCount = poolLadderCount(pool);
+    const supportCount = pool.support?.mode === 'custom' ? 1 : 0;
+    const mainCount = pool.distribution?.length || 1;
+    const expectedOpen = 1 + mainCount + ladderCount + supportCount;
+    const expectedLock = mainCount + ladderCount + supportCount;
+    const opened = events.filter((event) => /_open_done$|pool_create_done/.test(String(event.stage || ''))).length;
+    const locked = events.filter((event) => /_lock_done$|fee_key_transfer_done/.test(String(event.stage || ''))).length;
+    const complete = expectedLock > 0 && locked >= expectedLock;
+    const active = events.length > 0;
+    const overlays = [
+      `${formatPercent(pool.supplyPercent)}% supply`,
+      `${opened}/${expectedOpen} open`,
+      `${locked}/${expectedLock} lock`,
+    ];
+    if (ladderCount) overlays.push(`${ladderCount} ladder`);
+    if (supportCount) overlays.push('support');
+    return {
+      label: pool.quoteSymbol || pool.quoteToken,
+      width: clampPercent(pool.supplyPercent),
+      value: `${formatPercent(pool.supplyPercent)}%`,
+      detail: overlays.join(' / '),
+      className: complete ? 'complete' : active ? 'active' : '',
+    };
+  });
+}
+
+const V2_TOKENOMICS_COLORS = ['#2f6f52', '#2e5f86', '#b5791f', '#6d568e', '#8f463f', '#557332', '#8a6330'];
+
+function buildV2TokenomicsItems(config, results = []) {
+  const topology = config?.poolTopology || {};
+  const pools = Array.isArray(topology.pools) ? topology.pools : [];
+  const items = pools.map((pool, index) => {
+    const result = results.find((row) => Number(row?.allocationIndex) === index) || results[index] || null;
+    return {
+      label: `${result?.quoteSymbol || pool.quoteSymbol || pool.quoteToken || `Pool ${index + 1}`} pool`,
+      percent: Number(result?.supplyPercent ?? pool.supplyPercent ?? 0),
+      color: V2_TOKENOMICS_COLORS[index % V2_TOKENOMICS_COLORS.length],
+    };
+  }).filter((item) => item.percent > 0);
+  const preallocationPercent = Number(topology.preallocation?.supplyPercent || 0);
+  if (preallocationPercent > 0) items.push({ label: 'Prealloc', percent: preallocationPercent, color: '#7b5a3f' });
+  const airdropPercent = Number(topology.airdrop?.supplyPercent || 0);
+  if (airdropPercent > 0) items.push({ label: 'Airdrop', percent: airdropPercent, color: '#b8821a' });
+  const reservePercent = Number(topology.reservePercent || 0);
+  if (reservePercent > 0) items.push({ label: 'Unallocated reserve', percent: reservePercent, color: '#6b6657' });
+  if (!items.length) items.push({ label: 'Supply not allocated yet', percent: 100, color: '#b8ad8a' });
+  return items;
+}
+
+function v2DonutArcPath(cx, cy, rOuter, rInner, startA, endA) {
+  if (Math.abs(endA - startA) < 1e-6) return '';
+  const large = (endA - startA) > Math.PI ? 1 : 0;
+  const x1 = cx + rOuter * Math.cos(startA);
+  const y1 = cy + rOuter * Math.sin(startA);
+  const x2 = cx + rOuter * Math.cos(endA);
+  const y2 = cy + rOuter * Math.sin(endA);
+  const x3 = cx + rInner * Math.cos(endA);
+  const y3 = cy + rInner * Math.sin(endA);
+  const x4 = cx + rInner * Math.cos(startA);
+  const y4 = cy + rInner * Math.sin(startA);
+  return [
+    `M ${x1} ${y1}`,
+    `A ${rOuter} ${rOuter} 0 ${large} 1 ${x2} ${y2}`,
+    `L ${x3} ${y3}`,
+    `A ${rInner} ${rInner} 0 ${large} 0 ${x4} ${y4}`,
+    'Z',
+  ].join(' ');
+}
+
+function renderV2TokenomicsDonutSvg(items, {
+  size = 112,
+  centerLabel = '',
+  centerDetail = '',
+  logoSrc = null,
+} = {}) {
+  const cx = size / 2;
+  const cy = size / 2;
+  const rOuter = size * 0.45;
+  const rInner = size * 0.27;
+  const total = items.reduce((sum, item) => sum + Math.max(0, Number(item.percent) || 0), 0);
+  if (total <= 0) {
+    return `<svg class="tokenomics-svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="No tokenomics configured">
+      <text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" fill="#9a9182" font-size="10">No split</text>
+    </svg>`;
+  }
+
+  let startA = -Math.PI / 2;
+  const segments = items.map((item) => {
+    const share = Math.max(0, Number(item.percent) || 0);
+    const sweep = (share / total) * (2 * Math.PI);
+    const endA = startA + sweep;
+    const path = v2DonutArcPath(cx, cy, rOuter, rInner, startA, endA);
+    startA = endA;
+    return `<path d="${path}" fill="${escapeHtml(item.color)}" stroke="#f7f1e3" stroke-width="${Math.max(1, size * 0.006)}">
+      <title>${escapeHtml(`${item.label}: ${reportPercent(item.percent)} of supply`)}</title>
+    </path>`;
+  }).join('');
+
+  const clipId = `v2-donut-logo-${size}`;
+  const center = logoSrc
+    ? `<defs><clipPath id="${clipId}"><circle cx="${cx}" cy="${cy}" r="${rInner - 2}"></circle></clipPath></defs>
+      <circle cx="${cx}" cy="${cy}" r="${rInner}" fill="#f7f1e3" stroke="#c8bd9a" stroke-width="1"></circle>
+      <image href="${escapeHtml(logoSrc)}" x="${cx - rInner + 2}" y="${cy - rInner + 2}" width="${(rInner - 2) * 2}" height="${(rInner - 2) * 2}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})"></image>`
+    : `<circle cx="${cx}" cy="${cy}" r="${rInner}" fill="#f7f1e3" stroke="#c8bd9a" stroke-width="1"></circle>
+      <text x="${cx}" y="${cy - (centerDetail ? 3 : 0)}" text-anchor="middle" dominant-baseline="middle" fill="#181613" font-size="${Math.max(11, size * 0.13)}" font-weight="700">${escapeHtml(centerLabel)}</text>
+      ${centerDetail ? `<text x="${cx}" y="${cy + size * 0.12}" text-anchor="middle" dominant-baseline="middle" fill="#6f6658" font-size="${Math.max(6, size * 0.07)}" font-weight="700">${escapeHtml(centerDetail)}</text>` : ''}`;
+
+  return `<svg class="tokenomics-svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="Tokenomics supply split">
+    ${segments}
+    ${center}
+  </svg>`;
+}
+
+function chartEvidenceBadge({ proof = currentLaunchProof(), results = [], liveEventCount = 0 } = {}) {
+  const hasLiquidityProof = Array.isArray(results) && results.length > 0;
+  if (proof?.token?.mint && hasLiquidityProof) return { label: 'Proof', className: '' };
+  if (liveEventCount > 0) return { label: 'Live', className: '' };
+  if (localApiLaunchPlanStatus().ready) return { label: 'Model', className: 'warn' };
+  return { label: 'Preview', className: 'warn' };
+}
+
+function setChartBadge(selector, badge) {
+  const target = $(selector);
+  target.textContent = badge.label;
+  target.className = `risk-badge ${badge.className || ''}`;
+}
+
+function renderChartDeck() {
+  const config = currentLaunchConfig();
+  const topology = config.poolTopology;
+  const supply = parseWholeNumber(config.token.supply) || 1000000000;
+  const funding = fundingMeterSnapshot(config);
+  const proof = currentLaunchProof();
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const liveLpEventCount = state.liveOps.lpEvents.length;
+  const tokenomicsBadge = chartEvidenceBadge({ proof, results, liveEventCount: liveLpEventCount });
+  const liquidityBadge = results.length
+    ? { label: 'Proof', className: '' }
+    : liveLpEventCount
+      ? { label: 'Live', className: '' }
+      : tokenomicsBadge;
+  const signaturePercent = signatureStats().percent;
+  const slices = buildV2TokenomicsItems(config, results).map((item) => ({
+    ...item,
+    value: clampPercent(item.percent),
+    amount: supply * ((Number(item.percent) || 0) / 100),
+  }));
+  const placedPercent = clampPercent(slices.reduce((sum, item) => sum + (Number(item.percent) || 0), 0));
+  const sliceCount = topology.pools.reduce((sum, pool) => sum + (pool.distribution?.length || 1), 0);
+  const ladderCount = topology.pools.reduce((sum, pool) => {
+    if (pool.ladder?.mode === 'manual') return sum + (pool.ladder.bands?.length || 0);
+    if (pool.ladder?.mode === 'simple') return sum + Number(pool.ladder.bandCount || 0);
+    return sum;
+  }, 0);
+  const supportSolTotal = topology.pools.reduce((sum, pool) => sum + Number(pool.support?.solValue || 0), 0);
+  const bands = [
+    ...liquidityDepthRows(topology),
+    ['Slices', clampPercent(sliceCount * 16), `${sliceCount} keys`],
+    ['Ladder', clampPercent(ladderCount * 12), `${ladderCount} bands`],
+    ['Support', clampPercent(supportSolTotal * 60), `${supportSolTotal.toFixed(2)} SOL`],
+  ].slice(0, 5);
+
+  $('#tokenomicsChart').classList.add('has-svg');
+  setChartBadge('#tokenomicsState', tokenomicsBadge);
+  $('#tokenomicsChart').innerHTML = renderV2TokenomicsDonutSvg(slices, {
+    size: 112,
+    centerLabel: `${Math.round(placedPercent)}%`,
+    centerDetail: 'placed',
+  });
+  $('#tokenomicsLegend').innerHTML = slices.map((item) => `
+    <div class="legend-row">
+      <span class="legend-dot" style="background:${item.color}"></span>
+      <span>${escapeHtml(item.label)}</span>
+      <strong>${item.value}% / ${compactAmount(item.amount)}</strong>
+    </div>
+  `).join('');
+
+  setChartBadge('#liquidityState', liquidityBadge);
+  $('#liquidityChart').innerHTML = bands.map((row) => {
+    const item = Array.isArray(row)
+      ? { label: row[0], width: row[1], value: row[2], detail: '', className: '' }
+      : row;
+    return `
+    <div class="depth-band ${escapeHtml(item.className || '')}">
+      <span>${escapeHtml(item.label)}</span>
+      <span class="depth-bar"><span style="width:${clampPercent(item.width)}%"></span></span>
+      <strong>${escapeHtml(item.value)}</strong>
+      ${item.detail ? `<em>${escapeHtml(item.detail)}</em>` : ''}
+    </div>
+  `;
+  }).join('');
+
+  $('#fundingState').textContent = funding.badge.label;
+  $('#fundingState').className = `risk-badge ${funding.badge.className}`;
+  $('#fundingMeter').innerHTML = `
+    <div class="funding-track" aria-label="Funding progress">
+      <span style="width:${funding.fundedPercent}%"></span>
+    </div>
+    <div class="funding-row ${escapeHtml(funding.availableClass)}"><span>${escapeHtml(funding.availableLabel)}</span><strong>${funding.availableSol.toFixed(2)} / ${funding.estimatedCost.toFixed(2)} SOL</strong></div>
+    <div class="funding-row ${escapeHtml(funding.missingClass)}"><span>Missing SOL</span><strong>${funding.missingSol.toFixed(2)} SOL</strong></div>
+    <div class="funding-row ${escapeHtml(funding.acquireClass)}"><span>Acquired quotes</span><strong>${escapeHtml(funding.acquireLabel)}</strong></div>
+    <div class="funding-row ${escapeHtml(funding.manualClass)}"><span>Manual quote</span><strong>${escapeHtml(funding.manualLabel)}</strong></div>
+    <div class="funding-row ${escapeHtml(funding.observedClass)}"><span>Observed spend</span><strong>${escapeHtml(funding.observedLabel)}</strong></div>
+    <div class="funding-row"><span>Run</span><strong>${signaturePercent}% complete</strong></div>
+  `;
+}
+
+function renderAvatarCollectionPanel() {
+  const config = currentLaunchConfig();
+  const collection = config.avatarCollection;
+
+  $('#avatarCollectionPanel').innerHTML = `
+    <div class="manifest-head">
+      <span>
+        <span class="eyebrow">NFT avatar collection</span>
+        <h3>${escapeHtml(collection.name)}</h3>
+      </span>
+      <span class="risk-badge">Ready</span>
+    </div>
+    <div class="manifest-grid compact-manifest">
+      <span><small>Supply</small><strong>${collection.supply.toLocaleString()}</strong></span>
+      <span><small>Runtime</small><strong>NFT holder claim</strong></span>
+      <span><small>Source</small><strong>${escapeHtml(collection.source)}</strong></span>
+    </div>
+  `;
+}
+
+function vanityCandidateTarget(candidate) {
+  if (candidate?.target) return candidate.target;
+  const prefix = String(candidate?.prefix || '').trim();
+  const suffix = String(candidate?.suffix || '').trim();
+  if (prefix && suffix) return `${prefix}...${suffix}`;
+  return prefix || suffix || candidate?.mode || 'vanity';
+}
+
+function vanityCandidateDetail(candidate) {
+  if (!candidate) return 'Fresh random mint keypair';
+  const parts = [];
+  const rarity = String(candidate.rarity || '').trim();
+  const attempts = Number(candidate.attempts);
+  parts.push(vanityCandidateTarget(candidate));
+  if (rarity) parts.push(rarity);
+  if (Number.isFinite(attempts) && attempts > 0) parts.push(`${attempts.toLocaleString()} tries`);
+  if (candidate.persisted) parts.push('saved');
+  return parts.join(' / ');
+}
+
+const VANITY_BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const VANITY_PLANNING_RATE = 50000;
+
+function formatVanityAttempts(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return '0';
+  if (number < 1000000) return Math.round(number).toLocaleString();
+  return new Intl.NumberFormat(undefined, {
+    notation: 'compact',
+    maximumFractionDigits: number >= 1e12 ? 2 : 1,
+  }).format(number);
+}
+
+function formatVanityDuration(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return 'now';
+  if (value < 60) return `${Math.ceil(value)}s`;
+  if (value < 3600) return `${Math.ceil(value / 60)}m`;
+  if (value < 86400) return `${Math.ceil(value / 3600)}h`;
+  if (value < 31536000) return `${Math.ceil(value / 86400)}d`;
+  return `${Math.ceil(value / 31536000)}y`;
+}
+
+function vanityPatternDifficulty(prefix, suffix) {
+  const targetLength = String(prefix || '').length + String(suffix || '').length;
+  if (targetLength <= 0) return 'random';
+  if (targetLength <= 3) return 'easy';
+  if (targetLength <= 5) return 'moderate';
+  if (targetLength <= 7) return 'hard';
+  return 'extreme';
+}
+
+function vanityPatternEstimate(prefix, suffix, stats = state.vanityProgressStats) {
+  const start = String(prefix || '').trim();
+  const end = String(suffix || '').trim();
+  const targetLength = start.length + end.length;
+  const invalid = [...`${start}${end}`].filter((ch) => !VANITY_BASE58_ALPHABET.includes(ch));
+  const expectedAttempts = targetLength > 0 ? Math.pow(58, targetLength) : 0;
+  const p50 = expectedAttempts * Math.log(2);
+  const p95 = expectedAttempts * -Math.log(0.05);
+  const liveRate = Number(stats?.rate);
+  const attempts = Number(stats?.attempts || 0);
+  const planningSeconds = expectedAttempts > 0 ? expectedAttempts / VANITY_PLANNING_RATE : 0;
+  const liveEtaSeconds = liveRate > 0 && expectedAttempts > attempts
+    ? (expectedAttempts - attempts) / liveRate
+    : null;
+  return {
+    prefix: start,
+    suffix: end,
+    targetLength,
+    invalid: Array.from(new Set(invalid)),
+    expectedAttempts,
+    p50,
+    p95,
+    attempts: Number.isFinite(attempts) ? attempts : 0,
+    rate: Number.isFinite(liveRate) ? liveRate : null,
+    planningSeconds,
+    liveEtaSeconds,
+    difficulty: invalid.length ? 'invalid' : vanityPatternDifficulty(start, end),
+  };
+}
+
+function vanityEstimateSummary(prefix, suffix) {
+  const estimate = vanityPatternEstimate(prefix, suffix);
+  if (estimate.invalid.length) {
+    return {
+      label: 'Invalid Base58',
+      detail: `Remove ${estimate.invalid.map((ch) => `"${ch}"`).join(', ')}; Solana addresses cannot contain 0, O, I, or l.`,
+      className: 'danger',
+    };
+  }
+  if (!estimate.targetLength) {
+    return {
+      label: 'Random CA',
+      detail: 'No start/end target. Grind is optional and instant random mint generation remains available.',
+      className: '',
+    };
+  }
+  const live = estimate.rate
+    ? `Live ${formatVanityAttempts(estimate.rate)}/s, ETA ${formatVanityDuration(estimate.liveEtaSeconds)}`
+    : `At ${formatVanityAttempts(VANITY_PLANNING_RATE)}/s: ~${formatVanityDuration(estimate.planningSeconds)}`;
+  return {
+    label: `${estimate.difficulty[0].toUpperCase()}${estimate.difficulty.slice(1)} pattern`,
+    detail: `Expected ${formatVanityAttempts(estimate.expectedAttempts)} tries; 50% by ${formatVanityAttempts(estimate.p50)}, 95% by ${formatVanityAttempts(estimate.p95)}. ${live}.`,
+    className: estimate.difficulty === 'extreme' ? 'danger' : estimate.difficulty === 'hard' ? 'warn' : '',
+  };
+}
+
+function vanityAvailabilityMeta() {
+  if (state.vanityRunning) {
+    return { label: 'Grinding', detail: state.vanityProgress || 'Native grinder is searching.', className: 'warn', icon: 'fa-spinner fa-spin' };
+  }
+  if (state.apiStatus === 'connected' && !state.vanityAvailable) {
+    return {
+      label: 'Grinder unavailable',
+      detail: state.vanityReason || 'Native vanity_keygen helper is not available in this build.',
+      className: 'danger',
+      icon: 'fa-triangle-exclamation',
+    };
+  }
+  if (state.apiStatus === 'connected') {
+    return { label: 'Native grinder ready', detail: 'Saved Vanity CA options stay selectable across runs.', className: '', icon: 'fa-wand-magic-sparkles' };
+  }
+  return { label: 'Static preview', detail: 'Open through the local Trebuchet app to run the native grinder.', className: 'warn', icon: 'fa-eye' };
+}
+
+function renderVanityCandidates() {
+  const selected = state.vanityCandidates.find((item) => item.publicKey === state.selectedVanityPublicKey) || null;
+  const meta = vanityAvailabilityMeta();
+  const vanity = currentVanityConfig();
+  const rawEstimate = vanityPatternEstimate(vanity.prefix, vanity.suffix);
+  const estimate = vanityEstimateSummary(vanity.prefix, vanity.suffix);
+  const candidates = state.vanityCandidates.slice(-4).reverse();
+  const hiddenCount = Math.max(0, state.vanityCandidates.length - candidates.length);
+  const canGrind = state.vanityRunning || (!rawEstimate.invalid.length && (state.apiStatus !== 'connected' || state.vanityAvailable));
+  const canRemoveSelected = Boolean(selected?.publicKey);
+  const candidateButtons = candidates.map((candidate) => `
+    <button class="vanity-candidate ${candidate.publicKey === state.selectedVanityPublicKey ? 'is-active' : ''}" type="button" data-action="select-vanity" data-public-key="${escapeHtml(candidate.publicKey)}" title="${escapeHtml(candidate.publicKey)}">
+      <strong>${escapeHtml(shortAddress(candidate.publicKey))}</strong>
+      <small>${escapeHtml(vanityCandidateDetail(candidate))}</small>
+      <em>${escapeHtml(candidate.mode || (candidate.prefix && candidate.suffix ? 'both' : candidate.prefix ? 'prefix' : candidate.suffix ? 'suffix' : 'saved'))}</em>
+    </button>
+  `).join('');
+  $('#vanityCandidates').innerHTML = `
+    <div class="vanity-status ${escapeHtml(meta.className)}">
+      <i class="fa-solid ${escapeHtml(meta.icon)}"></i>
+      <span>
+        <strong>${escapeHtml(meta.label)}</strong>
+        <small>${escapeHtml(meta.detail)}</small>
+      </span>
+    </div>
+    <div class="vanity-status vanity-estimate ${escapeHtml(estimate.className)}">
+      <i class="fa-solid fa-gauge-high"></i>
+      <span>
+        <strong>${escapeHtml(estimate.label)}</strong>
+        <small>${escapeHtml(estimate.detail)}</small>
+      </span>
+    </div>
+    <div class="vanity-candidate-grid">
+      <button class="vanity-candidate ${selected ? '' : 'is-active'}" type="button" data-action="select-vanity" data-public-key="">
+        <strong>Random CA</strong>
+        <small>${escapeHtml(vanityCandidateDetail(null))}</small>
+        <em>default</em>
+      </button>
+      ${candidateButtons || '<button class="vanity-candidate" type="button" data-action="noop" data-message="No saved Vanity CA options yet"><strong>Saved options</strong><small>No retained Vanity CAs yet</small><em>empty</em></button>'}
+    </div>
+    <div class="vanity-actions">
+      <button class="pill-button" type="button" data-action="start-vanity" ${canGrind ? '' : 'disabled'}>
+        ${state.vanityRunning ? 'Cancel' : 'Grind CA'}
+      </button>
+      <button class="pill-button" type="button" data-action="remove-selected-vanity" ${canRemoveSelected ? '' : 'disabled'}>Remove selected</button>
+      <button class="pill-button" type="button" data-action="prune-hidden-vanity" ${hiddenCount ? '' : 'disabled'}>Prune hidden</button>
+      <span class="vanity-progress">${escapeHtml(hiddenCount ? `${hiddenCount} more saved / ${vanityCandidateDetail(selected)}` : vanityCandidateDetail(selected))}</span>
+    </div>
+  `;
+}
+
+function poolLadderCount(pool) {
+  if (pool?.ladder?.mode === 'manual') return pool.ladder.bands?.length || 0;
+  if (pool?.ladder?.mode === 'simple') return Number(pool.ladder.bandCount || 0);
+  return 0;
+}
+
+function poolPreviewHtml(pool, fallback = 'Set supply % to include this pool') {
+  if (!pool) {
+    return `<div class="empty-state">${escapeHtml(fallback)}</div>`;
+  }
+  const sliceRows = (pool.distribution || []).map((slice, index) => {
+    const effective = Number(pool.supplyPercent || 0) * (Number(slice.sharePercent || 0) / 100);
+    return `
+      <span>
+        <small>Slice ${index + 1}</small>
+        <strong>${formatPercent(slice.sharePercent)}% pool / ${formatPercent(effective)}% supply</strong>
+      </span>
+    `;
+  }).join('');
+  const ladder = pool.ladder?.mode === 'manual'
+    ? `${pool.ladder.bands?.length || 0} manual`
+    : pool.ladder?.mode === 'simple'
+      ? `${pool.ladder.bandCount} simple`
+      : 'off';
+  const support = pool.support?.mode === 'custom'
+    ? `${Number(pool.support.solValue || 0).toFixed(2)} SOL / ${pool.support.depthPct}%`
+    : 'off';
+  return `
+    <div class="pool-mini-grid">
+      <span><small>Quote</small><strong>${escapeHtml(pool.quoteSymbol || pool.quoteToken)}</strong></span>
+      <span><small>Pool supply</small><strong>${formatPercent(pool.supplyPercent)}%</strong></span>
+      <span><small>Ladder</small><strong>${escapeHtml(ladder)}</strong></span>
+      <span><small>Support</small><strong>${escapeHtml(support)}</strong></span>
+      ${sliceRows}
+    </div>
+  `;
+}
+
+function renderCustomQuoteInfoPanel(pool) {
+  const lookup = customQuoteLookupValue(pool);
+  const info = customQuoteResolvedInfo(pool);
+  const badge = customQuoteInfoBadge(pool);
+  const canCheck = Boolean(lookup)
+    && state.apiStatus === 'connected'
+    && Boolean(state.apiClient?.getQuoteTokenInfo)
+    && !customQuoteInfoRecord(pool)?.loading;
+  const facts = info ? [
+    ['Symbol', info.symbol || pool.quoteSymbol || '-'],
+    ['Decimals', info.decimals ?? '-'],
+    ['Price', info.priceUsd ? `$${Number(info.priceUsd).toPrecision(6)}` : '-'],
+    ['Route', info.raydiumTradeable || 'unknown'],
+    ['Program', info.isToken2022 ? 'Token-2022' : 'SPL'],
+    ['Authorities', info.freezeAuthorityBlock === true ? 'freeze risk' : info.mintAuthorityWarning === true ? 'mint warning' : info.freezeAuthorityBlock == null ? 'unknown' : 'safe'],
+  ] : [];
+  return `
+    <div class="quote-info-panel ${escapeHtml(badge.className)}">
+      <div>
+        <span class="risk-badge ${escapeHtml(badge.className)}">${escapeHtml(badge.label)}</span>
+        <small>${escapeHtml(badge.detail)}</small>
+      </div>
+      ${facts.length ? `<div class="quote-info-facts">
+        ${facts.map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join('')}
+      </div>` : ''}
+      <button class="pill-button" type="button" data-action="resolve-custom-quote" data-pool-id="${escapeHtml(pool.id)}" ${canCheck ? '' : 'disabled'}>
+        ${customQuoteInfoRecord(pool)?.loading ? 'Checking' : 'Verify quote'}
+      </button>
+    </div>
+  `;
+}
+
+function renderPoolEditorPanel() {
+  const topology = currentClassicModel();
+  const solPool = topology.pools.find((pool) => pool.id === 'sol-main');
+  const quotePool = topology.pools.find((pool) => pool.id.endsWith('-flywheel'));
+  const customRows = state.customPools.map((pool, index) => {
+    const normalized = topology.pools.find((item) => item.id === pool.id);
+    return `
+      <article class="pool-row custom-pool-row">
+        <div class="pool-row-head">
+          <span>
+            <span class="eyebrow">Custom quote pool</span>
+            <h3>${escapeHtml(pool.quoteSymbol || `Pool ${index + 3}`)}</h3>
+          </span>
+          <button class="pill-button" type="button" data-action="remove-custom-pool" data-pool-id="${escapeHtml(pool.id)}">Remove</button>
+        </div>
+        <div class="pool-field-grid">
+          <label><span>Quote symbol</span><input data-custom-pool-field="quoteSymbol" data-pool-id="${escapeHtml(pool.id)}" value="${escapeHtml(pool.quoteSymbol || '')}" autocomplete="off"></label>
+          <label><span>Quote mint</span><input data-custom-pool-field="quoteMint" data-pool-id="${escapeHtml(pool.id)}" value="${escapeHtml(pool.quoteMint || '')}" placeholder="Mint address" autocomplete="off"></label>
+          <label><span>Supply %</span><input data-custom-pool-field="supplyPercent" data-pool-id="${escapeHtml(pool.id)}" type="number" min="0" max="100" step="0.1" value="${escapeHtml(pool.supplyPercent ?? 5)}"></label>
+          <label><span>Fee tier</span><select data-custom-pool-field="ammConfigIndex" data-pool-id="${escapeHtml(pool.id)}">${feeTierOptionsHtml(pool.ammConfigIndex ?? 5)}</select></label>
+          <label><span>Slices</span><input data-custom-pool-field="sliceShares" data-pool-id="${escapeHtml(pool.id)}" value="${escapeHtml(pool.sliceShares || '100')}" autocomplete="off"></label>
+          <label><span>Fee Key recipient</span><input data-custom-pool-field="feeKeyRecipient" data-pool-id="${escapeHtml(pool.id)}" value="${escapeHtml(pool.feeKeyRecipient || '')}" placeholder="Optional wallet" autocomplete="off"></label>
+          <label><span>Ladder bands</span><input data-custom-pool-field="ladderBands" data-pool-id="${escapeHtml(pool.id)}" type="number" min="0" max="${CLASSIC_LADDER_MAX_BANDS}" step="1" value="${escapeHtml(pool.ladderBands ?? 0)}"></label>
+          <label><span>Support SOL</span><input data-custom-pool-field="supportSol" data-pool-id="${escapeHtml(pool.id)}" type="number" min="0" step="0.05" value="${escapeHtml(pool.supportSol ?? 0)}"></label>
+        </div>
+        <label class="wide-field">
+          <span>Manual ladder bands</span>
+          <textarea data-custom-pool-field="ladderText" data-pool-id="${escapeHtml(pool.id)}" rows="3" spellcheck="false" placeholder="supply%, lower-x, upper-x">${escapeHtml(pool.ladderText || '')}</textarea>
+        </label>
+        ${renderCustomQuoteInfoPanel(pool)}
+        ${poolPreviewHtml(normalized)}
+      </article>
+    `;
+  }).join('');
+
+  $('#poolEditorPanel').innerHTML = `
+    <div class="pool-editor-head">
+      <span>
+        <span class="eyebrow">Pool topology map</span>
+        <h3>${topology.pools.length} pool${topology.pools.length === 1 ? '' : 's'} / ${topology.totalPoolPercent.toFixed(1)}% supply</h3>
+      </span>
+      <span class="risk-badge ${topology.totalPoolPercent + topology.preallocation.supplyPercent + topology.airdrop.supplyPercent > 100 ? 'danger' : ''}">
+        ${topology.totalPoolPercent + topology.preallocation.supplyPercent + topology.airdrop.supplyPercent > 100 ? 'Over' : `${topology.reservePercent.toFixed(1)}% reserve`}
+      </span>
+    </div>
+    <article class="pool-row">
+      <div class="pool-row-head">
+        <span>
+          <span class="eyebrow">Main pool</span>
+          <h3>SOL pool slices and support</h3>
+        </span>
+        <span class="risk-badge">Classic</span>
+      </div>
+      <div class="pool-field-grid">
+        <label><span>Support depth %</span><input data-base-field="baseSupportDepth" type="number" min="1" max="50" step="1" value="${escapeHtml(state.baseSupportDepth)}"></label>
+        <label><span>Effective slices</span><input value="${escapeHtml(normalizedSliceText($('#sliceShares').value))}" readonly></label>
+      </div>
+      <label class="wide-field">
+        <span>Manual ladder bands</span>
+        <textarea data-base-field="manualLadderText" rows="3" spellcheck="false" placeholder="supply%, lower-x, upper-x">${escapeHtml(state.baseManualLadderText)}</textarea>
+      </label>
+      ${poolPreviewHtml(solPool)}
+    </article>
+    ${quotePool ? `
+      <article class="pool-row">
+        <div class="pool-row-head">
+          <span>
+            <span class="eyebrow">Classic quote pool</span>
+            <h3>${escapeHtml(quotePool.quoteSymbol)} route</h3>
+          </span>
+          <span class="risk-badge warn">Acquire</span>
+        </div>
+        ${poolPreviewHtml(quotePool)}
+      </article>
+    ` : ''}
+    ${customRows || '<div class="empty-state">Add a quote pool for flywheel or custom liquidity venues.</div>'}
+  `;
+}
+
+function phaseEventDone(stage, allocationIndex, indexKey = null, indexValue = null) {
+  if (demoRunHasCompletedReadiness() && state.lastDemoLaunchRun?.liquidity) return true;
+  return state.liveOps.lpEvents.some((event) => {
+    if (event.stage !== stage) return false;
+    if (Number(event.allocationIndex) !== Number(allocationIndex)) return false;
+    if (!indexKey) return true;
+    return Number(event[indexKey] || 0) === Number(indexValue || 0);
+  });
+}
+
+function phaseTreeNode(label, complete) {
+  return `
+    <span class="phase-node ${complete ? 'complete' : 'waiting'}">
+      <i class="fa-solid ${complete ? 'fa-check' : 'fa-circle'}"></i>
+      <strong>${escapeHtml(label)}</strong>
+    </span>
+  `;
+}
+
+function renderClassicPhaseTree(topology) {
+  const poolGroups = topology.pools.map((pool, poolIndex) => {
+    const nodes = [
+      phaseTreeNode('Create pool', phaseEventDone('pool_create_done', poolIndex)),
+      ...(pool.distribution || []).flatMap((slice, sliceIndex) => [
+        phaseTreeNode(`Open slice ${sliceIndex + 1}`, phaseEventDone('main_open_done', poolIndex, 'sliceIndex', sliceIndex)),
+        phaseTreeNode(`Lock slice ${sliceIndex + 1}`, phaseEventDone('main_lock_done', poolIndex, 'sliceIndex', sliceIndex)),
+        slice.recipient
+          ? phaseTreeNode('Transfer Fee Key', phaseEventDone('fee_key_transfer_done', poolIndex))
+          : '',
+      ]),
+      ...Array.from({ length: poolLadderCount(pool) }).flatMap((_, bandIndex) => [
+        phaseTreeNode(`Open ladder ${bandIndex + 1}`, phaseEventDone('ladder_open_done', poolIndex, 'bandIndex', bandIndex)),
+        phaseTreeNode(`Lock ladder ${bandIndex + 1}`, phaseEventDone('ladder_lock_done', poolIndex, 'bandIndex', bandIndex)),
+      ]),
+      pool.support?.mode === 'custom'
+        ? phaseTreeNode('Open support', phaseEventDone('support_open_done', poolIndex, 'supportIndex', 0))
+        : '',
+      pool.support?.mode === 'custom'
+        ? phaseTreeNode('Lock support', phaseEventDone('support_lock_done', poolIndex, 'supportIndex', 0))
+        : '',
+    ].filter(Boolean).join('');
+    return `
+      <article class="phase-tree-group">
+        <div>
+          <span class="eyebrow">Pool ${poolIndex + 1}</span>
+          <h3>${escapeHtml(pool.quoteSymbol || pool.quoteToken)}</h3>
+        </div>
+        <div class="phase-node-grid">${nodes}</div>
+      </article>
+    `;
+  }).join('');
+  const proof = currentLaunchProof();
+  const proofConfig = proofConfigForFingerprint(proof, currentLaunchConfig());
+  const airdropComplete = liveAirdropComplete(topology, proof);
+  const report = currentReportPublish(proof, proofConfig, { allowTransient: true });
+  const localDossier = currentLocalDossier(proof, proofConfig);
+  const sweepComplete = Boolean(demoRunHasCompletedReadiness() || transferHasWalletEmptyFinalSweepEvidence(proof?.transfer));
+  const reportArtifactRecord = report || localDossier;
+  const reportComplete = Boolean(
+    reportArtifactRecord
+    && (!sweepComplete || reportArtifactMatchesTerminalSweep(reportArtifactRecord, proof))
+  );
+  return `
+    <div class="phase-tree-head">
+      <span>
+        <span class="eyebrow">Classic phase tree</span>
+        <h3>Create / open / lock / transfer checkpoints</h3>
+      </span>
+      <span class="risk-badge warn">${state.liveOps.lpEvents.length} live event${state.liveOps.lpEvents.length === 1 ? '' : 's'}</span>
+    </div>
+    <div class="phase-tree-grid">${poolGroups}</div>
+    <div class="phase-tree-tail">
+      ${phaseTreeNode(`Airdrop ${topology.airdrop.recipientCount || 0}`, !topology.airdrop.enabled || airdropComplete)}
+      ${phaseTreeNode(state.prefs.publishLaunchReport !== false ? 'Publish report' : 'Local report', reportComplete)}
+      ${phaseTreeNode('Sweep assets', sweepComplete)}
+    </div>
+  `;
+}
+
+function renderAirdropPanel() {
+  const topology = currentClassicModel();
+  const airdrop = topology.airdrop;
+  const summary = $('#airdropSummary');
+  const hasError = Boolean(state.airdropParseError || state.airdropBudgetError);
+  summary.textContent = hasError
+    ? 'Check CSV'
+    : airdrop.enabled
+      ? `${airdrop.recipientCount} / ${formatPercent(airdrop.supplyPercent)}%`
+      : 'Off';
+  summary.className = `risk-badge ${hasError ? 'danger' : airdrop.enabled ? '' : 'warn'}`;
+  const requested = Number(airdrop.requestedSupplyPercent || 0);
+  const effective = Number(airdrop.supplyPercent || 0);
+  const required = Number(airdrop.requiredSupplyPercent || 0);
+  const raised = airdrop.autoFit && effective > requested + 0.0001;
+  const budgetPanel = document.getElementById('airdropBudgetPanel');
+  if (budgetPanel) {
+    budgetPanel.innerHTML = `
+      <div class="airdrop-budget-meter">
+        <span style="width:${Math.min(100, effective)}%"></span>
+      </div>
+      <div class="airdrop-budget-grid">
+        <span><small>Budget</small><strong>${formatPercent(effective)}%</strong></span>
+        <span><small>Required</small><strong>${required ? `${formatPercent(required)}%` : '-'}</strong></span>
+        <span><small>Tokens</small><strong>${compactAmount(airdrop.totalTokens || airdrop.budgetTokens || 0)}</strong></span>
+        <span><small>Tx cost</small><strong>${airdrop.executionCostSol ? `${airdrop.executionCostSol.toFixed(4)} SOL` : '-'}</strong></span>
+      </div>
+      ${raised ? `<p class="airdrop-budget-hint">Auto-fit raised ${formatPercent(requested)}% to ${formatPercent(effective)}% to cover explicit CSV token amounts.</p>` : ''}
+      ${airdrop.budgetError ? `<p class="airdrop-budget-error">${escapeHtml(airdrop.budgetError)}</p>` : ''}
+    `;
+  }
+  const previewRows = airdrop.recipients.slice(0, 4).map((row) => `
+    <div class="mini-row">
+      <span>${escapeHtml(shortAddress(row.wallet))}</span>
+      <strong>${compactAmount(row.tokens)} tokens</strong>
+    </div>
+  `).join('');
+  $('#airdropRecipientPreview').innerHTML = hasError
+    ? `<div class="mini-row danger"><span>${escapeHtml(state.airdropParseError || state.airdropBudgetError)}</span><strong>Fix</strong></div>`
+    : previewRows || `<div class="mini-row"><span>${airdrop.enabled ? 'Manual count only; attach CSV before real transfer.' : 'No recipients attached.'}</span><strong>${airdrop.source}</strong></div>`;
+}
+
+function buildReportPreview() {
+  const config = currentLaunchConfig();
+  return {
+    generatedAt: new Date().toISOString(),
+    token: config.token,
+    vanity: config.vanity,
+    poolTopology: config.poolTopology,
+    avatarCollection: config.avatarCollection,
+    walletPublicKey: selectedLaunchWalletPublicKey(),
+  };
+}
+
+function demoRunLaunchConfig(run = state.lastDemoLaunchRun) {
+  const fallback = typeof currentLaunchConfig === 'function'
+    ? currentLaunchConfig()
+    : { token: {}, poolTopology: {} };
+  const plan = run?.readiness?.plan && typeof run.readiness.plan === 'object'
+    ? run.readiness.plan
+    : null;
+  if (!plan) return fallback;
+  return {
+    ...fallback,
+    token: plan.token || fallback.token || {},
+    vanity: plan.vanity || fallback.vanity || {},
+    poolTopology: plan.poolTopology || fallback.poolTopology || {},
+    recovery: plan.recovery || fallback.recovery || {},
+    avatarCollection: plan.avatarCollection || fallback.avatarCollection || {},
+    launchSol: plan.funding?.launchSol ?? fallback.launchSol,
+    mode: plan.mode || fallback.mode || 'guarded',
+  };
+}
+
+function proofFromDemoRun() {
+  if (!state.lastDemoLaunchRun) return null;
+  const config = demoRunLaunchConfig(state.lastDemoLaunchRun);
+  const token = state.lastDemoLaunchRun.token || null;
+  const liquidity = state.lastDemoLaunchRun.liquidity || {};
+  const transfer = state.lastDemoLaunchRun.transfer || null;
+  const results = Array.isArray(liquidity.results) ? liquidity.results : [];
+  const airdrop = transfer?.airdrop || null;
+  const plannedAirdropRows = Array.isArray(config?.poolTopology?.airdrop?.recipients)
+    ? config.poolTopology.airdrop.recipients
+    : [];
+  const plannedAirdropCount = Math.max(
+    Math.max(0, Math.floor(Number(config?.poolTopology?.airdrop?.recipientCount || 0))),
+    plannedAirdropRows.length,
+  );
+  return {
+    source: 'demo-run',
+    journalId: state.lastDemoLaunchRun.id || null,
+    status: 'completed',
+    stage: 'demo_completed',
+    readiness: state.lastDemoLaunchRun.readiness || null,
+    walletPublicKey: state.lastDemoLaunchRun.walletPublicKey || selectedLaunchWalletPublicKey(),
+    updatedAt: state.lastDemoLaunchRun.completedAt || null,
+    token: token ? {
+      mint: token.tokenMint || token.mint || null,
+      name: token.name || config.token.name,
+      symbol: token.symbol || config.token.symbol,
+      decimals: token.decimals ?? config.token.decimals,
+      totalSupply: token.totalSupply ?? config.token.supply,
+      metadataUri: token.metadataUri || null,
+      imageUri: token.imageUri || null,
+      mintAuthorityRenounced: token.mintAuthorityRenounced === true,
+      freezeAuthorityDisabled: token.freezeAuthorityDisabled === true,
+      metadataUpdateAuthorityRevoked: token.metadataUpdateAuthorityRevoked === true,
+      metadataImmutable: token.metadataImmutable === true,
+    } : null,
+    launchConfig: config,
+    liquidity: {
+      complete: results.length > 0,
+      poolCount: results.length,
+      poolIds: results.map((pool) => pool.poolId).filter(Boolean),
+      positions: { main: 0, ladder: 0, support: 0, bootstrap: 0 },
+      lockedPositionCount: 0,
+      feeKeyCount: 0,
+      results,
+    },
+    airdrop: {
+      plannedRecipientCount: plannedAirdropCount,
+      deliveredCount: Array.isArray(airdrop?.transferred) ? airdrop.transferred.length : 0,
+      failedCount: Array.isArray(airdrop?.failed) ? airdrop.failed.length : 0,
+      transferred: Array.isArray(airdrop?.transferred) ? airdrop.transferred : [],
+      failed: Array.isArray(airdrop?.failed) ? airdrop.failed : [],
+      recipients: plannedAirdropRows,
+      tokenMint: token?.tokenMint || token?.mint || null,
+      tokenDecimals: token?.decimals ?? config.token.decimals,
+    },
+    reportPublish: null,
+    transfer,
+    destinationWallet: transfer?.destinationWallet || config?.poolTopology?.sweepDestination || null,
+    canPublishReport: Boolean(token?.tokenMint || token?.mint) && results.length > 0,
+    canRunAirdrop: false,
+    canRetryAirdrop: false,
+    canSweep: false,
+  };
+}
+
+function currentLaunchProof() {
+  return state.launchProof || state.executionReadiness?.proof || proofFromDemoRun();
+}
+
+function proofTokenMint(proof) {
+  return String(proof?.token?.mint || proof?.tokenMint || '').trim();
+}
+
+function proofJournalId(proof) {
+  return String(proof?.journalId || '').trim();
+}
+
+function proofWalletPublicKey(proof) {
+  return String(proof?.walletPublicKey || '').trim();
+}
+
+function journalTokenMint(journal = {}) {
+  return String(journal?.token?.mint || journal?.token?.tokenMint || journal?.poolPlan?.tokenMint || '').trim();
+}
+
+function proofTokenJournalEvidenceState(proof = {}, journal = {}) {
+  const fields = [
+    ['mintAuthorityRenounced', 'mint authority'],
+    ['freezeAuthorityDisabled', 'freeze authority'],
+    ['metadataUpdateAuthorityRevoked', 'metadata update authority'],
+    ['metadataImmutable', 'metadata immutability'],
+  ];
+  const missing = [];
+  const mismatches = [];
+  const proofToken = proof?.token || {};
+  const journalToken = journal?.token || {};
+  fields.forEach(([field, label]) => {
+    if (proofToken?.[field] !== true) return;
+    if (!journalToken || typeof journalToken !== 'object' || typeof journalToken[field] !== 'boolean') {
+      missing.push(`journal token authority ${label}`);
+      return;
+    }
+    if (journalToken[field] !== true) mismatches.push(`token authority ${label}`);
+  });
+  return { missing, mismatches };
+}
+
+function normalizedProofStringSet(values = []) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))]
+    .sort();
+}
+
+function launchProofPoolIds(proof = {}) {
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  return normalizedProofStringSet([
+    ...(Array.isArray(proof?.liquidity?.poolIds) ? proof.liquidity.poolIds : []),
+    ...results.map((pool) => pool?.poolId || pool?.id),
+  ]);
+}
+
+function launchJournalLiquidityResults(journal = {}) {
+  return typeof journalPriorResults === 'function'
+    ? journalPriorResults(journal)
+    : journalResultList(journal);
+}
+
+function launchJournalPoolIds(journal = {}) {
+  return normalizedProofStringSet(launchJournalLiquidityResults(journal).map((pool) => pool?.poolId || pool?.id));
+}
+
+function sameProofStringSet(left = [], right = []) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function launchPoolFingerprints(results = []) {
+  return (Array.isArray(results) ? results : [])
+    .map((pool) => JSON.stringify({
+      poolId: pool?.poolId || pool?.id || null,
+      quoteMint: pool?.quoteMint || pool?.quoteAddress || null,
+      supplyPercent: numberOrNull(pool?.supplyPercent),
+      tickSpacing: numberOrNull(pool?.tickSpacing),
+      initialPrice: pool?.initialPrice == null ? null : String(pool.initialPrice),
+      launchedSide: pool?.launchedSide || null,
+      createPoolTx: pool?.createPoolTx || pool?.txIds?.createPool || null,
+    }))
+    .sort();
+}
+
+function launchResultPositionCount(results = [], fallback = 0) {
+  const aggregate = (Array.isArray(results) ? results : [])
+    .reduce((sum, pool) => sum + Number(pool?.positionCount || pool?.totalPositions || 0), 0);
+  const explicit = Number(fallback || 0);
+  return Math.max(
+    proofPositions(results),
+    Number.isFinite(aggregate) ? aggregate : 0,
+    Number.isFinite(explicit) ? explicit : 0,
+  );
+}
+
+function launchPositionFingerprints(results = []) {
+  return comparisonPositionFingerprint(comparisonPositionsFromPools(results))
+    .map((position) => JSON.stringify(position));
+}
+
+function proofLiquidityJournalEvidenceState(proof = {}, journal = {}) {
+  const proofResults = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const journalResults = launchJournalLiquidityResults(journal);
+  const missing = [];
+  const mismatches = [];
+  const proofPoolRows = launchPoolFingerprints(proofResults);
+  const journalPoolRows = launchPoolFingerprints(journalResults);
+  if (proofPoolRows.length && !journalPoolRows.length) {
+    missing.push('journal pool records');
+  } else if (proofPoolRows.length && journalPoolRows.length && !sameProofStringSet(proofPoolRows, journalPoolRows)) {
+    mismatches.push('pool records');
+  }
+
+  const proofPositionCount = launchResultPositionCount(proofResults, proof?.liquidity?.positionCount);
+  const journalPositionCount = launchResultPositionCount(journalResults);
+  if (proofPositionCount > 0) {
+    if (journalPositionCount <= 0) missing.push('journal positions');
+    else if (journalPositionCount !== proofPositionCount) mismatches.push('position count');
+  }
+
+  const proofPositionsFingerprint = launchPositionFingerprints(proofResults);
+  const journalPositionsFingerprint = launchPositionFingerprints(journalResults);
+  if (proofPositionsFingerprint.length && !journalPositionsFingerprint.length) {
+    missing.push('journal position records');
+  } else if (
+    proofPositionsFingerprint.length
+    && journalPositionsFingerprint.length
+    && !sameProofStringSet(proofPositionsFingerprint, journalPositionsFingerprint)
+  ) {
+    mismatches.push('position records');
+  }
+
+  const proofLocked = Math.max(Number(proof?.liquidity?.lockedPositionCount || 0), proofLockedPositionCount(proofResults));
+  const journalLocked = proofLockedPositionCount(journalResults);
+  if (proofLocked > 0) {
+    if (journalLocked <= 0) missing.push('journal lock proof');
+    else if (journalLocked !== proofLocked) mismatches.push('lock count');
+  }
+
+  const proofFeeKeys = Math.max(Number(proof?.liquidity?.feeKeyCount || 0), proofFeeKeyCount(proofResults));
+  const journalFeeKeys = proofFeeKeyCount(journalResults);
+  if (proofFeeKeys > 0) {
+    if (journalFeeKeys <= 0) missing.push('journal Fee Key proof');
+    else if (journalFeeKeys !== proofFeeKeys) mismatches.push('Fee Key count');
+  }
+
+  const proofLockSummary = v2ReportLockSummary(proofResults);
+  if (Number(proofLockSummary.totalRecipient || 0) > 0) {
+    const journalLockSummary = v2ReportLockSummary(journalResults);
+    if (Number(journalLockSummary.totalRecipient || 0) <= 0) {
+      missing.push('journal Fee Key recipients');
+    } else if (Number(journalLockSummary.totalRecipient || 0) !== Number(proofLockSummary.totalRecipient || 0)) {
+      mismatches.push('Fee Key recipient count');
+    }
+    if (Number(proofLockSummary.transferred || 0) > 0) {
+      if (Number(journalLockSummary.transferred || 0) <= 0) {
+        missing.push('journal Fee Key transfers');
+      } else if (Number(journalLockSummary.transferred || 0) !== Number(proofLockSummary.transferred || 0)) {
+        mismatches.push('Fee Key transfer count');
+      }
+    }
+  }
+
+  return { missing, mismatches };
+}
+
+function launchAirdropRows(airdrop = {}, key = 'transferred') {
+  return Array.isArray(airdrop?.[key]) ? airdrop[key] : [];
+}
+
+function launchAirdropCount(airdrop = {}, key = 'deliveredCount', fallbackRows = []) {
+  const value = Number(airdrop?.[key]);
+  return Number.isFinite(value) ? Math.max(0, value) : fallbackRows.length;
+}
+
+function launchAirdropWalletSet(rows = []) {
+  return normalizedProofStringSet((Array.isArray(rows) ? rows : [])
+    .map((row) => row?.wallet || row?.recipient || row?.address));
+}
+
+function launchAirdropTxSet(rows = []) {
+  return normalizedProofStringSet((Array.isArray(rows) ? rows : [])
+    .map((row) => row?.txId || row?.signature || row?.tx));
+}
+
+function proofAirdropJournalEvidenceState(proof = {}, journal = {}) {
+  const proofAirdrop = proof?.airdrop || {};
+  const journalAirdrop = journal?.airdrop || {};
+  const proofTransferred = launchAirdropRows(proofAirdrop, 'transferred');
+  const proofFailedRows = launchAirdropRows(proofAirdrop, 'failed');
+  const proofRecipients = launchAirdropRows(proofAirdrop, 'recipients');
+  const proofDelivered = launchAirdropCount(proofAirdrop, 'deliveredCount', proofTransferred);
+  const proofFailed = launchAirdropCount(proofAirdrop, 'failedCount', proofFailedRows);
+  const planned = Math.max(
+    launchAirdropCount(proofAirdrop, 'plannedRecipientCount', proofRecipients),
+    proofRecipients.length,
+    proofDelivered + proofFailed,
+  );
+  const missing = [];
+  const mismatches = [];
+  if (planned <= 0) return { required: false, missing, mismatches };
+
+  const journalTransferred = launchAirdropRows(journalAirdrop, 'transferred');
+  const journalFailedRows = launchAirdropRows(journalAirdrop, 'failed');
+  const journalDelivered = journalTransferred.length;
+  const journalFailed = journalFailedRows.length;
+  if (!journalAirdrop || typeof journalAirdrop !== 'object' || (!journalDelivered && !journalFailed)) {
+    missing.push('journal airdrop');
+    return { required: true, missing, mismatches };
+  }
+  if (proofDelivered !== journalDelivered || proofFailed !== journalFailed) {
+    mismatches.push('airdrop counts');
+  }
+
+  const proofWallets = launchAirdropWalletSet(proofTransferred);
+  const journalWallets = launchAirdropWalletSet(journalTransferred);
+  if (proofWallets.length && !journalWallets.length) {
+    missing.push('journal airdrop recipients');
+  } else if (proofWallets.length && journalWallets.length && !sameProofStringSet(proofWallets, journalWallets)) {
+    mismatches.push('airdrop recipients');
+  }
+
+  const proofTxs = launchAirdropTxSet(proofTransferred);
+  const journalTxs = launchAirdropTxSet(journalTransferred);
+  if (proofTxs.length && !journalTxs.length) {
+    missing.push('journal airdrop transactions');
+  } else if (proofTxs.length && journalTxs.length && !sameProofStringSet(proofTxs, journalTxs)) {
+    mismatches.push('airdrop transactions');
+  }
+
+  return { required: true, missing, mismatches };
+}
+
+function proofMatchingLocalLaunchJournal(proof = currentLaunchProof()) {
+  const journalId = proofJournalId(proof);
+  if (!journalId) return null;
+  const journals = Array.isArray(state.recovery?.journals) ? state.recovery.journals : [];
+  const proofWallet = proofWalletPublicKey(proof);
+  const proofMint = proofTokenMint(proof);
+  return journals.find((journal) => {
+    if (String(journal?.id || '').trim() !== journalId) return false;
+    const journalWallet = String(journal?.walletPublicKey || '').trim();
+    if (proofWallet && journalWallet && proofWallet !== journalWallet) return false;
+    const mint = journalTokenMint(journal);
+    if (proofMint && mint && proofMint !== mint) return false;
+    return true;
+  }) || null;
+}
+
+function proofJournalEvidenceState(proof = currentLaunchProof()) {
+  const journal = proofMatchingLocalLaunchJournal(proof);
+  const missing = [];
+  const mismatches = [];
+  if (!proofJournalId(proof)) missing.push('journal id');
+  if (!journal) {
+    if (proofJournalId(proof)) missing.push('local journal');
+    return { journal: null, backed: false, missing, mismatches };
+  }
+
+  const proofPoolIds = launchProofPoolIds(proof);
+  const journalPoolIds = launchJournalPoolIds(journal);
+  if (proofPoolIds.length && !journalPoolIds.length) {
+    missing.push('journal pool ids');
+  } else if (proofPoolIds.length && journalPoolIds.length && !sameProofStringSet(proofPoolIds, journalPoolIds)) {
+    mismatches.push('pool ids');
+  }
+
+  const proofTransfer = proof?.transfer || null;
+  const journalTransfer = journal?.transfer || null;
+  const proofSweepComplete = transferHasFinalSweepEvidence(proofTransfer);
+  const proofTerminalSweepComplete = transferHasWalletEmptyFinalSweepEvidence(proofTransfer);
+  const journalTerminalSweepComplete = journalTransferHasTerminalSweepEvidence(journalTransfer);
+  const proofDestination = String(proofTransfer?.destinationWallet || proof?.destinationWallet || '').trim();
+  const journalDestination = String(journalTransfer?.destinationWallet || '').trim();
+  if (proofSweepComplete) {
+    if (!journalTransfer || typeof journalTransfer !== 'object') {
+      missing.push('journal sweep transfer');
+    } else if (!journalTerminalSweepComplete) {
+      missing.push('terminal journal sweep');
+    }
+    if (proofDestination && !journalDestination) missing.push('journal sweep destination');
+    const tokenEvidence = proofTokenJournalEvidenceState(proof, journal);
+    missing.push(...tokenEvidence.missing);
+    mismatches.push(...tokenEvidence.mismatches);
+    const liquidityEvidence = proofLiquidityJournalEvidenceState(proof, journal);
+    missing.push(...liquidityEvidence.missing);
+    mismatches.push(...liquidityEvidence.mismatches);
+	    const airdropEvidence = proofAirdropJournalEvidenceState(proof, journal);
+	    missing.push(...airdropEvidence.missing);
+	    mismatches.push(...airdropEvidence.mismatches);
+	  }
+  if (
+    proofTerminalSweepComplete
+    && journalTerminalSweepComplete
+    && (!proofDestination || !journalDestination || proofDestination === journalDestination)
+  ) {
+    const transferEvidence = proofTransferJournalEvidenceState(proofTransfer, journalTransfer);
+    missing.push(...transferEvidence.missing);
+    mismatches.push(...transferEvidence.mismatches);
+  }
+	  if (proofDestination && journalDestination && proofDestination !== journalDestination) {
+	    mismatches.push('sweep destination');
+	  }
+
+  return {
+    journal,
+    backed: missing.length === 0 && mismatches.length === 0,
+    missing,
+    mismatches,
+    proofPoolIds,
+    journalPoolIds,
+  };
+}
+
+function sameLaunchProofIdentity(existing, incoming) {
+  if (!existing || !incoming || existing.source === 'demo-run' || incoming.source === 'demo-run') return false;
+  const existingMint = proofTokenMint(existing);
+  const incomingMint = proofTokenMint(incoming);
+  const existingJournal = proofJournalId(existing);
+  const incomingJournal = proofJournalId(incoming);
+  const existingWallet = proofWalletPublicKey(existing);
+  const incomingWallet = proofWalletPublicKey(incoming);
+  if (existingWallet && incomingWallet && existingWallet !== incomingWallet) return false;
+  if (existingJournal && incomingJournal && existingJournal !== incomingJournal) return false;
+  if (existingMint && incomingMint) return existingMint === incomingMint;
+  if (existingJournal && incomingJournal) return existingJournal === incomingJournal;
+  return Boolean(existingWallet && incomingWallet && existingWallet === incomingWallet && (existingMint || incomingMint));
+}
+
+function proofAirdropHasDelivery(airdrop = {}) {
+  return Boolean(
+    Number(airdrop?.deliveredCount || 0) > 0
+      || Number(airdrop?.failedCount || 0) > 0
+      || (Array.isArray(airdrop?.transferred) && airdrop.transferred.length > 0)
+      || (Array.isArray(airdrop?.failed) && airdrop.failed.length > 0),
+  );
+}
+
+function mergeProofAirdropEvidence(existing = null, incoming = null) {
+  if (!existing) return incoming || null;
+  if (!incoming) return existing;
+  const merged = { ...existing, ...incoming };
+  if (!Array.isArray(incoming.recipients) && Array.isArray(existing.recipients)) {
+    merged.recipients = existing.recipients;
+  }
+  if (!incoming.tokenMint && existing.tokenMint) merged.tokenMint = existing.tokenMint;
+  if (incoming.tokenDecimals == null && existing.tokenDecimals != null) {
+    merged.tokenDecimals = existing.tokenDecimals;
+  }
+  if (!proofAirdropHasDelivery(incoming) && proofAirdropHasDelivery(existing)) {
+    merged.deliveredCount = existing.deliveredCount;
+    merged.failedCount = existing.failedCount;
+    merged.transferred = Array.isArray(existing.transferred) ? existing.transferred : [];
+    merged.failed = Array.isArray(existing.failed) ? existing.failed : [];
+  }
+  return merged;
+}
+
+function proofReportArtifactFinalizesDestination(proof = {}, fallbackConfig = currentLaunchConfig()) {
+  if (!proof || typeof proof !== 'object') return false;
+  const proofConfig = proof.launchConfig && typeof proof.launchConfig === 'object'
+    ? proof.launchConfig
+    : fallbackConfig;
+  const report = proof.reportPublish || null;
+  const localDossier = proof.localDossier || null;
+  return Boolean(
+    !reportPublishFinalizationIssue(report, proof, proofConfig)
+      || !localDossierFinalizationIssue(localDossier, proof, proofConfig)
+  );
+}
+
+function mergeLaunchConfigSnapshot(existing = null, incoming = null, existingProof = {}, incomingProof = {}) {
+  const base = existing && typeof existing === 'object'
+    ? existing
+    : incoming && typeof incoming === 'object'
+      ? incoming
+      : null;
+  if (!base) return null;
+  const merged = {
+    ...base,
+    token: { ...(base.token || {}) },
+    poolTopology: { ...(base.poolTopology || {}) },
+    avatarCollection: base.avatarCollection ? { ...base.avatarCollection } : base.avatarCollection,
+  };
+  const incomingDestination = String(
+    incomingProof?.transfer?.destinationWallet
+    || incomingProof?.destinationWallet
+    || incoming?.poolTopology?.sweepDestination
+    || '',
+  ).trim();
+  const existingDestination = String(merged.poolTopology.sweepDestination || '').trim();
+  const existingDestinationFinalized = Boolean(
+    proofReportArtifactFinalizesDestination(existingProof, existing)
+    || transferHasFinalSweepEvidence(existingProof?.transfer)
+  );
+  const incomingDestinationFinalized = Boolean(
+    proofReportArtifactFinalizesDestination(incomingProof, incoming)
+    || transferHasFinalSweepEvidence(incomingProof?.transfer)
+  );
+  if (incomingDestination && (!existingDestination || !existingDestinationFinalized || incomingDestinationFinalized)) {
+    merged.poolTopology.sweepDestination = incomingDestination;
+  }
+  return merged;
+}
+
+function classicComparisonResultObject(comparison = null) {
+  if (!comparison || typeof comparison !== 'object') return null;
+  if (
+    comparison.status
+    || comparison.proofFingerprint
+    || Array.isArray(comparison.rows)
+    || Number(comparison.fieldCount || 0) > 0
+  ) {
+    return comparison;
+  }
+  return null;
+}
+
+function reportParityClassicComparison(reportParity = null) {
+  if (!reportParity || typeof reportParity !== 'object') return null;
+  const comparison = classicComparisonResultObject(reportParity.comparison);
+  if (comparison) return comparison;
+  const classicComparison = classicComparisonResultObject(reportParity.classicComparison);
+  if (classicComparison) return classicComparison;
+  return null;
+}
+
+function currentClassicComparisonForProof(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const normalizedComparison = normalizeClassicReportComparison(state.classicReportComparison).result;
+  const proofComparison = reportParityClassicComparison(proof?.reportParity);
+  if (normalizedComparison && classicComparisonMatchesProof(normalizedComparison, proof, config)) {
+    return normalizedComparison;
+  }
+  if (proofComparison && classicComparisonMatchesProof(proofComparison, proof, config)) {
+    return proofComparison;
+  }
+  return normalizedComparison || proofComparison || null;
+}
+
+function pruneLaunchProofReportParity(reportParity = null, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  if (!reportParity || typeof reportParity !== 'object') return null;
+  const cleaned = { ...reportParity };
+  const comparison = classicComparisonResultObject(cleaned.comparison);
+  const classicComparison = classicComparisonResultObject(cleaned.classicComparison);
+  if (Object.prototype.hasOwnProperty.call(cleaned, 'comparison') && !comparison) delete cleaned.comparison;
+  else if (comparison && !classicComparisonMatchesProof(comparison, proof, config)) delete cleaned.comparison;
+  if (Object.prototype.hasOwnProperty.call(cleaned, 'classicComparison') && !classicComparison) delete cleaned.classicComparison;
+  else if (classicComparison && !classicComparisonMatchesProof(classicComparison, proof, config)) delete cleaned.classicComparison;
+  if (!cleaned.comparison && cleaned.classicComparison) cleaned.comparison = cleaned.classicComparison;
+  if (!reportParityClassicComparison(cleaned) && cleaned.classicArtifactCompared) {
+    cleaned.classicArtifactCompared = false;
+    cleaned.comparedAt = null;
+  }
+  return Object.keys(cleaned).length ? cleaned : null;
+}
+
+function pruneLaunchProofReportParityForExport(reportParity = null, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const cleaned = pruneLaunchProofReportParity(reportParity, proof, config);
+  if (!cleaned || typeof cleaned !== 'object') return cleaned;
+  const comparison = classicComparisonResultObject(cleaned.comparison);
+  const classicComparison = classicComparisonResultObject(cleaned.classicComparison);
+  if (comparison && !classicComparisonIsRetirementGrade(comparison, proof, config)) delete cleaned.comparison;
+  if (classicComparison && !classicComparisonIsRetirementGrade(classicComparison, proof, config)) delete cleaned.classicComparison;
+  if (!cleaned.comparison && cleaned.classicComparison) cleaned.comparison = cleaned.classicComparison;
+  if (!reportParityClassicComparison(cleaned) && cleaned.classicArtifactCompared) {
+    cleaned.classicArtifactCompared = false;
+    cleaned.comparedAt = null;
+  }
+  return Object.keys(cleaned).length ? cleaned : null;
+}
+
+function pruneLaunchProofEvidenceArtifacts(proof = null, config = currentLaunchConfig()) {
+  if (!proof || typeof proof !== 'object') return proof;
+  const cleaned = { ...proof };
+  if (cleaned.reportPublish && !reportPublishIsProofCurrent(cleaned.reportPublish, cleaned, config)) {
+    delete cleaned.reportPublish;
+  }
+  if (cleaned.localDossier && !localDossierIsProofCurrent(cleaned.localDossier, cleaned, config)) {
+    delete cleaned.localDossier;
+  }
+  if (cleaned.reportParity && typeof cleaned.reportParity === 'object') {
+    const reportParity = pruneLaunchProofReportParity(cleaned.reportParity, cleaned, config);
+    if (reportParity) cleaned.reportParity = reportParity;
+    else delete cleaned.reportParity;
+  }
+  return cleaned;
+}
+
+function pruneLaunchProofEvidenceArtifactsForExport(proof = null, config = currentLaunchConfig()) {
+  const cleaned = pruneLaunchProofEvidenceArtifacts(proof, config);
+  if (!cleaned || typeof cleaned !== 'object') return cleaned;
+  if (cleaned.reportParity && typeof cleaned.reportParity === 'object') {
+    const reportParity = pruneLaunchProofReportParityForExport(cleaned.reportParity, cleaned, config);
+    if (reportParity) cleaned.reportParity = reportParity;
+    else delete cleaned.reportParity;
+  }
+  return cleaned;
+}
+
+function mergeLaunchProofEvidence(existing, incoming) {
+  if (!incoming || typeof incoming !== 'object') return null;
+  if (!sameLaunchProofIdentity(existing, incoming)) {
+    const incomingConfig = incoming.launchConfig && typeof incoming.launchConfig === 'object'
+      ? incoming.launchConfig
+      : currentLaunchConfig();
+    return pruneLaunchProofEvidenceArtifacts(incoming, incomingConfig);
+  }
+
+  const merged = {
+    ...existing,
+    ...incoming,
+    token: { ...(existing.token || {}), ...(incoming.token || {}) },
+    liquidity: { ...(existing.liquidity || {}), ...(incoming.liquidity || {}) },
+    airdrop: mergeProofAirdropEvidence(existing.airdrop, incoming.airdrop),
+  };
+  merged.launchConfig = mergeLaunchConfigSnapshot(existing.launchConfig, incoming.launchConfig, existing, incoming);
+  const mergedConfig = merged.launchConfig && typeof merged.launchConfig === 'object'
+    ? merged.launchConfig
+    : currentLaunchConfig();
+
+  if (
+    !incoming.reportPublish
+    && !reportPublishFinalizationIssue(existing.reportPublish, merged, mergedConfig)
+  ) {
+    merged.reportPublish = existing.reportPublish;
+  }
+  if (
+    !incoming.localDossier
+    && !localDossierFinalizationIssue(existing.localDossier, merged, mergedConfig)
+  ) {
+    merged.localDossier = existing.localDossier;
+  }
+  if (
+    merged.reportPublish
+    && reportPublishFinalizationIssue(merged.reportPublish, merged, mergedConfig)
+  ) {
+    delete merged.reportPublish;
+  }
+  if (
+    merged.localDossier
+    && localDossierFinalizationIssue(merged.localDossier, merged, mergedConfig)
+  ) {
+    delete merged.localDossier;
+  }
+  if (!incoming.reportParity && existing.reportParity) {
+    const comparison = reportParityClassicComparison(existing.reportParity);
+    if (!comparison || classicComparisonMatchesProof(comparison, merged, mergedConfig)) {
+      merged.reportParity = existing.reportParity;
+    }
+  }
+  if (!incoming.transfer && existing.transfer) merged.transfer = existing.transfer;
+  if (!incoming.destinationWallet && existing.destinationWallet) merged.destinationWallet = existing.destinationWallet;
+  return pruneLaunchProofEvidenceArtifacts(merged, mergedConfig);
+}
+
+function rememberLaunchProof(readinessOrProof) {
+  const rawProof = readinessOrProof?.proof || readinessOrProof;
+  if (rawProof && typeof rawProof === 'object') {
+    state.launchProof = mergeLaunchProofEvidence(state.launchProof, rawProof);
+    const proofConfig = proofConfigForFingerprint(state.launchProof, currentLaunchConfig());
+    state.lastReportPublish = reportPublishIsProofCurrent(state.launchProof?.reportPublish, state.launchProof, proofConfig)
+      ? state.launchProof.reportPublish
+      : null;
+    state.lastLocalDossier = localDossierIsProofCurrent(state.launchProof?.localDossier, state.launchProof, proofConfig)
+      ? state.launchProof.localDossier
+      : null;
+    persistLaunchProof(state.launchProof);
+    return state.launchProof;
+  }
+  return null;
+}
+
+function clearLaunchProof() {
+  state.launchProof = null;
+  state.lastReportPublish = null;
+  state.lastLocalDossier = null;
+  clearStoredLaunchProof();
+}
+
+function solscanAccountUrl(address) {
+  return `https://solscan.io/account/${encodeURIComponent(String(address || ''))}`;
+}
+
+function solscanTxUrl(signature) {
+  return `https://solscan.io/tx/${encodeURIComponent(String(signature || ''))}`;
+}
+
+function proofPositions(results = []) {
+  return results.reduce((count, pool) => (
+    count
+    + (Array.isArray(pool?.mainPositions) ? pool.mainPositions.length : 0)
+    + (Array.isArray(pool?.ladderPositions) ? pool.ladderPositions.length : 0)
+    + (Array.isArray(pool?.supportPositions) ? pool.supportPositions.length : 0)
+    + (pool?.bootstrap ? 1 : 0)
+  ), 0);
+}
+
+function proofFeeKeyCount(results = []) {
+  return results.reduce((count, pool) => {
+    const positions = [
+      ...(Array.isArray(pool?.mainPositions) ? pool.mainPositions : []),
+      ...(Array.isArray(pool?.ladderPositions) ? pool.ladderPositions : []),
+      ...(Array.isArray(pool?.supportPositions) ? pool.supportPositions : []),
+      ...(pool?.bootstrap ? [pool.bootstrap] : []),
+    ];
+    return count + positions.filter((position) => position?.feeKeyNftMint || position?.feeKeyMint).length;
+  }, 0);
+}
+
+function proofLockedPositionCount(results = []) {
+  return results.reduce((count, pool) => {
+    const positions = [
+      ...(Array.isArray(pool?.mainPositions) ? pool.mainPositions : []),
+      ...(Array.isArray(pool?.ladderPositions) ? pool.ladderPositions : []),
+      ...(Array.isArray(pool?.supportPositions) ? pool.supportPositions : []),
+      ...(pool?.bootstrap ? [pool.bootstrap] : []),
+    ];
+    return count + positions.filter((position) => position?.locked === true).length;
+  }, 0);
+}
+
+function reportPositionPlanCount(pool = {}) {
+  const distributionCount = Array.isArray(pool.distribution) && pool.distribution.length
+    ? pool.distribution.length
+    : 1;
+  const ladder = pool.ladder || {};
+  const ladderCount = ladder.mode === 'manual'
+    ? (Array.isArray(ladder.bands) ? ladder.bands.length : 0)
+    : ladder.mode === 'simple' ? Number(ladder.bandCount || 0) : 0;
+  const supportCount = pool.support?.mode === 'custom' ? 1 : 0;
+  const bootstrapCount = pool.bootstrap?.mode === 'custom' || Number(pool.bootstrap?.supplyPercent || 0) > 0 ? 1 : 0;
+  return distributionCount + ladderCount + supportCount + bootstrapCount;
+}
+
+function reportPositionRecordCount(result = {}) {
+  return (
+    (Array.isArray(result.mainPositions) ? result.mainPositions.length : 0)
+    + (Array.isArray(result.ladderPositions) ? result.ladderPositions.length : 0)
+    + (Array.isArray(result.supportPositions) ? result.supportPositions.length : 0)
+    + (result.bootstrap ? 1 : 0)
+  );
+}
+
+function v2ReportPoolTopology(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const base = config?.poolTopology || {};
+  const poolPlan = proof?.poolPlan && typeof proof.poolPlan === 'object' ? proof.poolPlan : null;
+  const allocations = Array.isArray(poolPlan?.allocations) && poolPlan.allocations.length
+    ? poolPlan.allocations
+    : null;
+  const airdropPlan = poolPlan?.airdropPlan && typeof poolPlan.airdropPlan === 'object'
+    ? poolPlan.airdropPlan
+    : null;
+  if (!allocations && !airdropPlan) return base;
+  return {
+    ...base,
+    targetMarketCapUsd: Number.isFinite(Number(poolPlan?.targetMarketCapUsd))
+      ? Number(poolPlan.targetMarketCapUsd)
+      : base.targetMarketCapUsd,
+    pools: allocations || (Array.isArray(base.pools) ? base.pools : []),
+    airdrop: airdropPlan
+      ? {
+        ...(base.airdrop || {}),
+        ...airdropPlan,
+        recipients: Array.isArray(airdropPlan.recipients)
+          ? airdropPlan.recipients
+          : (Array.isArray(base.airdrop?.recipients) ? base.airdrop.recipients : []),
+      }
+      : base.airdrop,
+  };
+}
+
+function buildV2ReportPoolPlan(config, results = [], proof = currentLaunchProof()) {
+  const topology = v2ReportPoolTopology(proof, config);
+  const pools = Array.isArray(topology?.pools) ? topology.pools : [];
+  return pools.map((pool, index) => {
+    const result = results.find((row) => Number(row?.allocationIndex) === index)
+      || results[index]
+      || null;
+    return {
+      index,
+      status: result?.poolId ? 'recorded' : 'planned',
+      quoteToken: pool.quoteToken || null,
+      quoteMint: pool.quoteMint || result?.quoteMint || result?.quoteAddress || null,
+      quoteSymbol: pool.quoteSymbol || pool.quoteSymbolOverride || result?.quoteSymbol || pool.quoteToken || null,
+      quoteSymbolOverride: pool.quoteSymbolOverride || null,
+      supplyPercent: Number.isFinite(Number(pool.supplyPercent)) ? Number(pool.supplyPercent) : null,
+      ammConfigIndex: pool.ammConfigIndex ?? null,
+      distribution: Array.isArray(pool.distribution) ? pool.distribution.map((slice, sliceIndex) => ({
+        sliceIndex,
+        sharePercent: Number.isFinite(Number(slice.sharePercent)) ? Number(slice.sharePercent) : null,
+        recipient: slice.recipient || topology?.feeKeyRecipient || null,
+      })) : [],
+      bootstrap: pool.bootstrap || { mode: 'off' },
+      ladder: pool.ladder || { mode: 'off' },
+      support: pool.support || { mode: 'off' },
+      plannedPositionCount: reportPositionPlanCount(pool),
+      recordedPositionCount: result ? reportPositionRecordCount(result) : 0,
+      recorded: result ? {
+        poolId: result.poolId || null,
+        createPoolTx: result.txIds?.createPool || result.createPoolTx || null,
+        tickSpacing: result.tickSpacing ?? null,
+        initialPrice: result.initialPrice ?? null,
+        launchedSide: result.launchedSide || null,
+        lockedPositionCount: proofLockedPositionCount([result]),
+        feeKeyCount: proofFeeKeyCount([result]),
+      } : null,
+    };
+  });
+}
+
+function buildV2ReportAirdropAudit(proof, config) {
+  const topology = v2ReportPoolTopology(proof, config);
+  const plan = topology?.airdrop || {};
+  const recipients = Array.isArray(plan.recipients) ? plan.recipients : [];
+  const sampleLimit = 100;
+  return {
+    enabled: plan.enabled === true || recipients.length > 0 || Number(plan.recipientCount || 0) > 0,
+    source: plan.source || (recipients.length ? 'csv' : 'manual-count'),
+    requestedSupplyPercent: Number.isFinite(Number(plan.requestedSupplyPercent)) ? Number(plan.requestedSupplyPercent) : Number(plan.supplyPercent || 0),
+    effectiveSupplyPercent: Number(plan.supplyPercent || 0),
+    requiredSupplyPercent: Number(plan.requiredSupplyPercent || 0),
+    budgetTokens: Number(plan.budgetTokens || 0),
+    explicitTokens: Number(plan.explicitTokens || 0),
+    remainingTokens: Number(plan.remainingTokens || 0),
+    executionCostSol: Number(plan.executionCostSol || 0),
+    budgetError: plan.budgetError || null,
+    plannedRecipientCount: Number(proof?.airdrop?.plannedRecipientCount || plan.recipientCount || recipients.length || 0),
+    deliveredCount: Number(proof?.airdrop?.deliveredCount || 0),
+    failedCount: Number(proof?.airdrop?.failedCount || 0),
+    recipientsPreview: recipients.slice(0, sampleLimit),
+    recipientsPreviewLimit: sampleLimit,
+    recipientsTruncated: recipients.length > sampleLimit,
+  };
+}
+
+function buildV2ReportRecoveryAudit(proof = currentLaunchProof()) {
+  const journals = Array.isArray(state.recovery?.journals) ? state.recovery.journals : [];
+  const activeWallet = proof?.walletPublicKey || selectedLaunchWalletPublicKey() || null;
+  const related = journals
+    .filter((journal) => !activeWallet || !journal?.walletPublicKey || journal.walletPublicKey === activeWallet)
+    .slice(0, 10)
+    .map((journal) => {
+      const plan = journalResumePlan(journal);
+      return {
+        id: journal.id || null,
+        status: journal.status || null,
+        stage: journal.stage || null,
+        walletPublicKey: journal.walletPublicKey || null,
+        tokenMint: journal.token?.mint || journal.token?.tokenMint || null,
+        tokenSymbol: journal.token?.symbol || null,
+        updatedAt: journal.updatedAt || journal.createdAt || null,
+        poolProgress: {
+          recordedPools: journalPriorResults(journal).length,
+          plannedPools: journalPoolCount(journal),
+        },
+        resumePlan: {
+          state: plan.state,
+          title: plan.title,
+          manualRecoveryRequired: plan.manualRecoveryRequired === true,
+          items: plan.items || [],
+        },
+      };
+    });
+  return {
+    journalId: proof?.journalId || null,
+    status: proof?.status || null,
+    stage: proof?.stage || null,
+    updatedAt: proof?.updatedAt || null,
+    activeJournalCount: Number(state.recovery?.activeJournalCount || 0),
+    failedJournalCount: Number(state.recovery?.failedJournalCount || 0),
+    pendingWalletCount: Number(state.recovery?.pendingWalletCount || 0),
+    relatedJournals: related,
+  };
+}
+
+function v2ReportParityItem(id, label, state, detail) {
+  return { id, label, state, detail };
+}
+
+function collectArtifactAddresses(value) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value || {});
+  return [...new Set(text.match(/[1-9A-HJ-NP-Za-km-z]{32,44}/g) || [])];
+}
+
+function collectArtifactSignatures(value) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value || {});
+  return [...new Set(text.match(/[1-9A-HJ-NP-Za-km-z]{60,100}/g) || [])];
+}
+
+function optionalBoolean(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  return null;
+}
+
+const CLASSIC_AUTHORITY_COMPARISON_FIELDS = Object.freeze([
+  { key: 'mintAuthorityRenounced', label: 'Mint authority' },
+  { key: 'freezeAuthorityDisabled', label: 'Freeze authority' },
+  { key: 'metadataUpdateAuthorityRevoked', label: 'Metadata update authority' },
+  { key: 'metadataImmutable', label: 'Metadata immutability' },
+]);
+
+function normalizedArtifactText(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function classicArtifactHasV2Marker(value, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 8) return false;
+  if (Array.isArray(value)) {
+    return value.some((item) => classicArtifactHasV2Marker(item, depth + 1));
+  }
+  const source = String(value.source || '').trim();
+  const schema = String(value.schema || '').trim();
+  const kind = String(value.kind || '').trim();
+  if (
+    source === 'trebuchet-v2'
+    || source === 'trebuchet-v2-field-verification'
+    || schema === 'trebuchet-v2-proof'
+    || kind === 'trebuchet-v2-proof'
+    || value.classicRetirementGate
+    || value.reportParityAudit
+    || value.fieldVerification
+  ) {
+    return true;
+  }
+  return Object.values(value).some((item) => classicArtifactHasV2Marker(item, depth + 1));
+}
+
+function classicArtifactSourceKind(parsed, rawText) {
+  if (classicArtifactHasV2Marker(parsed)) {
+    return 'trebuchet-v2';
+  }
+  const normalized = normalizedArtifactText(rawText);
+  if (
+    normalized.includes('classic retirement gate')
+    || normalized.includes('classic report parity audit')
+    || normalized.includes('field verification packet')
+    || normalized.includes('field parity packet')
+    || normalized.includes('trebuchet-v2-field-verification')
+    || normalized.includes('trebuchet-v2-proof')
+  ) {
+    return 'trebuchet-v2';
+  }
+  return 'classic-or-external';
+}
+
+function artifactAuthorityFlag(direct, text, label, positiveWords = [], negativeWords = []) {
+  const bool = optionalBoolean(direct);
+  if (bool !== null) return bool;
+  const normalized = normalizedArtifactText(text);
+  const index = normalized.indexOf(String(label || '').toLowerCase());
+  if (index < 0) return null;
+  const snippet = normalized.slice(index, index + 180);
+  if (negativeWords.some((word) => snippet.includes(word))) return false;
+  if (positiveWords.some((word) => snippet.includes(word))) return true;
+  return null;
+}
+
+function authorityCount(authorities = {}, keys = ['mintAuthorityRenounced', 'freezeAuthorityDisabled', 'metadataUpdateAuthorityRevoked']) {
+  const values = keys.map((key) => optionalBoolean(authorities[key]));
+  return {
+    known: values.filter((value) => value !== null).length,
+    pass: values.filter((value) => value === true).length,
+    total: keys.length,
+  };
+}
+
+function authorityComparisonSummary(currentAuthorities = {}, artifactAuthorities = {}) {
+  const rows = CLASSIC_AUTHORITY_COMPARISON_FIELDS
+    .map((field) => {
+      const expected = optionalBoolean(currentAuthorities[field.key]);
+      if (expected === null) return null;
+      return {
+        ...field,
+        expected,
+        actual: optionalBoolean(artifactAuthorities[field.key]),
+      };
+    })
+    .filter(Boolean);
+  const pass = rows.filter((row) => row.actual === row.expected);
+  const missing = rows.filter((row) => row.actual === null);
+  const mismatch = rows.filter((row) => row.actual !== null && row.actual !== row.expected);
+  return {
+    known: rows.length,
+    pass: pass.length,
+    missing: missing.length,
+    mismatch: mismatch.length,
+    total: rows.length,
+    confirmedLabels: pass.map((row) => row.label),
+    missingLabels: missing.map((row) => row.label),
+    mismatchLabels: mismatch.map((row) => row.label),
+  };
+}
+
+function numberOrNull(value) {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function comparisonReportCount(value, fallback = 0) {
+  const number = numberOrNull(value);
+  return number !== null && number >= 0 ? Math.floor(number) : fallback;
+}
+
+function comparisonReportCountIsExplicit(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+function stableHashString(value) {
+  const text = String(value ?? '');
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function normalizeComparisonAirdropEntry(row = {}) {
+  return {
+    wallet: row.wallet || row.recipient || row.address || null,
+    tokens: numberOrNull(row.tokens),
+    amountRaw: row.amountRaw == null ? null : String(row.amountRaw),
+    txId: row.txId || row.signature || row.tx || null,
+  };
+}
+
+function normalizeComparisonAirdrop(airdrop = {}) {
+  return {
+    recipients: Array.isArray(airdrop.recipients)
+      ? airdrop.recipients.map(normalizeComparisonAirdropEntry).filter((row) => row.wallet)
+      : [],
+    transferred: Array.isArray(airdrop.transferred)
+      ? airdrop.transferred.map(normalizeComparisonAirdropEntry).filter((row) => row.wallet)
+      : [],
+    failed: Array.isArray(airdrop.failed)
+      ? airdrop.failed.map(normalizeComparisonAirdropEntry).filter((row) => row.wallet)
+      : [],
+    recipientsHash: typeof airdrop.recipientsHash === 'string' ? airdrop.recipientsHash : null,
+    transferredHash: typeof airdrop.transferredHash === 'string' ? airdrop.transferredHash : null,
+    failedHash: typeof airdrop.failedHash === 'string' ? airdrop.failedHash : null,
+  };
+}
+
+function comparisonAirdropFingerprintList(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      wallet: row?.wallet || row?.recipient || row?.address || null,
+      tokens: numberOrNull(row?.tokens),
+      amountRaw: row?.amountRaw == null ? null : String(row.amountRaw),
+      txId: row?.txId || row?.signature || row?.tx || null,
+    }))
+    .sort((a, b) => [
+      a.wallet || '',
+      String(a.tokens ?? ''),
+      String(a.amountRaw ?? ''),
+      a.txId || '',
+    ].join('|').localeCompare([
+      b.wallet || '',
+      String(b.tokens ?? ''),
+      String(b.amountRaw ?? ''),
+      b.txId || '',
+    ].join('|')));
+}
+
+function comparisonAirdropListHash(rows = []) {
+  return stableHashString(JSON.stringify(comparisonAirdropFingerprintList(rows)));
+}
+
+function comparisonAirdropFingerprint(airdrop = {}) {
+  const listHash = (key) => {
+    const rows = airdrop?.[key];
+    const storedHash = typeof airdrop?.[`${key}Hash`] === 'string' ? airdrop[`${key}Hash`].trim() : '';
+    return (!Array.isArray(rows) || rows.length === 0) && storedHash ? storedHash : comparisonAirdropListHash(rows);
+  };
+  return {
+    recipientsHash: listHash('recipients'),
+    transferredHash: listHash('transferred'),
+    failedHash: listHash('failed'),
+  };
+}
+
+function comparisonTransferEvidenceRows(transfer = {}) {
+  const rows = [];
+  const tokenTransfers = Array.isArray(transfer?.tokenSweep?.transferred) ? transfer.tokenSweep.transferred : [];
+  const nftTransfers = Array.isArray(transfer?.nftSweep?.transferred) ? transfer.nftSweep.transferred : [];
+  const tokenErrors = Array.isArray(transfer?.tokenTransferErrors)
+    ? transfer.tokenTransferErrors
+    : Array.isArray(transfer?.tokenSweep?.errors) ? transfer.tokenSweep.errors : [];
+  const nftErrors = Array.isArray(transfer?.nftTransferErrors)
+    ? transfer.nftTransferErrors
+    : Array.isArray(transfer?.nftSweep?.errors) ? transfer.nftSweep.errors : [];
+  const solAmount = numberOrNull(transfer?.solSweep?.solTransferred ?? transfer?.solTransferred);
+  const solTx = transfer?.solSweep?.txId || transfer?.solTxId || transfer?.txId || transfer?.signature || null;
+
+  if (solAmount != null || solTx || transfer?.solSweepError) {
+    rows.push({
+      type: 'sol',
+      asset: 'SOL',
+      amount: solAmount,
+      decimals: null,
+      txId: solTx,
+      status: transfer?.solSweepError || null,
+      error: Boolean(transfer?.solSweepError),
+    });
+  }
+
+  tokenTransfers.forEach((row) => {
+    rows.push({
+      type: 'token',
+      asset: row.mint || row.tokenMint || null,
+      amount: row.amount == null ? null : String(row.amount),
+      decimals: numberOrNull(row.decimals),
+      txId: row.txId || row.signature || null,
+      status: 'transferred',
+      error: false,
+    });
+  });
+
+  nftTransfers.forEach((row) => {
+    rows.push({
+      type: 'nft',
+      asset: row.mint || row.nftMint || null,
+      amount: '1',
+      programName: row.programName || null,
+      txId: row.txId || row.signature || null,
+      status: 'transferred',
+      error: false,
+    });
+  });
+
+  tokenErrors.forEach((row) => {
+    rows.push({
+      type: 'token',
+      asset: row.mint || row.tokenMint || null,
+      amount: null,
+      decimals: numberOrNull(row.decimals),
+      txId: row.txId || row.signature || null,
+      status: row.error || row.reason || 'transfer failed',
+      error: true,
+    });
+  });
+
+  nftErrors.forEach((row) => {
+    rows.push({
+      type: 'nft',
+      asset: row.mint || row.nftMint || null,
+      amount: null,
+      programName: row.programName || null,
+      txId: row.txId || row.signature || null,
+      status: row.error || row.reason || 'transfer failed',
+      error: true,
+    });
+  });
+
+  return rows.sort((a, b) => [
+    a.type || '',
+    a.asset || '',
+    String(a.amount ?? ''),
+    String(a.decimals ?? ''),
+    a.programName || '',
+    a.txId || '',
+    a.status || '',
+    String(a.error),
+  ].join('|').localeCompare([
+    b.type || '',
+    b.asset || '',
+    String(b.amount ?? ''),
+    String(b.decimals ?? ''),
+    b.programName || '',
+    b.txId || '',
+    b.status || '',
+    String(b.error),
+  ].join('|')));
+}
+
+function comparisonTransferEvidenceRecord(transfer = {}) {
+  if (!transfer || typeof transfer !== 'object' || Object.keys(transfer).length === 0) return null;
+  return {
+    destinationWallet: transfer.destinationWallet || null,
+    status: transfer.status || null,
+    walletEmpty: optionalBoolean(transfer.walletEmpty),
+    rows: comparisonTransferEvidenceRows(transfer),
+  };
+}
+
+function comparisonTransferEvidenceHash(transfer = {}) {
+  const record = comparisonTransferEvidenceRecord(transfer);
+  return record ? stableHashString(JSON.stringify(record)) : null;
+}
+
+function decodeArtifactHtmlText(value) {
+  return String(value || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'");
+}
+
+function stripArtifactHtml(value) {
+  return decodeArtifactHtmlText(String(value || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+
+function classicHtmlAddressRows(rawText = '') {
+  const rows = [];
+  const rowRegex = /<div\s+class=["'][^"']*\baddr-row\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi;
+  for (const match of String(rawText || '').matchAll(rowRegex)) {
+    const rowHtml = match[1] || '';
+    const label = stripArtifactHtml(rowHtml.match(/<span\s+class=["'][^"']*\baddr-label\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] || '');
+    const value = stripArtifactHtml(rowHtml.match(/<code\s+class=["'][^"']*\baddr-value\b[^"']*["'][^>]*>([\s\S]*?)<\/code>/i)?.[1] || '');
+    if (!label || !value || value === '—' || value === '-') continue;
+    rows.push({ label: normalizedArtifactText(label), value });
+  }
+  return rows;
+}
+
+function classicHtmlValuesForLabels(rows = [], labels = []) {
+  const normalizedLabels = new Set((Array.isArray(labels) ? labels : [labels]).map(normalizedArtifactText));
+  return rows
+    .filter((row) => normalizedLabels.has(row.label))
+    .map((row) => row.value)
+    .filter(Boolean);
+}
+
+function classicHtmlFirstValueForLabels(rows = [], labels = []) {
+  return classicHtmlValuesForLabels(rows, labels)[0] || null;
+}
+
+function classicHtmlPoolMetas(rawText = '') {
+  const metaRegex = /<div\s+class=["'][^"']*\bpool-meta\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi;
+  return [...String(rawText || '').matchAll(metaRegex)].map((match) => {
+    const text = stripArtifactHtml(match[1] || '');
+    const supplyMatch = text.match(/([0-9]+(?:\.[0-9]+)?)\s*%\s*of token supply/i);
+    const spacingMatch = text.match(/\bspacing\s+([0-9]+)/i);
+    return {
+      supplyPercent: supplyMatch ? numberOrNull(supplyMatch[1]) : null,
+      tickSpacing: spacingMatch ? numberOrNull(spacingMatch[1]) : null,
+    };
+  });
+}
+
+function classicHtmlPools(rawText = '') {
+  const rows = classicHtmlAddressRows(rawText);
+  const poolIds = classicHtmlValuesForLabels(rows, 'Pool ID');
+  const quoteMints = classicHtmlValuesForLabels(rows, ['Quote token mint', 'Quote mint']);
+  const createPoolTxs = classicHtmlValuesForLabels(rows, ['Create-pool TX', 'Create pool tx']);
+  const poolMetas = classicHtmlPoolMetas(rawText);
+  const count = Math.max(poolIds.length, quoteMints.length, createPoolTxs.length, poolMetas.length);
+  return Array.from({ length: count }, (_, index) => ({
+    poolId: poolIds[index] || null,
+    quoteMint: quoteMints[index] || null,
+    createPoolTx: createPoolTxs[index] || null,
+    supplyPercent: poolMetas[index]?.supplyPercent ?? null,
+    tickSpacing: poolMetas[index]?.tickSpacing ?? null,
+  })).filter((pool) => pool.poolId || pool.quoteMint || pool.createPoolTx || pool.supplyPercent !== null || pool.tickSpacing !== null);
+}
+
+function classicHtmlPositions(rawText = '') {
+  const rows = classicHtmlAddressRows(rawText);
+  const positionMints = classicHtmlValuesForLabels(rows, 'Position NFT');
+  const feeKeyMints = classicHtmlValuesForLabels(rows, 'Fee Key NFT');
+  const openTxs = classicHtmlValuesForLabels(rows, ['Open TX', 'Open tx']);
+  const lockTxs = classicHtmlValuesForLabels(rows, ['Lock TX', 'Lock tx']);
+  const recipients = classicHtmlValuesForLabels(rows, 'Fee Key recipient');
+  const deliveredRecipients = classicHtmlValuesForLabels(rows, ['Fee Key delivered to', 'Fee Key sent to', 'Transferred to']);
+  const transferTxs = classicHtmlValuesForLabels(rows, ['Fee Key transfer TX', 'Transfer tx']);
+  const count = Math.max(positionMints.length, feeKeyMints.length, openTxs.length, lockTxs.length, recipients.length, deliveredRecipients.length, transferTxs.length);
+  return Array.from({ length: count }, (_, index) => {
+    const recipient = recipients[index] || deliveredRecipients[index] || null;
+    const deliveredRecipient = deliveredRecipients[index] || null;
+    const transferTx = transferTxs[index] || null;
+    const lockTx = lockTxs[index] || null;
+    const feeKeyNftMint = feeKeyMints[index] || null;
+    return {
+      type: null,
+      positionNftMint: positionMints[index] || null,
+      feeKeyNftMint,
+      locked: lockTx || feeKeyNftMint ? true : null,
+      recipient,
+      transferredTo: deliveredRecipient || (recipient && transferTx ? recipient : null),
+      openTx: openTxs[index] || null,
+      lockTx,
+      transferTx,
+    };
+  }).filter((position) => (
+    position.positionNftMint
+    || position.feeKeyNftMint
+    || position.openTx
+    || position.lockTx
+    || position.recipient
+    || position.transferTx
+  ));
+}
+
+function classicHtmlTableCells(rowHtml = '') {
+  return [...String(rowHtml || '').matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)]
+    .map((match) => stripArtifactHtml(match[1] || ''));
+}
+
+function classicHtmlTxSignatures(rowHtml = '') {
+  const fromLinks = [...String(rowHtml || '').matchAll(/\/tx\/([1-9A-HJ-NP-Za-km-z]{60,100})/g)]
+    .map((match) => match[1]);
+  return [...new Set([...fromLinks, ...collectArtifactSignatures(rowHtml)])];
+}
+
+function classicHtmlCountFromHeading(headingText = '') {
+  const match = String(headingText || '').replace(/,/g, '').match(/(\d+)\s+recipient/i);
+  if (!match) return null;
+  return numberOrNull(match[1]);
+}
+
+function classicHtmlAirdropRowsForHeading(rawText = '', labelPattern) {
+  const blocks = [];
+  const headingRegex = /<h3\b[^>]*class=["'][^"']*\bsubsection\b[^"']*["'][^>]*>([\s\S]*?)<\/h3>/gi;
+  for (const match of String(rawText || '').matchAll(headingRegex)) {
+    const headingText = stripArtifactHtml(match[1] || '');
+    if (!labelPattern.test(headingText)) continue;
+    const afterHeading = String(rawText || '').slice(match.index + match[0].length);
+    const tableHtml = afterHeading.match(/<table\b[\s\S]*?<\/table>/i)?.[0] || '';
+    if (!tableHtml) continue;
+    const rows = [...tableHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)]
+      .map((rowMatch) => {
+        const rowHtml = rowMatch[1] || '';
+        const cells = classicHtmlTableCells(rowHtml);
+        if (cells.length < 2) return null;
+        const wallet = stripArtifactHtml(rowHtml.match(/<code\b[^>]*>([\s\S]*?)<\/code>/i)?.[1] || '')
+          || collectArtifactAddresses(rowHtml)[0]
+          || null;
+        if (!wallet) return null;
+        const txId = classicHtmlTxSignatures(rowHtml)[0] || null;
+        const tokens = numberOrNull(String(cells[1] || '').replace(/,/g, ''));
+        return { wallet, tokens, txId };
+      })
+      .filter(Boolean);
+    blocks.push({
+      headingText,
+      declaredCount: classicHtmlCountFromHeading(headingText),
+      rows,
+    });
+  }
+  return blocks;
+}
+
+function classicHtmlAirdrop(rawText = '') {
+  const deliveredBlocks = classicHtmlAirdropRowsForHeading(rawText, /^delivered\b/i);
+  const failedBlocks = classicHtmlAirdropRowsForHeading(rawText, /^failed\b/i);
+  const pendingBlocks = classicHtmlAirdropRowsForHeading(rawText, /^(to be delivered|pending recipients)\b/i);
+  const transferred = deliveredBlocks.flatMap((block) => block.rows);
+  const failed = failedBlocks.flatMap((block) => block.rows);
+  const recipients = pendingBlocks.flatMap((block) => block.rows);
+  const deliveredCount = deliveredBlocks.reduce((sum, block) => sum + Number(block.declaredCount ?? block.rows.length), 0);
+  const failedCount = failedBlocks.reduce((sum, block) => sum + Number(block.declaredCount ?? block.rows.length), 0);
+  const pendingCount = pendingBlocks.reduce((sum, block) => sum + Number(block.declaredCount ?? block.rows.length), 0);
+  const structuredEvidence = Boolean(transferred.length || failed.length || recipients.length || deliveredCount || failedCount || pendingCount);
+  return {
+    structuredEvidence,
+    plannedRecipientCount: deliveredCount || failedCount ? deliveredCount + failedCount : pendingCount || null,
+    deliveredCount: structuredEvidence ? deliveredCount : null,
+    failedCount: structuredEvidence ? failedCount : null,
+    recipients,
+    transferred,
+    failed,
+  };
+}
+
+function normalizeComparisonPosition(position = {}, type = null, poolId = null) {
+  return {
+    poolId: poolId || position.poolId || null,
+    type: position.type || type || null,
+    sliceIndex: numberOrNull(position.sliceIndex),
+    bandIndex: numberOrNull(position.bandIndex),
+    supportIndex: numberOrNull(position.supportIndex),
+    sharePercent: numberOrNull(position.sharePercent),
+    supplyPercent: numberOrNull(position.supplyPercent),
+    lowerMultiplier: numberOrNull(position.lowerMultiplier),
+    upperMultiplier: numberOrNull(position.upperMultiplier),
+    depthPct: numberOrNull(position.depthPct),
+    positionNftMint: position.positionNftMint || position.nftMint || position.positionMint || null,
+    feeKeyNftMint: position.feeKeyNftMint || position.feeKeyMint || null,
+    locked: optionalBoolean(position.locked),
+    recipient: position.recipient || null,
+    transferredTo: position.transferredTo || null,
+    tickLower: numberOrNull(position.tickLower),
+    tickUpper: numberOrNull(position.tickUpper),
+    openTx: position.openTx || position.txIds?.open || null,
+    lockTx: position.lockTx || position.txIds?.lock || null,
+    transferTx: position.transferTx || position.txIds?.transfer || null,
+  };
+}
+
+function normalizeComparisonPool(pool = {}) {
+  const txIds = pool.txIds || {};
+  return {
+    poolId: pool.poolId || pool.id || null,
+    quote: pool.quote || pool.quoteSymbol || pool.quoteToken || null,
+    quoteMint: pool.quoteMint || pool.quoteAddress || null,
+    supplyPercent: numberOrNull(pool.supplyPercent),
+    tickSpacing: numberOrNull(pool.tickSpacing),
+    initialPrice: pool.initialPrice == null ? null : String(pool.initialPrice),
+    launchedSide: pool.launchedSide || null,
+    createPoolTx: pool.createPoolTx || txIds.createPool || null,
+  };
+}
+
+function comparisonPoolFingerprint(pools = []) {
+  return (Array.isArray(pools) ? pools : [])
+    .map((pool) => ({
+      poolId: pool?.poolId || null,
+      quoteMint: pool?.quoteMint || null,
+      supplyPercent: numberOrNull(pool?.supplyPercent),
+      tickSpacing: numberOrNull(pool?.tickSpacing),
+      initialPrice: pool?.initialPrice == null ? null : String(pool.initialPrice),
+      launchedSide: pool?.launchedSide || null,
+      createPoolTx: pool?.createPoolTx || null,
+    }))
+    .sort((a, b) => [
+      a.poolId || '',
+      a.quoteMint || '',
+      String(a.tickSpacing ?? ''),
+      String(a.initialPrice ?? ''),
+    ].join('|').localeCompare([
+      b.poolId || '',
+      b.quoteMint || '',
+      String(b.tickSpacing ?? ''),
+      String(b.initialPrice ?? ''),
+    ].join('|')));
+}
+
+function comparisonPositionsFromPools(pools = []) {
+  return (Array.isArray(pools) ? pools : []).flatMap((pool) => {
+    const poolId = pool?.poolId || pool?.id || null;
+    if (Array.isArray(pool?.positions)) {
+      return pool.positions.map((position) => normalizeComparisonPosition(position, position?.type, poolId));
+    }
+    return [
+      ...(Array.isArray(pool?.mainPositions) ? pool.mainPositions.map((position) => normalizeComparisonPosition(position, 'main', poolId)) : []),
+      ...(Array.isArray(pool?.ladderPositions) ? pool.ladderPositions.map((position) => normalizeComparisonPosition(position, 'ladder', poolId)) : []),
+      ...(Array.isArray(pool?.supportPositions) ? pool.supportPositions.map((position) => normalizeComparisonPosition(position, 'support', poolId)) : []),
+      ...(pool?.bootstrap ? [normalizeComparisonPosition(pool.bootstrap, 'bootstrap', poolId)] : []),
+    ];
+  });
+}
+
+function comparisonPositionFingerprint(positions = []) {
+  return (Array.isArray(positions) ? positions : [])
+    .map((position) => ({
+      poolId: position?.poolId || null,
+      type: position?.type || null,
+      sliceIndex: numberOrNull(position?.sliceIndex),
+      bandIndex: numberOrNull(position?.bandIndex),
+      supportIndex: numberOrNull(position?.supportIndex),
+      sharePercent: numberOrNull(position?.sharePercent),
+      supplyPercent: numberOrNull(position?.supplyPercent),
+      lowerMultiplier: numberOrNull(position?.lowerMultiplier),
+      upperMultiplier: numberOrNull(position?.upperMultiplier),
+      depthPct: numberOrNull(position?.depthPct),
+      positionNftMint: position?.positionNftMint || null,
+      feeKeyNftMint: position?.feeKeyNftMint || null,
+      locked: optionalBoolean(position?.locked),
+      recipient: position?.recipient || null,
+      transferredTo: position?.transferredTo || null,
+      tickLower: numberOrNull(position?.tickLower),
+      tickUpper: numberOrNull(position?.tickUpper),
+      openTx: position?.openTx || null,
+      lockTx: position?.lockTx || null,
+      transferTx: position?.transferTx || null,
+    }))
+    .sort((a, b) => [
+      a.poolId || '',
+      a.positionNftMint || '',
+      a.feeKeyNftMint || '',
+      a.type || '',
+      String(a.sliceIndex ?? ''),
+      String(a.bandIndex ?? ''),
+      String(a.supportIndex ?? ''),
+      String(a.sharePercent ?? ''),
+      String(a.supplyPercent ?? ''),
+      String(a.lowerMultiplier ?? ''),
+      String(a.upperMultiplier ?? ''),
+      String(a.depthPct ?? ''),
+      String(a.tickLower ?? ''),
+      String(a.tickUpper ?? ''),
+      a.recipient || '',
+      a.transferredTo || '',
+      a.openTx || '',
+      a.lockTx || '',
+      a.transferTx || '',
+    ].join('|').localeCompare([
+      b.poolId || '',
+      b.positionNftMint || '',
+      b.feeKeyNftMint || '',
+      b.type || '',
+      String(b.sliceIndex ?? ''),
+      String(b.bandIndex ?? ''),
+      String(b.supportIndex ?? ''),
+      String(b.sharePercent ?? ''),
+      String(b.supplyPercent ?? ''),
+      String(b.lowerMultiplier ?? ''),
+      String(b.upperMultiplier ?? ''),
+      String(b.depthPct ?? ''),
+      String(b.tickLower ?? ''),
+      String(b.tickUpper ?? ''),
+      b.recipient || '',
+      b.transferredTo || '',
+      b.openTx || '',
+      b.lockTx || '',
+      b.transferTx || '',
+    ].join('|')));
+}
+
+function comparisonUniqueValues(positions = [], keys = []) {
+  const list = Array.isArray(keys) ? keys : [keys];
+  return [...new Set((Array.isArray(positions) ? positions : [])
+    .flatMap((position) => list.map((key) => position?.[key]))
+    .filter(Boolean)
+    .map(String))];
+}
+
+function comparisonMatchedValues(artifact, expectedValues = [], keys = []) {
+  const artifactValues = new Set(comparisonUniqueValues(artifact?.positions || [], keys));
+  return expectedValues.filter((value) => artifactValues.has(value) || artifactContainsAddress(artifact, value));
+}
+
+function comparisonMatchedStructuredValues(artifact, expectedValues = [], keys = [], hasStructuredEvidence = false) {
+  const artifactValues = new Set(comparisonUniqueValues(artifact?.positions || [], keys));
+  return expectedValues.filter((value) => (
+    artifactValues.has(value)
+    || (!hasStructuredEvidence && artifactContainsAddress(artifact, value))
+  ));
+}
+
+function comparisonExactEvidenceState({ expectedCount, matchedCount, actualCount = 0, hasStructuredEvidence = false }) {
+  const expected = Math.max(0, Number(expectedCount || 0));
+  const matched = Math.max(0, Number(matchedCount || 0));
+  const actual = Math.max(0, Number(actualCount || 0));
+  if (expected <= 0) return 'pass';
+  if (hasStructuredEvidence) {
+    if (matched === expected && actual === expected) return 'pass';
+    return matched > 0 ? 'mismatch' : 'missing';
+  }
+  return matched === expected ? 'pass' : matched > 0 ? 'warn' : 'missing';
+}
+
+function comparisonAirdropWallets(airdrop = {}) {
+  return [...new Set([
+    ...(Array.isArray(airdrop.recipients) ? airdrop.recipients : []),
+    ...(Array.isArray(airdrop.transferred) ? airdrop.transferred : []),
+    ...(Array.isArray(airdrop.failed) ? airdrop.failed : []),
+  ].map((row) => row?.wallet).filter(Boolean))];
+}
+
+function comparisonAirdropTxs(airdrop = {}) {
+  return [...new Set([
+    ...(Array.isArray(airdrop.transferred) ? airdrop.transferred : []),
+    ...(Array.isArray(airdrop.failed) ? airdrop.failed : []),
+  ].map((row) => row?.txId).filter(Boolean))];
+}
+
+function comparisonAirdropHasHashOnlyRows(airdrop = {}, key) {
+  const rows = Array.isArray(airdrop?.[key]) ? airdrop[key] : [];
+  const hash = typeof airdrop?.[`${key}Hash`] === 'string' ? airdrop[`${key}Hash`].trim() : '';
+  return Boolean(hash && rows.length === 0);
+}
+
+function comparisonAirdropNeedsFullRows(airdrop = {}) {
+  const planned = Number(airdrop?.plannedRecipientCount || 0);
+  const delivered = Number(airdrop?.deliveredCount || 0);
+  const failed = Number(airdrop?.failedCount || 0);
+  return Boolean(
+    (planned > 0 && comparisonAirdropHasHashOnlyRows(airdrop, 'recipients'))
+      || (delivered > 0 && comparisonAirdropHasHashOnlyRows(airdrop, 'transferred'))
+      || (failed > 0 && comparisonAirdropHasHashOnlyRows(airdrop, 'failed'))
+  );
+}
+
+function comparisonAirdropDeliveryEvidenceState(airdrop = {}) {
+  const count = (value, fallback = 0) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : fallback;
+  };
+  const normalized = normalizeComparisonAirdrop(airdrop);
+  const planned = count(airdrop?.plannedRecipientCount);
+  const delivered = count(airdrop?.deliveredCount, normalized.transferred.length);
+  const failed = count(airdrop?.failedCount, normalized.failed.length);
+  const required = planned > 0 || delivered > 0 || failed > 0;
+  const expectedCount = Math.max(planned, delivered);
+  const recipientWallets = new Set([
+    ...normalized.recipients,
+    ...normalized.transferred,
+    ...normalized.failed,
+  ].map((row) => row.wallet).filter(Boolean));
+  const deliveredWallets = new Set(normalized.transferred.map((row) => row.wallet).filter(Boolean));
+  const transactionCount = normalized.transferred.filter((row) => row.txId).length;
+  const missing = [];
+
+  if (required) {
+    if (failed > 0 || normalized.failed.length > 0) missing.push('zero failed recipients');
+    if (recipientWallets.size < expectedCount) missing.push('recipient rows');
+    if (deliveredWallets.size < expectedCount || normalized.transferred.length < expectedCount) missing.push('delivered rows');
+    if (delivered < expectedCount) missing.push('delivered count');
+    if (transactionCount < expectedCount) missing.push('transaction signatures');
+    if (comparisonAirdropNeedsFullRows(airdrop)) missing.push('full airdrop rows');
+  }
+
+  return {
+    required,
+    complete: !required || missing.length === 0,
+    planned,
+    delivered,
+    failed,
+    pending: Math.max(0, planned - delivered - failed),
+    expectedCount,
+    recipientCount: recipientWallets.size,
+    deliveredRowCount: normalized.transferred.length,
+    transactionCount,
+    missing,
+  };
+}
+
+function comparisonLiquidityEvidenceState(proof = {}, {
+  plannedPoolCount = null,
+  plannedPositionCount = null,
+} = {}) {
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const liquidity = proof?.liquidity && typeof proof.liquidity === 'object' ? proof.liquidity : {};
+  const poolIds = [
+    ...(Array.isArray(liquidity.poolIds) ? liquidity.poolIds : []),
+    ...results.map((pool) => pool?.poolId || pool?.id).filter(Boolean),
+  ].filter((value, index, list) => value && list.indexOf(value) === index);
+  const poolRowCount = results.filter((pool) => pool?.poolId || pool?.id).length || poolIds.length;
+  const positionRowCount = proofPositions(results);
+  const lockedRowCount = proofLockedPositionCount(results);
+  const feeKeyRowCount = proofFeeKeyCount(results);
+  const poolCount = comparisonReportCount(liquidity.poolCount, poolRowCount);
+  const positionCount = comparisonReportCount(liquidity.positionCount, positionRowCount);
+  const lockedPositionCount = comparisonReportCount(liquidity.lockedPositionCount, lockedRowCount);
+  const feeKeyCount = comparisonReportCount(liquidity.feeKeyCount, feeKeyRowCount);
+  const missing = [];
+  const addMissing = (value) => {
+    if (!missing.includes(value)) missing.push(value);
+  };
+  const plannedPools = comparisonReportCount(plannedPoolCount, 0);
+  const plannedPositions = comparisonReportCount(plannedPositionCount, 0);
+
+  if (plannedPools > 0 && poolCount < plannedPools) addMissing('pool count');
+  if (comparisonReportCountIsExplicit(liquidity.poolCount) && poolCount !== poolRowCount) addMissing('pool count');
+  if (plannedPositions > 0 && positionCount < plannedPositions) addMissing('position count');
+  if (comparisonReportCountIsExplicit(liquidity.positionCount) && positionCount !== positionRowCount) addMissing('position count');
+  if (positionRowCount < positionCount) addMissing('position records');
+  if (positionCount > 0 && lockedPositionCount < positionCount) addMissing('lock count');
+  if (comparisonReportCountIsExplicit(liquidity.lockedPositionCount) && lockedPositionCount !== lockedRowCount) addMissing('lock count');
+  if (lockedPositionCount > 0 && feeKeyCount < lockedPositionCount) addMissing('fee key count');
+  if (comparisonReportCountIsExplicit(liquidity.feeKeyCount) && feeKeyCount !== feeKeyRowCount) addMissing('fee key count');
+
+  return {
+    complete: missing.length === 0,
+    poolCount,
+    poolRowCount,
+    plannedPoolCount: plannedPools,
+    positionCount,
+    positionRowCount,
+    plannedPositionCount: plannedPositions,
+    lockedPositionCount,
+    lockedRowCount,
+    feeKeyCount,
+    feeKeyRowCount,
+    missing,
+  };
+}
+
+function proofHasReportablePoolIdentity(proof = {}, config = currentLaunchConfig()) {
+  if (!proof || typeof proof !== 'object') return false;
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const plannedPools = buildV2ReportPoolPlan(config, results, proof);
+  const plannedPoolCount = Math.max(1, plannedPools.length || 0);
+  const recordedPoolIds = launchProofPoolIds(proof);
+  const liquidityEvidence = comparisonLiquidityEvidenceState(proof, { plannedPoolCount });
+  return recordedPoolIds.length === plannedPoolCount
+    && liquidityEvidence.poolCount === recordedPoolIds.length
+    && !liquidityEvidence.missing.includes('pool count');
+}
+
+function v2LiquidityTransactionEvidenceCounts(results = []) {
+  const pools = Array.isArray(results) ? results : [];
+  const positions = pools.flatMap((pool) => v2ReportPositionList(pool));
+  const feeKeyRecipientRows = pools.flatMap((pool) => (
+    Array.isArray(pool?.mainPositions) ? pool.mainPositions : []
+  )).filter((position) => String(position?.recipient || '').trim());
+  return {
+    poolCreateTxCount: pools.filter((pool) => (
+      String(pool?.poolId || pool?.id || '').trim()
+      && String(pool?.txIds?.createPool || pool?.createPoolTx || '').trim()
+    )).length,
+    openTxCount: positions.filter((position) => (
+      String(position?.positionNftMint || position?.nftMint || position?.positionMint || '').trim()
+      && String(position?.txIds?.open || position?.openTx || '').trim()
+    )).length,
+    lockTxCount: positions.filter((position) => (
+      position?.locked === true
+      && String(position?.txIds?.lock || position?.lockTx || '').trim()
+    )).length,
+    feeKeyRecipientRows,
+    feeKeyRecipientTransferred: feeKeyRecipientRows.filter((position) => (
+      String(position?.transferredTo || '').trim() === String(position?.recipient || '').trim()
+      && String(position?.txIds?.transfer || position?.transferTx || '').trim()
+    )).length,
+  };
+}
+
+function proofHasReportPublishEvidence(proof = {}, config = currentLaunchConfig()) {
+  if (!proofHasReportablePoolIdentity(proof, config)) return false;
+  const tokenAuthorityFields = ['mintAuthorityRenounced', 'freezeAuthorityDisabled', 'metadataUpdateAuthorityRevoked', 'metadataImmutable'];
+  if (!tokenAuthorityFields.every((field) => proof?.token?.[field] === true)) return false;
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const plannedPools = buildV2ReportPoolPlan(config, results, proof);
+  const plannedPoolCount = Math.max(1, plannedPools.length || 0);
+  const plannedPositionCount = plannedPools.reduce((sum, pool) => sum + Number(pool.plannedPositionCount || 0), 0);
+  const txEvidence = v2LiquidityTransactionEvidenceCounts(results);
+  const liquidityEvidence = comparisonLiquidityEvidenceState(proof, {
+    plannedPoolCount,
+    plannedPositionCount,
+  });
+  const recordedPositionCount = liquidityEvidence.positionCount;
+  const lockedPositionCount = liquidityEvidence.lockedPositionCount;
+  const feeKeyCount = liquidityEvidence.feeKeyCount;
+  const feeKeyRecipientTarget = txEvidence.feeKeyRecipientRows.length;
+  return Boolean(
+    plannedPositionCount > 0
+    && txEvidence.poolCreateTxCount >= plannedPoolCount
+    && recordedPositionCount >= plannedPositionCount
+    && txEvidence.openTxCount >= recordedPositionCount
+    && !liquidityEvidence.missing.some((item) => ['position count', 'position records'].includes(item))
+    && lockedPositionCount >= recordedPositionCount
+    && txEvidence.lockTxCount >= recordedPositionCount
+    && !liquidityEvidence.missing.includes('lock count')
+    && feeKeyCount >= lockedPositionCount
+    && !liquidityEvidence.missing.includes('fee key count')
+    && txEvidence.feeKeyRecipientTransferred >= feeKeyRecipientTarget
+  );
+}
+
+function comparisonMatchedAirdropWallets(artifact, expectedWallets = []) {
+  const artifactWallets = new Set(comparisonAirdropWallets(artifact?.airdrop || {}));
+  const structured = comparisonHasStructuredAirdropEvidence(artifact);
+  return expectedWallets.filter((wallet) => artifactWallets.has(wallet) || (!structured && artifactContainsAddress(artifact, wallet)));
+}
+
+function comparisonMatchedAirdropTxs(artifact, expectedTxs = []) {
+  const artifactTxs = new Set(comparisonAirdropTxs(artifact?.airdrop || {}));
+  const structured = comparisonHasStructuredAirdropEvidence(artifact);
+  return expectedTxs.filter((tx) => artifactTxs.has(tx) || (!structured && (artifact.signatures.includes(tx) || artifact.text.includes(tx))));
+}
+
+function comparisonHasStructuredAirdropEvidence(artifact) {
+  const airdrop = artifact?.airdrop || {};
+  return airdrop.structuredEvidence === true
+    || artifact?.kind === 'json'
+    && (
+      Array.isArray(airdrop.recipients) && airdrop.recipients.length > 0
+      || Array.isArray(airdrop.transferred) && airdrop.transferred.length > 0
+      || Array.isArray(airdrop.failed) && airdrop.failed.length > 0
+      || numberOrNull(airdrop.plannedRecipientCount) !== null
+      || numberOrNull(airdrop.deliveredCount) !== null
+      || numberOrNull(airdrop.failedCount) !== null
+    );
+}
+
+function comparisonPoolById(pools = [], poolId = null, index = 0) {
+  return (Array.isArray(pools) ? pools : []).find((pool) => pool?.poolId && pool.poolId === poolId)
+    || (Array.isArray(pools) ? pools[index] : null)
+    || null;
+}
+
+function comparisonNumberMatches(expected, actual, tolerance = 0.000001) {
+  const left = numberOrNull(expected);
+  const right = numberOrNull(actual);
+  if (left === null || right === null) return left === right;
+  return Math.abs(left - right) <= tolerance;
+}
+
+function comparisonScalarMatches(expected, actual) {
+  if (expected == null || actual == null) return expected == null && actual == null;
+  const leftNumber = numberOrNull(expected);
+  const rightNumber = numberOrNull(actual);
+  if (leftNumber !== null && rightNumber !== null) return comparisonNumberMatches(leftNumber, rightNumber);
+  return String(expected) === String(actual);
+}
+
+const COMPARISON_POSITION_SHAPE_FIELDS = [
+  ['sharePercent', 'slice share'],
+  ['supplyPercent', 'supply share'],
+  ['lowerMultiplier', 'lower multiplier'],
+  ['upperMultiplier', 'upper multiplier'],
+  ['depthPct', 'support depth'],
+];
+
+function comparisonPositionShapeLabel(position = {}, index = 0) {
+  const type = position.type || 'position';
+  const indexLabel = position.bandIndex != null
+    ? `band ${Number(position.bandIndex) + 1}`
+    : position.sliceIndex != null
+      ? `slice ${Number(position.sliceIndex) + 1}`
+      : position.supportIndex != null
+        ? `support ${Number(position.supportIndex) + 1}`
+        : `#${index + 1}`;
+  return `${position.poolId || 'pool'} ${type} ${indexLabel}`;
+}
+
+function comparisonPositionShapeRecord(position = {}, index = 0) {
+  const fields = COMPARISON_POSITION_SHAPE_FIELDS.reduce((record, [key]) => {
+    record[key] = numberOrNull(position?.[key]);
+    return record;
+  }, {});
+  if (!COMPARISON_POSITION_SHAPE_FIELDS.some(([key]) => fields[key] !== null)) return null;
+  return {
+    ...fields,
+    poolId: position.poolId || null,
+    type: position.type || null,
+    positionNftMint: position.positionNftMint || null,
+    sliceIndex: numberOrNull(position.sliceIndex),
+    bandIndex: numberOrNull(position.bandIndex),
+    supportIndex: numberOrNull(position.supportIndex),
+    label: comparisonPositionShapeLabel(position, index),
+  };
+}
+
+function comparisonPositionShapeSlotMatches(expected = {}, actual = {}) {
+  return expected.poolId === actual.poolId
+    && expected.type === actual.type
+    && expected.sliceIndex === actual.sliceIndex
+    && expected.bandIndex === actual.bandIndex
+    && expected.supportIndex === actual.supportIndex;
+}
+
+function comparisonPositionShapeSummary(currentPositions = [], artifactPositions = []) {
+  const expectedRows = (Array.isArray(currentPositions) ? currentPositions : [])
+    .map(comparisonPositionShapeRecord)
+    .filter(Boolean);
+  if (!expectedRows.length) {
+    return {
+      total: 0,
+      pass: 0,
+      mismatch: 0,
+      missing: 0,
+      mismatched: [],
+      missingLabels: [],
+    };
+  }
+  const actualRows = (Array.isArray(artifactPositions) ? artifactPositions : [])
+    .map(comparisonPositionShapeRecord)
+    .filter(Boolean);
+  const actualByMint = new Map(actualRows
+    .filter((row) => row.positionNftMint)
+    .map((row) => [row.positionNftMint, row]));
+  let total = 0;
+  let pass = 0;
+  const mismatched = [];
+  const missingLabels = [];
+
+  expectedRows.forEach((expected, index) => {
+    const actual = (expected.positionNftMint && actualByMint.get(expected.positionNftMint))
+      || actualRows.find((row) => comparisonPositionShapeSlotMatches(expected, row))
+      || actualRows[index]
+      || null;
+    COMPARISON_POSITION_SHAPE_FIELDS.forEach(([key, label]) => {
+      const expectedValue = expected[key];
+      if (expectedValue === null) return;
+      total += 1;
+      if (!actual || actual[key] === null) {
+        missingLabels.push(`${expected.label} ${label}`);
+        return;
+      }
+      if (comparisonScalarMatches(expectedValue, actual[key])) {
+        pass += 1;
+        return;
+      }
+      mismatched.push(`${expected.label} ${label}`);
+    });
+  });
+
+  return {
+    total,
+    pass,
+    mismatch: mismatched.length,
+    missing: missingLabels.length,
+    mismatched,
+    missingLabels,
+  };
+}
+
+function comparisonPoolParameterSummary(currentPools = [], artifactPools = []) {
+  const rows = (Array.isArray(currentPools) ? currentPools : [])
+    .map((pool, index) => {
+      const artifactPool = comparisonPoolById(artifactPools, pool.poolId, index);
+      const checks = [
+        ['supplyPercent', 'supply'],
+        ['tickSpacing', 'tick spacing'],
+        ['initialPrice', 'initial price'],
+        ['launchedSide', 'launch side'],
+      ]
+        .filter(([key]) => pool?.[key] != null)
+        .map(([key, label]) => ({
+          key,
+          label,
+          expected: pool[key],
+          actual: artifactPool?.[key] ?? null,
+          matches: comparisonScalarMatches(pool[key], artifactPool?.[key] ?? null),
+        }));
+      if (!checks.length) return null;
+      return {
+        poolId: pool.poolId || `pool-${index + 1}`,
+        checks,
+      };
+    })
+    .filter(Boolean);
+  const total = rows.reduce((sum, row) => sum + row.checks.length, 0);
+  const mismatched = rows.flatMap((row) => row.checks
+    .filter((check) => !check.matches && check.actual != null)
+    .map((check) => `${row.poolId} ${check.label}`));
+  const missing = rows.flatMap((row) => row.checks
+    .filter((check) => check.actual == null)
+    .map((check) => `${row.poolId} ${check.label}`));
+  return {
+    total,
+    pass: Math.max(0, total - mismatched.length - missing.length),
+    mismatch: mismatched.length,
+    missing: missing.length,
+    mismatched,
+    missingLabels: missing,
+  };
+}
+
+function normalizeClassicReportArtifact(rawText) {
+  const text = String(rawText || '').trim();
+  if (!text) throw new Error('Paste a classic report JSON or HTML artifact first');
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = null;
+  }
+  const launch = parsed?.launchData || parsed?.launch || parsed?.proof || parsed || null;
+  const proof = parsed?.proof || launch?.proof || null;
+  const token = launch?.token || proof?.token || {};
+  const liquidity = launch?.liquidity || proof?.liquidity || {};
+  const htmlRows = !parsed ? classicHtmlAddressRows(text) : [];
+  const htmlMint = classicHtmlFirstValueForLabels(htmlRows, ['Token mint', 'Mint']);
+  const htmlLaunchWallet = classicHtmlFirstValueForLabels(htmlRows, ['Launch wallet', 'Launch wallet public key']);
+  const htmlDestinationWallet = classicHtmlFirstValueForLabels(htmlRows, [
+    'Planned sweep destination',
+    'Destination wallet',
+    'Sweep destination',
+  ]);
+  const poolsFromPayload = Array.isArray(launch?.pools)
+    ? launch.pools
+    : Array.isArray(liquidity?.results) ? liquidity.results : Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const pools = poolsFromPayload.length ? poolsFromPayload : (!parsed ? classicHtmlPools(text) : []);
+  const normalizedPools = pools.map(normalizeComparisonPool);
+  const positionsFromPools = comparisonPositionsFromPools(pools);
+  const positions = positionsFromPools.length ? positionsFromPools : (!parsed ? classicHtmlPositions(text) : []);
+  const poolIds = [
+    ...(Array.isArray(launch?.poolIds) ? launch.poolIds : []),
+    ...(Array.isArray(liquidity?.poolIds) ? liquidity.poolIds : []),
+    ...pools.map((pool) => pool?.poolId || pool?.id).filter(Boolean),
+  ].filter((value, index, list) => value && list.indexOf(value) === index);
+  const addresses = collectArtifactAddresses(parsed || text);
+  const signatures = collectArtifactSignatures(parsed || text);
+  const htmlText = parsed ? '' : text.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ');
+  const plainText = htmlText || text;
+  const tokenAuthorities = token?.authorities || {};
+  const airdrop = launch?.airdrop || proof?.airdrop || parsed?.airdrop || {};
+  const normalizedAirdrop = normalizeComparisonAirdrop(airdrop);
+  const htmlAirdrop = !parsed ? classicHtmlAirdrop(text) : {};
+  const normalizedHtmlAirdrop = normalizeComparisonAirdrop(htmlAirdrop);
+  const airdropAudit = launch?.airdropAudit || parsed?.airdropAudit || {};
+  const structuredEvidence = Boolean(
+    parsed
+      ? (
+        parsed.launchData
+        || parsed.launch
+        || parsed.proof
+        || launch?.dataVersion
+        || launch?.mint
+        || token?.mint
+        || poolIds.length
+        || normalizedPools.length
+        || positions.length
+        || normalizedAirdrop.recipients.length
+        || normalizedAirdrop.transferred.length
+        || normalizedAirdrop.failed.length
+      )
+      : (
+        htmlRows.length
+        || normalizedPools.length
+        || positions.length
+        || htmlAirdrop.structuredEvidence
+      )
+  );
+  const positionCount = Number(
+    launch?.liquidity?.positionCount
+    ?? liquidity?.positionCount
+    ?? launch?.summary?.totalPositions
+    ?? (positions.length || pools.reduce((sum, pool) => sum + Number(pool?.totalPositions || 0), 0)),
+  );
+  const lockedPositionCount = Number(
+    launch?.liquidity?.lockedPositionCount
+    ?? liquidity?.lockedPositionCount
+    ?? launch?.summary?.lockedPositions
+    ?? (positions.filter((position) => position.locked === true).length || pools.reduce((sum, pool) => sum + Number(pool?.lockedPositions || 0), 0)),
+  );
+  const feeKeyCount = Number(
+    launch?.liquidity?.feeKeyCount
+    ?? liquidity?.feeKeyCount
+    ?? positions.filter((position) => position.feeKeyNftMint).length,
+  );
+  return {
+    kind: parsed ? 'json' : 'html',
+    sourceKind: classicArtifactSourceKind(parsed, text),
+    structuredEvidence,
+    mint: launch?.mint || launch?.tokenMint || token?.mint || proof?.token?.mint || htmlMint || null,
+    symbol: launch?.symbol || token?.symbol || proof?.token?.symbol || null,
+    launchWallet: launch?.launchWallet || launch?.walletPublicKey || proof?.walletPublicKey || htmlLaunchWallet || null,
+    destinationWallet: launch?.transfer?.destinationWallet || launch?.destinationWallet || proof?.transfer?.destinationWallet || proof?.destinationWallet || htmlDestinationWallet || null,
+    poolIds,
+    pools: normalizedPools,
+    positionCount: Number.isFinite(positionCount) ? positionCount : null,
+    lockedPositionCount: Number.isFinite(lockedPositionCount) ? lockedPositionCount : null,
+    feeKeyCount: Number.isFinite(feeKeyCount) ? feeKeyCount : null,
+    positions,
+    authorities: {
+      mintAuthorityRenounced: artifactAuthorityFlag(
+        tokenAuthorities.mintAuthorityRenounced ?? token.mintAuthorityRenounced,
+        plainText,
+        'Mint authority',
+        ['renounced'],
+        ['not renounced', 'not confirmed'],
+      ),
+      freezeAuthorityDisabled: artifactAuthorityFlag(
+        tokenAuthorities.freezeAuthorityDisabled ?? token.freezeAuthorityDisabled,
+        plainText,
+        'Freeze authority',
+        ['disabled'],
+        ['not disabled', 'not confirmed'],
+      ),
+      metadataUpdateAuthorityRevoked: artifactAuthorityFlag(
+        tokenAuthorities.metadataUpdateAuthorityRevoked ?? token.metadataUpdateAuthorityRevoked,
+        plainText,
+        'Metadata update authority',
+        ['revoked'],
+        ['not revoked', 'not confirmed'],
+      ),
+      metadataImmutable: artifactAuthorityFlag(
+        tokenAuthorities.metadataImmutable ?? token.metadataImmutable,
+        plainText,
+        'Metadata immutability',
+        ['immutable'],
+        ['not immutable', 'not confirmed'],
+      ),
+    },
+    airdrop: {
+      plannedRecipientCount: numberOrNull(airdrop.plannedRecipientCount ?? airdrop.recipientCount ?? airdropAudit.plannedRecipientCount ?? htmlAirdrop.plannedRecipientCount),
+      deliveredCount: numberOrNull(airdrop.deliveredCount ?? htmlAirdrop.deliveredCount ?? (Array.isArray(airdrop.transferred) ? airdrop.transferred.length : null)),
+      failedCount: numberOrNull(airdrop.failedCount ?? htmlAirdrop.failedCount ?? (Array.isArray(airdrop.failed) ? airdrop.failed.length : null)),
+      ...normalizedAirdrop,
+      recipients: normalizedAirdrop.recipients.length ? normalizedAirdrop.recipients : normalizedHtmlAirdrop.recipients,
+      transferred: normalizedAirdrop.transferred.length ? normalizedAirdrop.transferred : normalizedHtmlAirdrop.transferred,
+      failed: normalizedAirdrop.failed.length ? normalizedAirdrop.failed : normalizedHtmlAirdrop.failed,
+      structuredEvidence: Boolean(htmlAirdrop.structuredEvidence),
+    },
+    reportParityAudit: launch?.reportParityAudit || parsed?.reportParityAudit || null,
+    addresses,
+    signatures,
+    text: plainText,
+  };
+}
+
+function currentClassicComparisonFields(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const comparisonPools = classicComparisonPoolRows(proof, config, results);
+  const poolIds = [
+    ...(Array.isArray(proof?.liquidity?.poolIds) ? proof.liquidity.poolIds : []),
+    ...results.map((pool) => pool?.poolId).filter(Boolean),
+  ].filter((value, index, list) => value && list.indexOf(value) === index);
+  const transfer = proof?.transfer || {};
+  const terminalTransferDestination = transferHasWalletEmptyFinalSweepEvidence(transfer)
+    ? transfer.destinationWallet
+    : null;
+  const terminalTransferEvidenceHash = transferHasWalletEmptyFinalSweepEvidence(transfer)
+    ? comparisonTransferEvidenceHash(transfer)
+    : null;
+  const proofAirdrop = proof?.airdrop || {};
+  const configAirdropRows = Array.isArray(config?.poolTopology?.airdrop?.recipients)
+    ? config.poolTopology.airdrop.recipients
+    : [];
+  const proofAirdropRows = Array.isArray(proofAirdrop.recipients) && proofAirdrop.recipients.length
+    ? proofAirdrop.recipients
+    : configAirdropRows;
+  const normalizedAirdrop = normalizeComparisonAirdrop({
+    ...proofAirdrop,
+    recipients: proofAirdropRows,
+  });
+  const liquidityEvidence = comparisonLiquidityEvidenceState(proof);
+  return {
+    mint: proof?.token?.mint || null,
+    launchWallet: proof?.walletPublicKey || selectedLaunchWalletPublicKey() || null,
+    destinationWallet: terminalTransferDestination || proof?.destinationWallet || config?.poolTopology?.sweepDestination || null,
+    terminalTransferEvidenceHash,
+    poolIds,
+    pools: comparisonPools,
+    positionCount: liquidityEvidence.positionCount,
+    lockedPositionCount: liquidityEvidence.lockedPositionCount,
+    feeKeyCount: liquidityEvidence.feeKeyCount,
+    positions: comparisonPositionsFromPools(results),
+    authorities: {
+      mintAuthorityRenounced: optionalBoolean(proof?.token?.mintAuthorityRenounced),
+      freezeAuthorityDisabled: optionalBoolean(proof?.token?.freezeAuthorityDisabled),
+      metadataUpdateAuthorityRevoked: optionalBoolean(proof?.token?.metadataUpdateAuthorityRevoked),
+      metadataImmutable: optionalBoolean(proof?.token?.metadataImmutable),
+    },
+    airdrop: {
+      plannedRecipientCount: Number(
+        proofAirdrop.plannedRecipientCount
+        || config?.poolTopology?.airdrop?.recipientCount
+        || proofAirdropRows.length
+        || 0,
+      ),
+      deliveredCount: Number(proofAirdrop.deliveredCount || 0),
+      failedCount: Number(proofAirdrop.failedCount || 0),
+      ...normalizedAirdrop,
+    },
+  };
+}
+
+function classicComparisonProofFingerprint(fields = currentClassicComparisonFields()) {
+  const poolIds = Array.isArray(fields.poolIds) ? [...new Set(fields.poolIds)].sort() : [];
+  return JSON.stringify({
+    mint: fields.mint || null,
+    launchWallet: fields.launchWallet || null,
+    destinationWallet: fields.destinationWallet || null,
+    terminalTransferEvidenceHash: fields.terminalTransferEvidenceHash || null,
+    poolIds,
+    pools: comparisonPoolFingerprint(fields.pools),
+    positionCount: Number(fields.positionCount || 0),
+    lockedPositionCount: Number(fields.lockedPositionCount || 0),
+    feeKeyCount: Number(fields.feeKeyCount || 0),
+    positions: comparisonPositionFingerprint(fields.positions),
+    authorities: CLASSIC_AUTHORITY_COMPARISON_FIELDS.reduce((record, field) => {
+      record[field.key] = optionalBoolean(fields.authorities?.[field.key]);
+      return record;
+    }, {}),
+    airdrop: {
+      plannedRecipientCount: Number(fields.airdrop?.plannedRecipientCount || 0),
+      deliveredCount: Number(fields.airdrop?.deliveredCount || 0),
+      failedCount: Number(fields.airdrop?.failedCount || 0),
+      ...comparisonAirdropFingerprint(fields.airdrop || {}),
+    },
+  });
+}
+
+function proofConfigForFingerprint(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const proofConfig = proof?.launchConfig && typeof proof.launchConfig === 'object' ? proof.launchConfig : null;
+  if (!proofConfig) return config;
+  const proofTopology = { ...(proofConfig.poolTopology || {}) };
+  const configDestination = String(config?.poolTopology?.sweepDestination || '').trim();
+  const destinationFinalized = Boolean(
+    proofReportArtifactFinalizesDestination(proof, proofConfig)
+    || transferHasWalletEmptyFinalSweepEvidence(proof?.transfer)
+  );
+  if (configDestination && !destinationFinalized) {
+    proofTopology.sweepDestination = config.poolTopology.sweepDestination;
+  }
+  return {
+    ...proofConfig,
+    token: { ...(proofConfig.token || {}) },
+    poolTopology: proofTopology,
+    funding: proofConfig.funding ? { ...proofConfig.funding } : proofConfig.funding,
+    recovery: proofConfig.recovery ? { ...proofConfig.recovery } : proofConfig.recovery,
+    avatarCollection: proofConfig.avatarCollection || null,
+  };
+}
+
+function launchProofFingerprint(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const proofConfig = proof?.launchConfig && typeof proof.launchConfig === 'object'
+    ? proof.launchConfig
+    : null;
+  const effectiveConfig = proofConfig && config === proofConfig
+    ? proofConfig
+    : proofConfigForFingerprint(proof, config);
+  return classicComparisonProofFingerprint(currentClassicComparisonFields(proof, effectiveConfig));
+}
+
+function classicComparisonMatchesProof(comparison, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  if (!comparison || typeof comparison !== 'object') return false;
+  if (!comparison.proofFingerprint) return false;
+  return comparison.proofFingerprint === launchProofFingerprint(proof, config);
+}
+
+function classicComparisonProofRows(results = []) {
+  return (Array.isArray(results) ? results : []).flatMap((pool) => [
+    ...(Array.isArray(pool?.mainPositions) ? pool.mainPositions : []),
+    ...(Array.isArray(pool?.ladderPositions) ? pool.ladderPositions : []),
+    ...(Array.isArray(pool?.supportPositions) ? pool.supportPositions : []),
+    ...(pool?.bootstrap ? [pool.bootstrap] : []),
+  ]);
+}
+
+function classicComparisonPoolRows(proof = currentLaunchProof(), config = currentLaunchConfig(), results = []) {
+  const resultRows = Array.isArray(results) ? results : [];
+  const planRows = buildV2ReportPoolPlan(config, resultRows, proof);
+  if (!planRows.length) return resultRows.map(normalizeComparisonPool);
+  return planRows.map((plan, index) => {
+    const result = resultRows.find((row) => Number(row?.allocationIndex) === index)
+      || resultRows[index]
+      || {};
+    const recorded = plan.recorded || {};
+    return normalizeComparisonPool({
+      poolId: result.poolId || result.id || null,
+      quote: plan.quoteSymbol || plan.quoteToken || result.quoteSymbol || result.quote || null,
+      quoteMint: plan.quoteMint || result.quoteMint || result.quoteAddress || null,
+      supplyPercent: plan.supplyPercent ?? result.supplyPercent,
+      tickSpacing: recorded.tickSpacing ?? result.tickSpacing,
+      initialPrice: recorded.initialPrice ?? result.initialPrice,
+      launchedSide: recorded.launchedSide ?? result.launchedSide,
+      createPoolTx: recorded.createPoolTx || result.txIds?.createPool || result.createPoolTx || null,
+    });
+  });
+}
+
+function classicComparisonRequiredRows(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const comparisonPools = classicComparisonPoolRows(proof, config, results);
+  const positions = classicComparisonProofRows(results);
+  const poolIds = [
+    ...(Array.isArray(proof?.liquidity?.poolIds) ? proof.liquidity.poolIds : []),
+    ...results.map((pool) => pool?.poolId).filter(Boolean),
+  ].filter((value, index, list) => value && list.indexOf(value) === index);
+  const authorityFields = ['mintAuthorityRenounced', 'freezeAuthorityDisabled', 'metadataUpdateAuthorityRevoked', 'metadataImmutable'];
+  const configAirdropRows = Array.isArray(config?.poolTopology?.airdrop?.recipients)
+    ? config.poolTopology.airdrop.recipients
+    : [];
+  const proofAirdropRows = Array.isArray(proof?.airdrop?.recipients) && proof.airdrop.recipients.length
+    ? proof.airdrop.recipients
+    : configAirdropRows;
+  const proofAirdropEvidence = comparisonAirdropDeliveryEvidenceState({
+    ...(proof?.airdrop || {}),
+    recipients: proofAirdropRows,
+    plannedRecipientCount: proof?.airdrop?.plannedRecipientCount
+      || config?.poolTopology?.airdrop?.recipientCount
+      || proofAirdropRows.length
+      || 0,
+  });
+  const liquidityEvidence = comparisonLiquidityEvidenceState(proof);
+  const rows = [];
+  const add = (id, label, required) => {
+    if (required) rows.push({ id, label });
+  };
+  add('mint', 'Token mint', proof?.token?.mint);
+  add('launch-wallet', 'Launch wallet', proof?.walletPublicKey);
+  add('pools', 'Pool IDs', poolIds.length);
+  add('pool-quote-mints', 'Pool quote mints', comparisonPools.some((pool) => pool?.quoteMint));
+  add('pool-parameters', 'Pool parameters', comparisonPools.some((pool) => (
+    pool?.supplyPercent != null
+    || pool?.tickSpacing != null
+    || pool?.initialPrice != null
+    || pool?.launchedSide
+  )));
+  add('pool-create-transactions', 'Pool create transactions', results.some((pool) => pool?.txIds?.createPool || pool?.createPoolTx));
+  add('authority-posture', 'Authority posture', authorityFields.some((field) => optionalBoolean(proof?.token?.[field]) !== null));
+  add('positionCount', 'Position count', liquidityEvidence.positionCount > 0 || positions.length > 0);
+  add('lockedPositionCount', 'Locked positions', liquidityEvidence.lockedPositionCount > 0 || positions.some((position) => position?.locked === true));
+  add('feeKeyCount', 'Fee Keys', liquidityEvidence.feeKeyCount > 0 || positions.some((position) => position?.feeKeyNftMint || position?.feeKeyMint));
+  add('position-nfts', 'Position NFTs', positions.some((position) => position?.positionNftMint || position?.nftMint || position?.positionMint));
+  add('fee-key-nfts', 'Fee Key NFTs', positions.some((position) => position?.feeKeyNftMint || position?.feeKeyMint));
+  add('fee-key-recipients', 'Fee Key recipients', positions.some((position) => position?.recipient || position?.transferredTo));
+  add('position-transactions', 'Position transactions', positions.some((position) => (
+    position?.openTx
+    || position?.lockTx
+    || position?.transferTx
+    || position?.txIds?.open
+    || position?.txIds?.lock
+    || position?.txIds?.transfer
+  )));
+  add('position-liquidity-shape', 'Position liquidity shape', positions.some((position) => (
+    position?.sharePercent != null
+    || position?.supplyPercent != null
+    || position?.lowerMultiplier != null
+    || position?.upperMultiplier != null
+    || position?.depthPct != null
+  )));
+  add(
+    'destination',
+    'Destination wallet',
+    (transferHasWalletEmptyFinalSweepEvidence(proof?.transfer) ? proof?.transfer?.destinationWallet : null)
+      || proof?.destinationWallet
+      || config?.poolTopology?.sweepDestination,
+  );
+  add('airdrop-delivery', 'Airdrop delivery', proofAirdropEvidence.required);
+  add('airdrop-recipients', 'Airdrop recipients', proofAirdropEvidence.required);
+  add('airdrop-transactions', 'Airdrop transactions', proofAirdropEvidence.required);
+  return rows;
+}
+
+function classicComparisonRequiredEvidence(comparison, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const requiredRows = classicComparisonRequiredRows(proof, config);
+  const comparisonRows = Array.isArray(comparison?.rows) ? comparison.rows : [];
+  const rowsById = new Map(comparisonRows.map((row) => [row?.id, row]));
+  const missingRows = requiredRows.filter((row) => rowsById.get(row.id)?.state !== 'pass');
+  const fieldCount = Math.max(0, Math.floor(Number(comparison?.fieldCount || 0)) || 0);
+  const passCount = Math.max(0, Math.floor(Number(comparison?.passCount || 0)) || 0);
+  const enoughFields = fieldCount >= requiredRows.length && passCount >= requiredRows.length;
+  const structuredEvidence = comparison?.structuredEvidence === true;
+  return {
+    pass: Boolean(comparison && requiredRows.length > 0 && structuredEvidence && enoughFields && missingRows.length === 0),
+    requiredCount: requiredRows.length,
+    fieldCount,
+    passCount,
+    structuredEvidence,
+    missingRows,
+    detail: !structuredEvidence
+      ? 'Classic comparison is missing structured Classic report evidence; load a Classic JSON export or HTML dossier, not loose text.'
+      : missingRows.length
+      ? `Classic comparison is missing required passing row${missingRows.length === 1 ? '' : 's'}: ${missingRows.map((row) => row.label).slice(0, 4).join(', ')}${missingRows.length > 4 ? ', ...' : ''}.`
+      : enoughFields
+        ? `${requiredRows.length}/${requiredRows.length} required Classic evidence rows are passing.`
+        : `Classic comparison is too thin: ${passCount}/${requiredRows.length} required rows passing across ${fieldCount} field${fieldCount === 1 ? '' : 's'}.`,
+  };
+}
+
+function classicComparisonIsRetirementGrade(comparison, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  if (!comparison || typeof comparison !== 'object') return false;
+  if (comparison.status !== 'pass') return false;
+  if (comparison.artifactSource === 'trebuchet-v2') return false;
+  if (!classicComparisonMatchesProof(comparison, proof, config)) return false;
+  return classicComparisonRequiredEvidence(comparison, proof, config).pass;
+}
+
+function attachProofFingerprint(record, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  if (!record || typeof record !== 'object') return record;
+  return {
+    ...record,
+    proofFingerprint: launchProofFingerprint(proof, config),
+  };
+}
+
+function reportPublishMatchesProof(report, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  if (!report || typeof report !== 'object') return false;
+  if (!report.proofFingerprint) return false;
+  return report.proofFingerprint === launchProofFingerprint(proof, config);
+}
+
+function terminalSweepEvidenceHashForProof(proof = currentLaunchProof()) {
+  return transferHasWalletEmptyFinalSweepEvidence(proof?.transfer)
+    ? comparisonTransferEvidenceHash(proof.transfer)
+    : null;
+}
+
+function reportArtifactMatchesTerminalSweep(report, proof = currentLaunchProof()) {
+  if (!report || typeof report !== 'object') return false;
+  const sweepEvidenceHash = terminalSweepEvidenceHashForProof(proof);
+  if (!sweepEvidenceHash) return true;
+  const reportSweepHash = String(
+    report.sweepEvidenceHash
+    || report.transferEvidenceHash
+    || report.finalSweep?.transferEvidenceHash
+    || '',
+  ).trim();
+  return reportSweepHash === sweepEvidenceHash;
+}
+
+function reportPublishUri(report = null) {
+  return String(report?.jsonUri || report?.htmlUri || '').trim();
+}
+
+function reportPublishUriHasPermanentScheme(uri = '') {
+  const value = String(uri || '').trim();
+  return Boolean(
+    /^https?:\/\//i.test(value)
+      || /^ar:\/\//i.test(value)
+      || /^ipfs:\/\//i.test(value)
+  );
+}
+
+function reportPublishHasPermanentEvidence(report = null) {
+  if (!report || typeof report !== 'object') return false;
+  const uri = reportPublishUri(report);
+  const dataVersion = Number(report.dataVersion);
+  const generatedMetadata = Boolean(
+    report.status === 'done'
+      || report.alreadyPublished === true
+      || String(report.publishedAt || '').trim()
+      || (Number.isInteger(dataVersion) && dataVersion > 0)
+  );
+  return Boolean(uri && reportPublishUriHasPermanentScheme(uri) && generatedMetadata);
+}
+
+function reportPublishFinalizationIssue(report = null, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  if (!report || typeof report !== 'object') return 'missing';
+  const uri = reportPublishUri(report);
+  if (!uri) return 'permanent URI missing';
+  if (!reportPublishUriHasPermanentScheme(uri)) return 'unsupported report URI';
+  if (!reportPublishHasPermanentEvidence(report)) return 'publish metadata missing';
+  const proofFingerprint = String(report.proofFingerprint || '').trim();
+  if (!proofFingerprint) return 'proof fingerprint missing';
+  if (proofFingerprint !== launchProofFingerprint(proof, config)) return 'proof fingerprint mismatch';
+  const proofMint = String(proof?.token?.mint || '').trim();
+  const reportMint = String(report.mint || '').trim();
+  if (proofMint && !reportMint) return 'token mint missing';
+  if (proofMint && reportMint !== proofMint) return 'token mint mismatch';
+  if (!reportArtifactMatchesTerminalSweep(report, proof)) return 'terminal sweep evidence hash mismatch';
+  return null;
+}
+
+function reportPublishIsProofCurrent(report = null, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  return !reportPublishFinalizationIssue(report, proof, config);
+}
+
+function localDossierFilenameMatchesKind(filename, kind) {
+  const normalized = String(filename || '').trim().toLowerCase();
+  if (kind === 'local-proof-json') return normalized.endsWith('.json');
+  if (kind === 'local-dossier-html') return normalized.endsWith('.html');
+  return false;
+}
+
+function localDossierHasEvidence(dossier = null) {
+  if (!dossier || typeof dossier !== 'object') return false;
+  const kind = String(dossier.kind || '').trim();
+  const filename = String(dossier.filename || '').trim();
+  const downloadedAt = String(dossier.downloadedAt || '').trim();
+  const dataVersion = Number(dossier.dataVersion);
+  return Boolean(
+    dossier.status === 'downloaded'
+      && ['local-dossier-html', 'local-proof-json'].includes(kind)
+      && filename
+      && localDossierFilenameMatchesKind(filename, kind)
+      && String(dossier.proofFingerprint || '').trim()
+      && downloadedAt
+      && Number.isInteger(dataVersion)
+      && dataVersion > 0
+  );
+}
+
+function localDossierFinalizationIssue(dossier = null, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  if (!dossier || typeof dossier !== 'object') return 'missing';
+  const kind = String(dossier.kind || '').trim();
+  const filename = String(dossier.filename || '').trim();
+  const downloadedAt = String(dossier.downloadedAt || '').trim();
+  const dataVersion = Number(dossier.dataVersion);
+  const proofFingerprint = String(dossier.proofFingerprint || '').trim();
+  if (dossier.status !== 'downloaded') return 'not downloaded';
+  if (!['local-dossier-html', 'local-proof-json'].includes(kind)) return 'unknown artifact kind';
+  if (!filename || !localDossierFilenameMatchesKind(filename, kind)) return 'filename does not match artifact kind';
+  if (!downloadedAt) return 'download timestamp missing';
+  if (!Number.isInteger(dataVersion) || dataVersion <= 0) return 'data version missing';
+  if (!proofFingerprint) return 'proof fingerprint missing';
+  if (proofFingerprint !== launchProofFingerprint(proof, config)) return 'proof fingerprint mismatch';
+  const proofMint = String(proof?.token?.mint || '').trim();
+  const dossierMint = String(dossier.mint || '').trim();
+  if (proofMint && !dossierMint) return 'token mint missing';
+  if (proofMint && dossierMint !== proofMint) return 'token mint mismatch';
+  const terminalSweepHash = terminalSweepEvidenceHashForProof(proof);
+  if (terminalSweepHash) {
+    const dossierSweepHash = String(
+      dossier.sweepEvidenceHash
+      || dossier.transferEvidenceHash
+      || dossier.finalSweep?.transferEvidenceHash
+      || '',
+    ).trim();
+    if (dossierSweepHash !== terminalSweepHash) return 'terminal sweep evidence hash mismatch';
+  }
+  return null;
+}
+
+function localDossierIsProofCurrent(dossier = null, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  return !localDossierFinalizationIssue(dossier, proof, config);
+}
+
+function currentLocalDossier(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const proofDossier = proof?.localDossier || null;
+  if (localDossierIsProofCurrent(proofDossier, proof, config)) return proofDossier;
+  const lastDossier = state.lastLocalDossier || null;
+  if (localDossierIsProofCurrent(lastDossier, proof, config)) return lastDossier;
+  return null;
+}
+
+function currentReportArtifact(proof = currentLaunchProof(), config = currentLaunchConfig(), { allowTransient = false } = {}) {
+  const report = currentReportPublish(proof, config, { allowTransient });
+  const reportUri = reportPublishUri(report) || null;
+  if (reportUri) {
+    return {
+      type: 'published',
+      label: 'Published report',
+      record: report,
+      uri: reportUri,
+      filename: null,
+    };
+  }
+  const dossier = currentLocalDossier(proof, config);
+  if (dossier) {
+    return {
+      type: 'local-dossier',
+      label: dossier.kind === 'local-proof-json' ? 'Local proof JSON' : 'Local dossier',
+      record: dossier,
+      uri: null,
+      filename: dossier.filename || null,
+    };
+  }
+  return null;
+}
+
+function proofTerminalTransferDestination(proof = currentLaunchProof()) {
+  const transfer = proof?.transfer || null;
+  return transferHasWalletEmptyFinalSweepEvidence(transfer)
+    ? String(transfer.destinationWallet || '').trim() || null
+    : null;
+}
+
+function proofEffectiveDestination(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  return proofTerminalTransferDestination(proof)
+    || proof?.destinationWallet
+    || config?.poolTopology?.sweepDestination
+    || null;
+}
+
+function currentReportPublish(proof = currentLaunchProof(), config = currentLaunchConfig(), { allowTransient = false } = {}) {
+  const proofReport = proof?.reportPublish || null;
+  if (reportPublishIsProofCurrent(proofReport, proof, config)) return proofReport;
+  const lastReport = state.lastReportPublish || null;
+  if (reportPublishIsProofCurrent(lastReport, proof, config)) return lastReport;
+  if (
+    allowTransient
+    && state.reportPublishing
+    && lastReport
+    && !reportPublishHasPermanentEvidence(lastReport)
+    && reportPublishMatchesProof(lastReport, proof, config)
+    && reportArtifactMatchesTerminalSweep(lastReport, proof)
+  ) return lastReport;
+  return null;
+}
+
+function staleReportPublishForProof(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const reports = [proof?.reportPublish, state.lastReportPublish, proof?.localDossier, state.lastLocalDossier].filter(Boolean);
+  return reports.find((report) => (
+    (reportPublishHasPermanentEvidence(report) && reportPublishFinalizationIssue(report, proof, config))
+      || (localDossierHasEvidence(report) && localDossierFinalizationIssue(report, proof, config))
+  )) || null;
+}
+
+function artifactContainsAddress(artifact, value) {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  return artifact.addresses.includes(text) || artifact.text.includes(text);
+}
+
+function compareClassicReportArtifact(rawText, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const artifact = normalizeClassicReportArtifact(rawText);
+  const current = currentClassicComparisonFields(proof, config);
+  const rows = [];
+  const addRow = (id, label, expected, actual, state, detail) => {
+    rows.push({ id, label, expected, actual, state, detail });
+  };
+  if (artifact.sourceKind === 'trebuchet-v2') {
+    addRow(
+      'artifact-source',
+      'Artifact source',
+      'completed Classic artifact',
+      'v2 proof or dossier',
+      'mismatch',
+      'Load a completed Classic artifact, not the current v2 proof or v2 dossier.',
+    );
+  }
+  if (!current.mint && !current.poolIds.length && Number(current.positionCount || 0) <= 0) {
+    addRow(
+      'current-proof',
+      'Current v2 proof',
+      'token and liquidity proof',
+      null,
+      'missing',
+      'Run or load a completed v2 launch proof before comparing a classic artifact.',
+    );
+  }
+  if (current.mint) {
+    const actual = artifact.mint || (!artifact.structuredEvidence && artifactContainsAddress(artifact, current.mint) ? current.mint : null);
+    addRow(
+      'mint',
+      'Token mint',
+      current.mint,
+      actual,
+      actual === current.mint ? 'pass' : actual ? 'mismatch' : 'missing',
+      actual === current.mint ? 'Mint matches.' : actual ? 'Classic artifact has a different mint.' : 'Current v2 mint was not found in the artifact.',
+    );
+  }
+  if (current.launchWallet) {
+    const actual = artifact.launchWallet || (!artifact.structuredEvidence && artifactContainsAddress(artifact, current.launchWallet) ? current.launchWallet : null);
+    addRow(
+      'launch-wallet',
+      'Launch wallet',
+      current.launchWallet,
+      actual,
+      actual === current.launchWallet ? 'pass' : actual ? 'mismatch' : 'warn',
+      actual === current.launchWallet ? 'Launch wallet matches.' : actual ? 'Classic artifact has a different launch wallet.' : 'Launch wallet was not found directly; verify report custody manually.',
+    );
+  }
+  if (current.poolIds.length) {
+    const structuredPoolIds = artifact.poolIds.length > 0;
+    const matched = current.poolIds.filter((poolId) => (
+      artifact.poolIds.includes(poolId)
+      || (!structuredPoolIds && artifactContainsAddress(artifact, poolId))
+    ));
+    const poolState = comparisonExactEvidenceState({
+      expectedCount: current.poolIds.length,
+      matchedCount: matched.length,
+      actualCount: artifact.poolIds.length,
+      hasStructuredEvidence: structuredPoolIds,
+    });
+    addRow(
+      'pools',
+      'Pool IDs',
+      `${matched.length}/${current.poolIds.length}`,
+      String(artifact.poolIds.length || artifact.addresses.length),
+      poolState,
+      structuredPoolIds && poolState !== 'pass'
+        ? `${matched.length}/${current.poolIds.length} current v2 pool IDs matched, but the Classic artifact records ${artifact.poolIds.length} pool ID${artifact.poolIds.length === 1 ? '' : 's'}; the counts must match exactly.`
+        : `${matched.length}/${current.poolIds.length} current v2 pool IDs were found in the classic artifact.`,
+    );
+  }
+  const currentQuoteMints = [...new Set(current.pools.map((pool) => pool.quoteMint).filter(Boolean))];
+  if (currentQuoteMints.length) {
+    const artifactQuoteMints = new Set(artifact.pools.map((pool) => pool.quoteMint).filter(Boolean));
+    const matched = currentQuoteMints.filter((quoteMint) => (
+      artifactQuoteMints.has(quoteMint)
+      || (artifactQuoteMints.size <= 0 && artifactContainsAddress(artifact, quoteMint))
+    ));
+    const quoteState = comparisonExactEvidenceState({
+      expectedCount: currentQuoteMints.length,
+      matchedCount: matched.length,
+      actualCount: artifactQuoteMints.size,
+      hasStructuredEvidence: artifactQuoteMints.size > 0,
+    });
+    addRow(
+      'pool-quote-mints',
+      'Pool quote mints',
+      `${matched.length}/${currentQuoteMints.length}`,
+      artifactQuoteMints.size ? String(artifactQuoteMints.size) : null,
+      quoteState,
+      quoteState === 'pass'
+        ? 'Every current pool quote mint was found in the Classic artifact.'
+        : artifactQuoteMints.size > 0
+          ? `${matched.length}/${currentQuoteMints.length} current pool quote mints matched, but the Classic artifact records ${artifactQuoteMints.size}; the sets must match exactly.`
+          : `${matched.length}/${currentQuoteMints.length} current pool quote mints were found in the Classic artifact.`,
+    );
+  }
+  const poolParameterSummary = comparisonPoolParameterSummary(current.pools, artifact.pools);
+  if (poolParameterSummary.total > 0) {
+    addRow(
+      'pool-parameters',
+      'Pool parameters',
+      `${poolParameterSummary.pass}/${poolParameterSummary.total}`,
+      artifact.pools.length ? `${artifact.pools.length} pool record${artifact.pools.length === 1 ? '' : 's'}` : null,
+      poolParameterSummary.mismatch > 0
+        ? 'mismatch'
+        : poolParameterSummary.missing > 0 ? 'missing' : 'pass',
+      [
+        `${poolParameterSummary.pass}/${poolParameterSummary.total} pool parameters match the current proof.`,
+        poolParameterSummary.mismatched.length ? `Mismatched: ${poolParameterSummary.mismatched.join(', ')}.` : '',
+        poolParameterSummary.missingLabels.length ? `Missing: ${poolParameterSummary.missingLabels.join(', ')}.` : '',
+      ].filter(Boolean).join(' '),
+    );
+  }
+  const currentCreatePoolTxs = [...new Set(current.pools.map((pool) => pool.createPoolTx).filter(Boolean))];
+  if (currentCreatePoolTxs.length) {
+    const artifactCreatePoolTxs = new Set(artifact.pools.map((pool) => pool.createPoolTx).filter(Boolean));
+    const matched = currentCreatePoolTxs.filter((tx) => (
+      artifactCreatePoolTxs.has(tx)
+      || (artifactCreatePoolTxs.size <= 0 && artifactContainsAddress(artifact, tx))
+    ));
+    const createPoolState = comparisonExactEvidenceState({
+      expectedCount: currentCreatePoolTxs.length,
+      matchedCount: matched.length,
+      actualCount: artifactCreatePoolTxs.size,
+      hasStructuredEvidence: artifactCreatePoolTxs.size > 0,
+    });
+    addRow(
+      'pool-create-transactions',
+      'Pool create transactions',
+      `${matched.length}/${currentCreatePoolTxs.length}`,
+      artifactCreatePoolTxs.size ? String(artifactCreatePoolTxs.size) : null,
+      createPoolState,
+      createPoolState === 'pass'
+        ? 'Every current pool-create transaction was found in the Classic artifact.'
+        : artifactCreatePoolTxs.size > 0
+          ? `${matched.length}/${currentCreatePoolTxs.length} current pool-create transactions matched, but the Classic artifact records ${artifactCreatePoolTxs.size}; the sets must match exactly.`
+          : `${matched.length}/${currentCreatePoolTxs.length} current pool-create transactions were found in the Classic artifact.`,
+    );
+  }
+  const currentAuthorityCount = authorityCount(current.authorities);
+  if (currentAuthorityCount.pass > 0) {
+    const artifactAuthorityCount = authorityComparisonSummary(current.authorities, artifact.authorities);
+    addRow(
+      'authority-posture',
+      'Authority posture',
+      `${currentAuthorityCount.pass}/${currentAuthorityCount.total}`,
+      artifactAuthorityCount.known ? `${artifactAuthorityCount.pass}/${artifactAuthorityCount.total}` : null,
+      artifactAuthorityCount.mismatch > 0
+        ? 'mismatch'
+        : artifactAuthorityCount.missing > 0 ? 'missing' : 'pass',
+      artifactAuthorityCount.known
+        ? [
+          `${artifactAuthorityCount.pass}/${artifactAuthorityCount.total} authority fields match the current proof.`,
+          artifactAuthorityCount.mismatchLabels.length ? `Mismatched: ${artifactAuthorityCount.mismatchLabels.join(', ')}.` : '',
+          artifactAuthorityCount.missingLabels.length ? `Missing: ${artifactAuthorityCount.missingLabels.join(', ')}.` : '',
+        ].filter(Boolean).join(' ')
+        : 'Classic artifact did not expose authority posture directly.',
+    );
+  }
+  [
+    ['positionCount', 'Position count'],
+    ['lockedPositionCount', 'Locked positions'],
+    ['feeKeyCount', 'Fee Keys'],
+  ].forEach(([key, label]) => {
+    const expected = Number(current[key] || 0);
+    const actual = Number(artifact[key]);
+    if (expected <= 0) return;
+    addRow(
+      key,
+      label,
+      expected,
+      Number.isFinite(actual) ? actual : null,
+      Number.isFinite(actual) ? actual === expected ? 'pass' : 'mismatch' : 'warn',
+      Number.isFinite(actual)
+        ? `${actual}/${expected} recorded in classic artifact; the count must match exactly.`
+        : 'Classic artifact did not expose this count directly; verify manually from rows.',
+    );
+  });
+  const currentPositionMints = comparisonUniqueValues(current.positions, 'positionNftMint');
+  if (currentPositionMints.length) {
+    const artifactPositionMints = comparisonUniqueValues(artifact.positions, 'positionNftMint');
+    const matched = comparisonMatchedStructuredValues(artifact, currentPositionMints, 'positionNftMint', artifact.positions.length > 0);
+    const positionState = comparisonExactEvidenceState({
+      expectedCount: currentPositionMints.length,
+      matchedCount: matched.length,
+      actualCount: artifactPositionMints.length,
+      hasStructuredEvidence: artifact.positions.length > 0,
+    });
+    addRow(
+      'position-nfts',
+      'Position NFTs',
+      `${matched.length}/${currentPositionMints.length}`,
+      artifact.positions.length ? String(artifactPositionMints.length) : null,
+      positionState,
+      positionState === 'pass'
+        ? 'Every current position NFT was found in the Classic artifact.'
+        : artifact.positions.length
+          ? `${matched.length}/${currentPositionMints.length} current position NFT mints matched, but the Classic artifact records ${artifactPositionMints.length}; the sets must match exactly.`
+          : `${matched.length}/${currentPositionMints.length} current position NFT mints were found in the Classic artifact.`,
+    );
+  }
+  const currentFeeKeyMints = comparisonUniqueValues(current.positions, 'feeKeyNftMint');
+  if (currentFeeKeyMints.length) {
+    const artifactFeeKeyMints = comparisonUniqueValues(artifact.positions, 'feeKeyNftMint');
+    const matched = comparisonMatchedStructuredValues(artifact, currentFeeKeyMints, 'feeKeyNftMint', artifact.positions.length > 0);
+    const feeKeyState = comparisonExactEvidenceState({
+      expectedCount: currentFeeKeyMints.length,
+      matchedCount: matched.length,
+      actualCount: artifactFeeKeyMints.length,
+      hasStructuredEvidence: artifact.positions.length > 0,
+    });
+    addRow(
+      'fee-key-nfts',
+      'Fee Key NFTs',
+      `${matched.length}/${currentFeeKeyMints.length}`,
+      artifact.positions.length ? String(artifactFeeKeyMints.length) : null,
+      feeKeyState,
+      feeKeyState === 'pass'
+        ? 'Every current Fee Key NFT was found in the Classic artifact.'
+        : artifact.positions.length
+          ? `${matched.length}/${currentFeeKeyMints.length} current Fee Key NFT mints matched, but the Classic artifact records ${artifactFeeKeyMints.length}; the sets must match exactly.`
+          : `${matched.length}/${currentFeeKeyMints.length} current Fee Key NFT mints were found in the Classic artifact.`,
+    );
+  }
+  const currentFeeKeyRecipientWallets = comparisonUniqueValues(current.positions, ['recipient', 'transferredTo']);
+  if (currentFeeKeyRecipientWallets.length) {
+    const artifactFeeKeyRecipientWallets = comparisonUniqueValues(artifact.positions, ['recipient', 'transferredTo']);
+    const matched = comparisonMatchedStructuredValues(artifact, currentFeeKeyRecipientWallets, ['recipient', 'transferredTo'], artifact.positions.length > 0);
+    const recipientState = comparisonExactEvidenceState({
+      expectedCount: currentFeeKeyRecipientWallets.length,
+      matchedCount: matched.length,
+      actualCount: artifactFeeKeyRecipientWallets.length,
+      hasStructuredEvidence: artifact.positions.length > 0,
+    });
+    addRow(
+      'fee-key-recipients',
+      'Fee Key recipients',
+      `${matched.length}/${currentFeeKeyRecipientWallets.length}`,
+      artifact.positions.length ? String(artifactFeeKeyRecipientWallets.length) : null,
+      recipientState,
+      recipientState === 'pass'
+        ? 'Every current Fee Key recipient or delivery wallet was found in the Classic artifact.'
+        : artifact.positions.length
+          ? `${matched.length}/${currentFeeKeyRecipientWallets.length} current Fee Key recipient or delivery wallets matched, but the Classic artifact records ${artifactFeeKeyRecipientWallets.length}; the sets must match exactly.`
+          : `${matched.length}/${currentFeeKeyRecipientWallets.length} current Fee Key recipient or delivery wallets were found in the Classic artifact.`,
+    );
+  }
+  const currentPositionTxs = comparisonUniqueValues(current.positions, ['openTx', 'lockTx', 'transferTx']);
+  if (currentPositionTxs.length) {
+    const artifactPositionTxs = comparisonUniqueValues(artifact.positions, ['openTx', 'lockTx', 'transferTx']);
+    const matched = comparisonMatchedStructuredValues(artifact, currentPositionTxs, ['openTx', 'lockTx', 'transferTx'], artifact.positions.length > 0);
+    const positionTxState = comparisonExactEvidenceState({
+      expectedCount: currentPositionTxs.length,
+      matchedCount: matched.length,
+      actualCount: artifactPositionTxs.length,
+      hasStructuredEvidence: artifact.positions.length > 0,
+    });
+    addRow(
+      'position-transactions',
+      'Position transactions',
+      `${matched.length}/${currentPositionTxs.length}`,
+      artifact.positions.length ? String(artifactPositionTxs.length) : null,
+      positionTxState,
+      positionTxState === 'pass'
+        ? 'Every current open/lock/transfer transaction was found in the Classic artifact.'
+        : artifact.positions.length
+          ? `${matched.length}/${currentPositionTxs.length} current open/lock/transfer transactions matched, but the Classic artifact records ${artifactPositionTxs.length}; the sets must match exactly.`
+        : `${matched.length}/${currentPositionTxs.length} current open/lock/transfer transactions were found in the Classic artifact.`,
+    );
+  }
+  const positionShapeSummary = comparisonPositionShapeSummary(current.positions, artifact.positions);
+  if (positionShapeSummary.total > 0) {
+    addRow(
+      'position-liquidity-shape',
+      'Position liquidity shape',
+      `${positionShapeSummary.pass}/${positionShapeSummary.total}`,
+      artifact.positions.length ? `${artifact.positions.length} position record${artifact.positions.length === 1 ? '' : 's'}` : null,
+      positionShapeSummary.mismatch > 0
+        ? 'mismatch'
+        : positionShapeSummary.missing > 0 ? 'missing' : 'pass',
+      [
+        `${positionShapeSummary.pass}/${positionShapeSummary.total} slice, ladder, and support shape fields match the current proof.`,
+        positionShapeSummary.mismatched.length ? `Mismatched: ${positionShapeSummary.mismatched.join(', ')}.` : '',
+        positionShapeSummary.missingLabels.length ? `Missing: ${positionShapeSummary.missingLabels.join(', ')}.` : '',
+      ].filter(Boolean).join(' '),
+    );
+  }
+  if (current.destinationWallet) {
+    const actual = artifact.destinationWallet || (!artifact.structuredEvidence && artifactContainsAddress(artifact, current.destinationWallet) ? current.destinationWallet : null);
+    addRow(
+      'destination',
+      'Destination wallet',
+      current.destinationWallet,
+      actual,
+      actual === current.destinationWallet ? 'pass' : actual ? 'mismatch' : 'warn',
+      actual === current.destinationWallet ? 'Destination matches.' : actual ? 'Classic artifact has a different destination.' : 'Destination was not found directly; final sweep may still be pending.',
+    );
+  }
+  const plannedAirdrop = Number(current.airdrop.plannedRecipientCount || 0);
+  const deliveredAirdrop = Number(current.airdrop.deliveredCount || 0);
+  const failedAirdrop = Number(current.airdrop.failedCount || 0);
+  const currentAirdropEvidence = comparisonAirdropDeliveryEvidenceState(current.airdrop);
+  const currentAirdropWallets = comparisonAirdropWallets(current.airdrop);
+  const matchedAirdropWallets = comparisonMatchedAirdropWallets(artifact, currentAirdropWallets);
+  const currentAirdropTxs = comparisonAirdropTxs(current.airdrop);
+  const matchedAirdropTxs = comparisonMatchedAirdropTxs(artifact, currentAirdropTxs);
+  const structuredAirdropEvidence = comparisonHasStructuredAirdropEvidence(artifact);
+  const artifactAirdropWallets = comparisonAirdropWallets(artifact.airdrop);
+  const artifactAirdropTxs = comparisonAirdropTxs(artifact.airdrop);
+  if (comparisonAirdropNeedsFullRows(current.airdrop)) {
+    addRow(
+      'airdrop-compact-evidence',
+      'Airdrop row evidence',
+      'full recipient and transaction rows',
+      'hash-only compact proof',
+      'missing',
+      'This imported HTML proof stores full airdrop hashes with capped samples. Load the full JSON proof export or the original launch session before running exact Classic airdrop comparison.',
+    );
+  }
+  if (plannedAirdrop > 0 || deliveredAirdrop > 0 || failedAirdrop > 0) {
+    const actualDelivered = numberOrNull(artifact.airdrop.deliveredCount);
+    const actualFailed = numberOrNull(artifact.airdrop.failedCount);
+    const hasAirdropCounts = actualDelivered !== null || actualFailed !== null;
+    const deliveredMatches = actualDelivered !== null && actualDelivered === deliveredAirdrop;
+    const failedMatches = actualFailed !== null && actualFailed === failedAirdrop;
+    const recipientEvidenceMatches = currentAirdropWallets.length > 0 && matchedAirdropWallets.length === currentAirdropWallets.length;
+    const txEvidenceMatches = currentAirdropTxs.length <= 0 || matchedAirdropTxs.length === currentAirdropTxs.length;
+    const structuredCountsMatch = structuredAirdropEvidence
+      && (actualDelivered === null || actualDelivered === deliveredAirdrop)
+      && (actualFailed === null || actualFailed === failedAirdrop)
+      && (!artifactAirdropWallets.length || artifactAirdropWallets.length === currentAirdropWallets.length)
+      && (!artifactAirdropTxs.length || artifactAirdropTxs.length === currentAirdropTxs.length);
+    const deliveryState = !currentAirdropEvidence.complete
+      ? 'missing'
+      : hasAirdropCounts
+        ? deliveredMatches && failedMatches && (!structuredAirdropEvidence || structuredCountsMatch) ? 'pass' : 'mismatch'
+        : structuredAirdropEvidence
+          ? recipientEvidenceMatches && txEvidenceMatches && structuredCountsMatch ? 'pass' : matchedAirdropWallets.length > 0 ? 'mismatch' : 'missing'
+          : recipientEvidenceMatches && txEvidenceMatches ? 'pass' : matchedAirdropWallets.length > 0 ? 'warn' : 'missing';
+    addRow(
+      'airdrop-delivery',
+      'Airdrop delivery',
+      `${deliveredAirdrop}/${plannedAirdrop} delivered, ${failedAirdrop} failed`,
+      hasAirdropCounts
+        ? `${actualDelivered ?? '?'} delivered, ${actualFailed ?? '?'} failed`
+        : recipientEvidenceMatches ? `${matchedAirdropWallets.length} recipient wallet${matchedAirdropWallets.length === 1 ? '' : 's'} found` : null,
+      deliveryState,
+      !currentAirdropEvidence.complete
+        ? `Current v2 proof is missing exact airdrop evidence: ${currentAirdropEvidence.missing.join(', ')}.`
+      : deliveryState === 'pass'
+        ? `Artifact records ${actualDelivered ?? deliveredAirdrop} delivered and ${actualFailed ?? failedAirdrop} failed recipients.`
+        : structuredAirdropEvidence
+          ? `Classic structured airdrop evidence must match exactly; artifact records ${actualDelivered ?? '?'} delivered, ${actualFailed ?? '?'} failed, ${artifactAirdropWallets.length} wallet${artifactAirdropWallets.length === 1 ? '' : 's'}, and ${artifactAirdropTxs.length} transaction${artifactAirdropTxs.length === 1 ? '' : 's'}.`
+        : recipientEvidenceMatches && txEvidenceMatches
+          ? 'Classic artifact exposed the expected airdrop recipient wallets and delivered transaction signatures.'
+          : 'Classic artifact did not expose enough airdrop delivery evidence directly.',
+    );
+  }
+  if (currentAirdropEvidence.required && currentAirdropEvidence.recipientCount < currentAirdropEvidence.expectedCount) {
+    addRow(
+      'airdrop-recipients',
+      'Airdrop recipients',
+      `${currentAirdropEvidence.recipientCount}/${currentAirdropEvidence.expectedCount}`,
+      null,
+      'missing',
+      'Current v2 proof is missing exact airdrop recipient wallet rows; load the full proof or original launch session before comparing Classic.',
+    );
+  } else if (currentAirdropWallets.length) {
+    const recipientState = comparisonExactEvidenceState({
+      expectedCount: currentAirdropWallets.length,
+      matchedCount: matchedAirdropWallets.length,
+      actualCount: artifactAirdropWallets.length,
+      hasStructuredEvidence: structuredAirdropEvidence && artifactAirdropWallets.length > 0,
+    });
+    addRow(
+      'airdrop-recipients',
+      'Airdrop recipients',
+      `${matchedAirdropWallets.length}/${currentAirdropWallets.length}`,
+      artifact.airdrop.transferred.length || artifact.airdrop.failed.length
+        ? `${comparisonAirdropWallets(artifact.airdrop).length} structured`
+        : artifact.addresses.length ? 'text evidence' : null,
+      recipientState,
+      recipientState === 'pass'
+        ? 'Every current airdrop recipient wallet was found in the Classic artifact.'
+        : structuredAirdropEvidence && artifactAirdropWallets.length > 0
+          ? `${matchedAirdropWallets.length}/${currentAirdropWallets.length} current airdrop recipient wallets matched, but the Classic artifact records ${artifactAirdropWallets.length}; the sets must match exactly.`
+          : `${matchedAirdropWallets.length}/${currentAirdropWallets.length} current airdrop recipient wallets were found in the Classic artifact.`,
+    );
+  }
+  if (currentAirdropEvidence.required && currentAirdropEvidence.transactionCount < currentAirdropEvidence.expectedCount) {
+    addRow(
+      'airdrop-transactions',
+      'Airdrop transactions',
+      `${currentAirdropEvidence.transactionCount}/${currentAirdropEvidence.expectedCount}`,
+      null,
+      'missing',
+      'Current v2 proof is missing exact delivered airdrop transaction signatures; load the full proof or original launch session before comparing Classic.',
+    );
+  } else if (currentAirdropTxs.length) {
+    const txState = comparisonExactEvidenceState({
+      expectedCount: currentAirdropTxs.length,
+      matchedCount: matchedAirdropTxs.length,
+      actualCount: artifactAirdropTxs.length,
+      hasStructuredEvidence: structuredAirdropEvidence && artifactAirdropTxs.length > 0,
+    });
+    addRow(
+      'airdrop-transactions',
+      'Airdrop transactions',
+      `${matchedAirdropTxs.length}/${currentAirdropTxs.length}`,
+      artifact.airdrop.transferred.length || artifact.airdrop.failed.length
+        ? `${artifactAirdropTxs.length} structured`
+        : artifact.signatures.length ? 'text evidence' : null,
+      txState,
+      txState === 'pass'
+        ? 'Every current airdrop transaction signature was found in the Classic artifact.'
+        : structuredAirdropEvidence && artifactAirdropTxs.length > 0
+          ? `${matchedAirdropTxs.length}/${currentAirdropTxs.length} current airdrop transaction signatures matched, but the Classic artifact records ${artifactAirdropTxs.length}; the sets must match exactly.`
+          : `${matchedAirdropTxs.length}/${currentAirdropTxs.length} current airdrop transaction signatures were found in the Classic artifact.`,
+    );
+  }
+  const passCount = rows.filter((row) => row.state === 'pass').length;
+  const mismatchCount = rows.filter((row) => row.state === 'mismatch').length;
+  const missingCount = rows.filter((row) => row.state === 'missing').length;
+  const warnCount = rows.filter((row) => row.state === 'warn').length;
+  const status = classicComparisonStatusFromCounts({ mismatchCount, missingCount, warnCount });
+  return {
+    status,
+    comparedAt: new Date().toISOString(),
+    artifactKind: artifact.kind,
+    artifactSource: artifact.sourceKind,
+    structuredEvidence: artifact.structuredEvidence === true,
+    proofFingerprint: classicComparisonProofFingerprint(current),
+    passCount,
+    warnCount,
+    missingCount,
+    mismatchCount,
+    fieldCount: rows.length,
+    classicMint: artifact.mint || null,
+    classicPoolCount: artifact.poolIds.length,
+    rows,
+  };
+}
+
+function transferSweepErrorCount(transfer = {}) {
+  const tokenErrors = Array.isArray(transfer.tokenTransferErrors)
+    ? transfer.tokenTransferErrors
+    : Array.isArray(transfer.tokenSweep?.errors) ? transfer.tokenSweep.errors : [];
+  const nftErrors = Array.isArray(transfer.nftTransferErrors)
+    ? transfer.nftTransferErrors
+    : Array.isArray(transfer.nftSweep?.errors) ? transfer.nftSweep.errors : [];
+  return tokenErrors.length + nftErrors.length + (transfer.solSweepError ? 1 : 0);
+}
+
+function transferSweptAssetCount(transfer = {}) {
+  const tokenRows = Array.isArray(transfer.tokenSweep?.transferred) ? transfer.tokenSweep.transferred.length : 0;
+  const nftRows = Array.isArray(transfer.nftSweep?.transferred) ? transfer.nftSweep.transferred.length : 0;
+  const tokens = Number(transfer.tokensTransferred || 0);
+  const nfts = Number(transfer.nftsTransferred || 0);
+  const sol = Number(transfer.solTransferred || 0);
+  return (Number.isFinite(tokens) ? tokens : 0)
+    + (Number.isFinite(nfts) ? nfts : 0)
+    + tokenRows
+    + nftRows
+    + (Number.isFinite(sol) && sol > 0 ? 1 : 0);
+}
+
+function transferHasFinalSweepEvidence(transfer = null) {
+  if (!transfer || typeof transfer !== 'object') return false;
+  if (!String(transfer.destinationWallet || '').trim()) return false;
+  if (transfer.status === 'planned-before-sweep') return false;
+  if (transfer.walletEmpty === true) return transferSweepErrorCount(transfer) === 0;
+  if (transfer.walletEmpty === false) return false;
+  if (transferSweepErrorCount(transfer) > 0) return false;
+  return transferSweptAssetCount(transfer) > 0;
+}
+
+function transferHasWalletEmptyFinalSweepEvidence(transfer = null) {
+  return Boolean(
+    transfer
+    && typeof transfer === 'object'
+    && String(transfer.destinationWallet || '').trim()
+    && transfer.status !== 'planned-before-sweep'
+    && transfer.walletEmpty === true
+    && transferSweepErrorCount(transfer) === 0
+  );
+}
+
+function journalTransferHasTerminalSweepEvidence(transfer = null) {
+  return transferHasWalletEmptyFinalSweepEvidence(transfer);
+}
+
+function proofTransferJournalEvidenceState(proofTransfer = null, journalTransfer = null) {
+  const missing = [];
+  const mismatches = [];
+  const proofHash = comparisonTransferEvidenceHash(proofTransfer);
+  const journalHash = comparisonTransferEvidenceHash(journalTransfer);
+  if (!proofHash) return { missing, mismatches, proofHash: null, journalHash };
+  if (!journalHash) {
+    missing.push('journal sweep evidence hash');
+  } else if (proofHash !== journalHash) {
+    mismatches.push('sweep evidence hash');
+  }
+  return { missing, mismatches, proofHash, journalHash };
+}
+
+function finalSweepProofState(transfer = null) {
+  const hasRecord = transfer && typeof transfer === 'object' && Object.keys(transfer).length > 0;
+  const terminal = transferHasWalletEmptyFinalSweepEvidence(transfer);
+  return {
+    terminal,
+    status: terminal ? 'terminal' : hasRecord ? 'needs-proof' : 'not-recorded',
+    label: terminal ? 'Terminal' : hasRecord ? 'Needs proof' : 'Not recorded',
+    walletEmpty: transfer?.walletEmpty === true ? true : transfer?.walletEmpty === false ? false : null,
+    sweptAssetCount: transferSweptAssetCount(transfer || {}),
+    errorCount: transferSweepErrorCount(transfer || {}),
+  };
+}
+
+function proofHasTerminalLaunchJournal(proof = currentLaunchProof()) {
+  const journalEvidence = proofJournalEvidenceState(proof);
+  const matchingJournal = journalEvidence.journal;
+  const status = String(proof?.status || '').trim().toLowerCase();
+  const stage = String(proof?.stage || '').trim().toLowerCase();
+  const journalStatus = String(matchingJournal?.status || '').trim().toLowerCase();
+  const journalStage = String(matchingJournal?.stage || '').trim().toLowerCase();
+  return status === 'completed'
+    && stage === 'transfer_completed'
+    && journalStatus === 'completed'
+    && journalStage === 'transfer_completed'
+    && journalEvidence.backed;
+}
+
+function buildV2ReportParityAudit(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const proofLaunchConfigSnapshot = proofLaunchConfigSnapshotState(proof);
+  config = proofConfigForFingerprint(proof, config);
+  const token = proof?.token || {};
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const plannedPools = buildV2ReportPoolPlan(config, results, proof);
+  const plannedPoolCount = plannedPools.length;
+  const recordedPoolCount = launchProofPoolIds(proof).length;
+  const plannedPositionCount = plannedPools.reduce((sum, pool) => sum + Number(pool.plannedPositionCount || 0), 0);
+  const liquidityEvidence = comparisonLiquidityEvidenceState(proof, {
+    plannedPoolCount,
+    plannedPositionCount,
+  });
+  const recordedPositionCount = liquidityEvidence.positionCount;
+  const lockedPositionCount = liquidityEvidence.lockedPositionCount;
+  const feeKeyCount = liquidityEvidence.feeKeyCount;
+  const txEvidence = v2LiquidityTransactionEvidenceCounts(results);
+  const poolTxCount = txEvidence.poolCreateTxCount;
+  const openTxCount = txEvidence.openTxCount;
+  const lockTxCount = txEvidence.lockTxCount;
+  const transferTxCount = txEvidence.feeKeyRecipientTransferred;
+  const feeKeyRecipientTarget = txEvidence.feeKeyRecipientRows.length;
+  const feeKeyRecipientTransferred = txEvidence.feeKeyRecipientTransferred;
+  const feeKeyMintComplete = recordedPositionCount > 0 && lockedPositionCount > 0 && feeKeyCount >= lockedPositionCount;
+  const feeKeyRecipientComplete = feeKeyRecipientTarget <= 0 || feeKeyRecipientTransferred >= feeKeyRecipientTarget;
+  const report = currentReportPublish(proof, config);
+  const localDossier = currentLocalDossier(proof, config);
+  const staleReport = staleReportPublishForProof(proof, config);
+  const reportArtifactRecord = report || localDossier || null;
+  const transfer = proof?.transfer || null;
+  const sweepComplete = transferHasWalletEmptyFinalSweepEvidence(transfer);
+  const reportArtifactSweepBound = Boolean(
+    sweepComplete
+    && reportArtifactRecord
+    && reportArtifactMatchesTerminalSweep(reportArtifactRecord, proof)
+  );
+  const reportUri = report?.htmlUri || report?.jsonUri || null;
+  const localJournalEvidenceState = proofJournalEvidenceState(proof);
+  const matchingLocalJournal = localJournalEvidenceState.journal;
+  const terminalJournalComplete = proofHasTerminalLaunchJournal(proof);
+  const airdropAudit = buildV2ReportAirdropAudit(proof, config);
+  const plannedAirdrop = Number(airdropAudit.plannedRecipientCount || 0);
+  const deliveredAirdrop = Number(airdropAudit.deliveredCount || 0);
+  const failedAirdrop = Number(airdropAudit.failedCount || 0);
+  const airdropProofEvidence = comparisonAirdropDeliveryEvidenceState({
+    ...(proof?.airdrop || {}),
+    recipients: Array.isArray(proof?.airdrop?.recipients) && proof.airdrop.recipients.length
+      ? proof.airdrop.recipients
+      : Array.isArray(config?.poolTopology?.airdrop?.recipients)
+        ? config.poolTopology.airdrop.recipients
+        : [],
+    plannedRecipientCount: plannedAirdrop,
+    deliveredCount: deliveredAirdrop,
+    failedCount: failedAirdrop,
+  });
+  const classicComparison = currentClassicComparisonForProof(proof, config);
+  const selfArtifactCompared = classicComparison?.artifactSource === 'trebuchet-v2';
+  const comparisonMatchesProof = classicComparisonMatchesProof(classicComparison, proof, config);
+  const comparisonEvidence = classicComparisonRequiredEvidence(classicComparison, proof, config);
+  const comparedToClassic = !selfArtifactCompared
+    && comparisonMatchesProof
+    && comparisonEvidence.pass
+    && classicComparison?.status === 'pass';
+  const authorityValues = [
+    token.mintAuthorityRenounced,
+    token.freezeAuthorityDisabled,
+    token.metadataUpdateAuthorityRevoked,
+    token.metadataImmutable,
+  ];
+  const authorityPassCount = authorityValues.filter((value) => value === true).length;
+  const hasProofLaunchWallet = Boolean(proof?.walletPublicKey);
+  const items = [
+    v2ReportParityItem(
+      'token-proof',
+      'Token proof',
+      token.mint && hasProofLaunchWallet ? 'pass' : token.mint ? 'warn' : 'missing',
+      token.mint
+        ? hasProofLaunchWallet
+          ? `Mint ${shortAddress(token.mint)} / wallet ${shortAddress(proof.walletPublicKey)}.`
+          : `Mint ${shortAddress(token.mint)} is recorded, but launch wallet proof is missing.`
+        : 'Token mint is not recorded yet.',
+    ),
+    v2ReportParityItem(
+      'launch-config-proof',
+      'Launch config snapshot',
+      proofLaunchConfigSnapshot.complete ? 'pass' : proof ? 'warn' : 'missing',
+      proofLaunchConfigSnapshot.complete
+        ? 'Proof carries the frozen non-secret launch configuration snapshot.'
+        : proof
+          ? proofLaunchConfigSnapshot.state === 'missing'
+            ? 'Proof is missing its frozen non-secret launch configuration snapshot.'
+            : proofLaunchConfigSnapshot.state === 'mismatch'
+              ? `Proof launch-config snapshot does not match launch evidence: ${proofLaunchConfigSnapshot.mismatches.join(', ')}.`
+              : `Proof launch-config snapshot is incomplete: ${proofLaunchConfigSnapshot.missing.join(', ')}.`
+          : 'No launch proof is loaded yet.',
+    ),
+    v2ReportParityItem(
+      'authority-proof',
+      'Authority proof',
+      authorityPassCount === authorityValues.length ? 'pass' : authorityPassCount > 0 ? 'warn' : 'missing',
+      `${authorityPassCount}/${authorityValues.length} token authority checks confirmed.`,
+    ),
+    v2ReportParityItem(
+      'pool-proof',
+      'Pool proof',
+      plannedPoolCount > 0
+        && recordedPoolCount === plannedPoolCount
+        && liquidityEvidence.poolCount === recordedPoolCount
+        && poolTxCount >= plannedPoolCount
+        && !liquidityEvidence.missing.includes('pool count')
+        ? 'pass'
+        : recordedPoolCount > 0 ? 'warn' : 'missing',
+      `${recordedPoolCount}/${plannedPoolCount || recordedPoolCount || 0} pool IDs recorded; ${poolTxCount} create transaction${poolTxCount === 1 ? '' : 's'} captured.`,
+    ),
+    v2ReportParityItem(
+      'position-proof',
+      'Position proof',
+      plannedPositionCount > 0
+        && recordedPositionCount >= plannedPositionCount
+        && openTxCount >= recordedPositionCount
+        && !liquidityEvidence.missing.some((item) => ['position count', 'position records'].includes(item))
+        ? 'pass'
+        : recordedPositionCount > 0 || liquidityEvidence.positionRowCount > 0 ? 'warn' : 'missing',
+      `${recordedPositionCount}/${plannedPositionCount || recordedPositionCount || 0} planned position records captured; ${openTxCount} open transaction${openTxCount === 1 ? '' : 's'} linked${liquidityEvidence.missing.includes('position count') ? '; position count does not match recorded rows.' : '.'}`,
+    ),
+    v2ReportParityItem(
+      'lock-proof',
+      'Burn & Earn locks',
+      recordedPositionCount > 0
+        && lockedPositionCount >= recordedPositionCount
+        && lockTxCount >= recordedPositionCount
+        && !liquidityEvidence.missing.includes('lock count')
+        ? 'pass'
+        : lockedPositionCount > 0 || liquidityEvidence.lockedRowCount > 0 ? 'warn' : 'missing',
+      `${lockedPositionCount}/${recordedPositionCount || 0} positions locked; ${lockTxCount} lock transaction${lockTxCount === 1 ? '' : 's'} linked${liquidityEvidence.missing.includes('lock count') ? '; lock count does not match recorded rows.' : '.'}`,
+    ),
+    v2ReportParityItem(
+      'fee-key-proof',
+      'Fee Key transfer proof',
+      feeKeyMintComplete && feeKeyRecipientComplete && !liquidityEvidence.missing.includes('fee key count')
+        ? 'pass'
+        : feeKeyCount > 0 || liquidityEvidence.feeKeyRowCount > 0 || feeKeyRecipientTransferred > 0 ? 'warn' : 'missing',
+      feeKeyRecipientTarget > 0
+        ? `${feeKeyCount} Fee Key NFT${feeKeyCount === 1 ? '' : 's'} recorded; ${feeKeyRecipientTransferred}/${feeKeyRecipientTarget} recipient transfer${feeKeyRecipientTarget === 1 ? '' : 's'} delivered; ${transferTxCount} transfer proof${transferTxCount === 1 ? '' : 's'} linked.`
+        : `${feeKeyCount} Fee Key NFT${feeKeyCount === 1 ? '' : 's'} recorded; no external Fee Key recipients configured.`,
+    ),
+    v2ReportParityItem(
+      'airdrop-proof',
+      'Airdrop proof',
+      plannedAirdrop <= 0
+        ? 'pass'
+        : airdropProofEvidence.complete
+          ? 'pass'
+        : deliveredAirdrop + failedAirdrop > 0 ? 'warn' : 'missing',
+      plannedAirdrop <= 0
+        ? 'No airdrop planned.'
+        : airdropProofEvidence.complete
+          ? `${deliveredAirdrop}/${plannedAirdrop} delivered with exact recipient and transaction proof.`
+          : `${deliveredAirdrop}/${plannedAirdrop} delivered; ${failedAirdrop} failed; missing ${airdropProofEvidence.missing.join(', ')}.`,
+    ),
+    v2ReportParityItem(
+      'recovery-proof',
+      'Recovery evidence',
+      proof?.journalId ? 'pass' : proof ? 'warn' : state.recovery?.journalCount ? 'warn' : 'missing',
+      proof?.journalId
+        ? `Journal ${proof.journalId} is attached.`
+        : state.recovery?.journalCount
+          ? `${state.recovery.journalCount} local journal${state.recovery.journalCount === 1 ? '' : 's'} loaded; attach the completed launch journal id to the proof before retiring Classic.`
+          : 'No local journal evidence is attached yet.',
+    ),
+    v2ReportParityItem(
+      'terminal-journal-proof',
+      'Terminal journal proof',
+      terminalJournalComplete ? 'pass' : proof?.journalId ? 'warn' : proof ? 'warn' : 'missing',
+      terminalJournalComplete
+        ? `Loaded launch journal ${proof.journalId} reached transfer_completed and backs the pool/sweep proof.`
+        : proof?.journalId && !matchingLocalJournal
+          ? `Launch journal ${proof.journalId} is not loaded locally; refresh recovery state before retiring Classic.`
+        : proof?.journalId && localJournalEvidenceState.mismatches.length
+          ? `Loaded launch journal ${proof.journalId} does not match proof: ${localJournalEvidenceState.mismatches.join(', ')}.`
+        : proof?.journalId && localJournalEvidenceState.missing.length
+          ? `Loaded launch journal ${proof.journalId} is missing proof backing: ${localJournalEvidenceState.missing.join(', ')}.`
+        : proof?.journalId
+          ? `Launch journal ${proof.journalId} is not terminal yet; refresh proof after final sweep.`
+          : 'Completed launch journal status is not attached yet.',
+    ),
+    v2ReportParityItem(
+      'report-proof',
+      'Report artifact',
+      reportUri || localDossier
+        ? reportArtifactSweepBound ? 'pass' : 'warn'
+        : staleReport ? 'warn' : proof?.canPublishReport || token.mint ? 'warn' : 'missing',
+      reportUri
+        ? reportArtifactSweepBound
+          ? `Published at ${shortAddress(reportUri)}.`
+          : 'Published report is missing terminal sweep evidence hash; republish after final sweep.'
+        : localDossier
+          ? reportArtifactSweepBound
+            ? `Local dossier downloaded: ${localDossier.filename}.`
+            : 'Local dossier is missing terminal sweep evidence hash; download a fresh dossier after final sweep.'
+        : staleReport
+          ? 'Report artifact belongs to another v2 proof; regenerate for the current launch.'
+          : 'Local proof can be exported; permanent report publish is pending or disabled.',
+    ),
+    v2ReportParityItem(
+      'sweep-proof',
+      'Final sweep proof',
+      sweepComplete ? 'pass' : transfer || proof?.canSweep ? 'warn' : 'missing',
+      sweepComplete
+        ? `Sweep recorded to ${shortAddress(transfer.destinationWallet || proof?.destinationWallet || config?.poolTopology?.sweepDestination || '')}.`
+        : transfer
+          ? 'Sweep record exists but is missing wallet-empty, error-free final-sweep evidence.'
+        : proof?.canSweep ? 'Sweep is ready but not recorded.' : 'Final sweep is not recorded yet.',
+    ),
+    v2ReportParityItem(
+      'classic-comparison',
+      'Live classic comparison',
+      comparedToClassic ? 'pass' : 'warn',
+      comparedToClassic
+        ? 'A completed Classic artifact was compared against v2 report output.'
+        : selfArtifactCompared
+          ? 'Loaded artifact is v2-generated; compare against completed Classic output.'
+          : classicComparison && !comparisonMatchesProof
+            ? 'Classic comparison belongs to another v2 proof; rerun it for the current launch.'
+          : classicComparison
+            && classicComparison.status === 'pass'
+            && !comparisonEvidence.pass
+            ? comparisonEvidence.detail
+          : classicComparison
+            ? `Classic artifact compared with ${classicComparison.passCount || 0}/${classicComparison.fieldCount || 0} fields matching; ${classicComparison.mismatchCount || 0} mismatched, ${classicComparison.missingCount || 0} missing.`
+            : 'Compare the next completed live v2 launch against a classic launch artifact before retiring Classic.',
+    ),
+  ];
+  const passCount = items.filter((item) => item.state === 'pass').length;
+  const warnCount = items.filter((item) => item.state === 'warn').length;
+  const missingCount = items.filter((item) => item.state === 'missing').length;
+  return {
+    version: 1,
+    source: 'trebuchet-v2-report-parity-audit',
+    generatedAt: new Date().toISOString(),
+    proofFingerprint: launchProofFingerprint(proof, config),
+    status: missingCount ? 'missing' : warnCount ? 'warn' : 'pass',
+    score: items.length ? Math.round((passCount / items.length) * 100) : 0,
+    passCount,
+    warnCount,
+    missingCount,
+    itemCount: items.length,
+    items,
+  };
+}
+
+function reportParityAuditMatchesProof(audit = null, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  if (!audit || typeof audit !== 'object') return false;
+  const proofConfig = proofConfigForFingerprint(proof, config);
+  const expectedFingerprint = launchProofFingerprint(proof, proofConfig);
+  const expectedAudit = buildV2ReportParityAudit(proof, proofConfig);
+  const expectedItems = Array.isArray(expectedAudit.items) ? expectedAudit.items : [];
+  const items = Array.isArray(audit.items) ? audit.items : [];
+  const itemCount = Number(audit.itemCount);
+  const passCount = Number(audit.passCount || 0);
+  const warnCount = Number(audit.warnCount || 0);
+  const missingCount = Number(audit.missingCount || 0);
+  return Boolean(
+    String(audit.source || '').trim() === 'trebuchet-v2-report-parity-audit'
+      && String(audit.proofFingerprint || '').trim() === expectedFingerprint
+      && Number(audit.version) >= 1
+      && items.length > 0
+      && Number.isInteger(itemCount)
+      && itemCount === items.length
+      && itemCount === expectedItems.length
+      && Number.isInteger(passCount)
+      && Number.isInteger(warnCount)
+      && Number.isInteger(missingCount)
+      && passCount >= 0
+      && warnCount >= 0
+      && missingCount >= 0
+      && passCount === Number(expectedAudit.passCount || 0)
+      && warnCount === Number(expectedAudit.warnCount || 0)
+      && missingCount === Number(expectedAudit.missingCount || 0)
+      && passCount + warnCount + missingCount === itemCount
+      && String(audit.status || '').trim() === String(expectedAudit.status || '').trim()
+      && items.every((item, index) => (
+        item
+        && typeof item === 'object'
+        && String(item.id || '').trim()
+        && ['pass', 'warn', 'missing'].includes(String(item.state || '').trim())
+        && String(item.id || '').trim() === String(expectedItems[index]?.id || '').trim()
+        && String(item.state || '').trim() === String(expectedItems[index]?.state || '').trim()
+        && generatedEvidenceTextMatches(item, expectedItems[index], ['label', 'detail'])
+      ))
+  );
+}
+
+function generatedEvidenceTextMatches(row = {}, expectedRow = {}, keys = []) {
+  return keys.every((key) => (
+    String(row?.[key] ?? '').trim() === String(expectedRow?.[key] ?? '').trim()
+  ));
+}
+
+function v2ReportAuditNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function buildV2ReportPositionAuditRecord(position = {}, type, extra = {}) {
+  const txIds = position.txIds || {};
+  return {
+    type,
+    ...(extra || {}),
+    tickLower: v2ReportAuditNumber(position.tickLower),
+    tickUpper: v2ReportAuditNumber(position.tickUpper),
+    lowerMultiplier: v2ReportAuditNumber(position.lowerMultiplier),
+    upperMultiplier: v2ReportAuditNumber(position.upperMultiplier),
+    positionNftMint: position.positionNftMint || position.nftMint || position.positionMint || null,
+    feeKeyNftMint: position.feeKeyNftMint || position.feeKeyMint || null,
+    locked: position.locked === true,
+    openTx: txIds.open || position.openTx || null,
+    lockTx: txIds.lock || position.lockTx || null,
+    transferTx: txIds.transfer || position.transferTx || null,
+  };
+}
+
+function buildV2ReportHeldReserveAudit(config = currentLaunchConfig(), estimate = currentClassicFundingEstimateForConfig(config)) {
+  const topology = config?.poolTopology || {};
+  const pools = Array.isArray(topology.pools) ? topology.pools : [];
+  const preallocationPercent = Math.max(0, Number(topology.preallocation?.supplyPercent || 0));
+  const airdrop = topology.airdrop || {};
+  const airdropReservePercent = airdrop.enabled
+    ? Math.max(0, Number(airdrop.supplyPercent || 0), Number(airdrop.requiredSupplyPercent || 0))
+    : 0;
+  const heldReservePercent = preallocationPercent + airdropReservePercent;
+  const supportSol = pools.reduce((sum, pool) => {
+    const support = pool?.support || {};
+    return support.mode === 'custom' ? sum + Math.max(0, Number(support.solValue || 0)) : sum;
+  }, 0);
+  const targetMarketCapUsd = Math.max(0, Number(topology.targetMarketCapUsd || config?.funding?.targetMarketCapUsd || 0));
+  const solUsd = Math.max(0, Number(estimate?.solUsd || 0));
+  const reserveUsd = targetMarketCapUsd > 0 ? targetMarketCapUsd * heldReservePercent / 100 : null;
+  const requiredSupportSol = reserveUsd != null && solUsd > 0 ? reserveUsd / solUsd : null;
+  const supportUsd = solUsd > 0 ? supportSol * solUsd : null;
+  const coverage = requiredSupportSol && requiredSupportSol > 0 ? supportSol / requiredSupportSol : null;
+  let state = 'pass';
+  let detail = 'No held reserve is configured.';
+
+  if (heldReservePercent > 0 && targetMarketCapUsd <= 0) {
+    state = 'warn';
+    detail = 'Target market cap is missing, so Trebuchet cannot size equal-value support backing for held reserves.';
+  } else if (heldReservePercent > 0 && supportSol <= 0) {
+    state = 'danger';
+    detail = 'Held reserve is configured without support liquidity backing.';
+  } else if (heldReservePercent > 0 && solUsd <= 0) {
+    state = 'warn';
+    detail = 'Held reserve has support liquidity configured, but no current funding-estimate SOL/USD rate is attached for coverage math.';
+  } else if (heldReservePercent > 0 && coverage != null && coverage < 0.995) {
+    state = 'danger';
+    detail = `Held reserve support is underbacked; add ${reportNumber(Math.max(0, requiredSupportSol - supportSol), { maximumFractionDigits: 3 })} SOL of support or lower held supply.`;
+  } else if (heldReservePercent > 0) {
+    detail = 'Held reserve is backed by equal-value support liquidity according to the current funding estimate.';
+  }
+
+  return {
+    state,
+    detail,
+    heldReservePercent: Number(heldReservePercent.toFixed(4)),
+    explicitPreallocationPercent: Number(preallocationPercent.toFixed(4)),
+    airdropReservePercent: Number(airdropReservePercent.toFixed(4)),
+    unallocatedReservePercent: Number(Math.max(0, Number(topology.reservePercent || 0)).toFixed(4)),
+    supportSol: Number(supportSol.toFixed(9)),
+    targetMarketCapUsd: targetMarketCapUsd > 0 ? Number(targetMarketCapUsd.toFixed(2)) : null,
+    solUsd: solUsd > 0 ? Number(solUsd.toFixed(6)) : null,
+    reserveUsd: reserveUsd == null ? null : Number(reserveUsd.toFixed(2)),
+    requiredSupportSol: requiredSupportSol == null ? null : Number(requiredSupportSol.toFixed(9)),
+    supportUsd: supportUsd == null ? null : Number(supportUsd.toFixed(2)),
+    coverage: coverage == null ? null : Number(coverage.toFixed(6)),
+    fundingEstimateMatched: Boolean(estimate && solUsd > 0),
+  };
+}
+
+const V2_FIELD_VERIFICATION_REQUIREMENTS = Object.freeze({
+  'live-proof': {
+    label: 'Live launch',
+    action: 'run-non-demo-v2-launch',
+  },
+  'report-proof': {
+    label: 'Report or dossier',
+    action: 'attach-terminal-report',
+  },
+  'classic-comparison': {
+    label: 'Classic artifact',
+    action: 'compare-classic-artifact',
+  },
+  audit: {
+    label: 'Proof audit',
+    action: 'resolve-proof-audit',
+  },
+  'replacement-criteria': {
+    label: 'Replacement criteria',
+    action: 'complete-replacement-criteria',
+  },
+});
+
+const V2_FIELD_VERIFICATION_CRITERIA = Object.freeze({
+  'demo-end-to-end': {
+    label: 'Full demo launch',
+    action: 'run-demo-launch',
+  },
+  'wallet-lifecycle': {
+    label: 'Wallet generation and recovery',
+    action: 'generate-or-unlock-wallet',
+  },
+  'vanity-options': {
+    label: 'Vanity CA options',
+    action: 'grind-or-select-vanity-ca',
+  },
+  'token-config-parity': {
+    label: 'Token configuration parity',
+    action: 'stage-launch-plan',
+  },
+  'charts-and-viewport': {
+    label: 'Charts and viewport smoke',
+    action: 'run-viewport-smoke',
+  },
+  'pool-config-parity': {
+    label: 'Pool configuration parity',
+    action: 'fix-pool-topology',
+  },
+  'funding-and-quote': {
+    label: 'Funding and quote readiness',
+    action: 'run-funding-and-quote-checks',
+  },
+  'held-reserve-backing': {
+    label: 'Held reserve backing',
+    action: 'back-held-reserve',
+  },
+  'run-and-resume': {
+    label: 'Run and resume safety',
+    action: 'load-or-resume-journal',
+  },
+  'sweep-report-proof': {
+    label: 'Sweep and report proof',
+    action: 'publish-report-and-sweep',
+  },
+  'classic-artifact-comparison': {
+    label: 'Classic artifact comparison',
+    action: 'compare-classic-artifact',
+  },
+  'proof-audit': {
+    label: 'Proof audit checklist',
+    action: 'resolve-proof-audit',
+  },
+});
+
+function fieldVerificationRequirementRecord(item = {}, index = 0) {
+  const id = String(item.id || `requirement-${index + 1}`);
+  const meta = V2_FIELD_VERIFICATION_REQUIREMENTS[id] || {};
+  return {
+    id,
+    label: meta.label || item.label || item.title || id,
+    pass: item.pass === true,
+    action: item.pass === true ? 'none' : (meta.action || 'review-blocker'),
+    detail: String(item.detail || item.evidence || '').trim() || (item.pass === true ? 'Proof attached.' : 'Evidence is missing.'),
+  };
+}
+
+function fieldVerificationCriterionRecord(item = {}, index = 0) {
+  const id = String(item.id || `criterion-${index + 1}`);
+  const meta = V2_FIELD_VERIFICATION_CRITERIA[id] || {};
+  return {
+    id,
+    label: meta.label || item.label || id,
+    pass: item.pass === true,
+    action: item.pass === true ? 'none' : (meta.action || 'review-replacement-criterion'),
+    detail: String(item.evidence || item.detail || '').trim() || (item.pass === true ? 'Evidence attached.' : 'Evidence is missing.'),
+  };
+}
+
+function buildV2FieldVerification({
+  proof = currentLaunchProof(),
+  config = currentLaunchConfig(),
+  audit = null,
+  retirementGate = null,
+} = {}) {
+  config = proofConfigForFingerprint(proof, config);
+  const expectedFingerprint = launchProofFingerprint(proof, config);
+  audit = reportParityAuditMatchesProof(audit, proof, config)
+    ? audit
+    : buildV2ReportParityAudit(proof, config);
+  const gateFingerprint = String(retirementGate?.proofFingerprint || '').trim();
+  retirementGate = gateFingerprint === expectedFingerprint
+    && classicRetirementGateMatchesProof(retirementGate, proof, audit, config)
+    ? retirementGate
+    : buildClassicRetirementGate(proof, audit, config);
+  const requirements = (Array.isArray(retirementGate.requirements) ? retirementGate.requirements : [])
+    .map(fieldVerificationRequirementRecord);
+  const replacementCriteria = (Array.isArray(retirementGate.replacementCriteria) ? retirementGate.replacementCriteria : [])
+    .map(fieldVerificationCriterionRecord);
+  const blockers = requirements.filter((item) => !item.pass);
+  const criteriaBlockers = replacementCriteria.filter((item) => !item.pass);
+  const firstBlocker = blockers[0] || criteriaBlockers[0] || null;
+  const passCount = requirements.filter((item) => item.pass).length;
+  const criteriaPassCount = replacementCriteria.filter((item) => item.pass).length;
+
+  return {
+    version: 1,
+    source: 'trebuchet-v2-field-verification',
+    generatedAt: new Date().toISOString(),
+    proofFingerprint: expectedFingerprint,
+    state: blockers.length || criteriaBlockers.length ? 'blocked' : 'pass',
+    ready: blockers.length === 0 && criteriaBlockers.length === 0,
+    passCount,
+    itemCount: requirements.length,
+    criteriaPassCount,
+    criteriaItemCount: replacementCriteria.length,
+    blockerCount: blockers.length,
+    criteriaBlockerCount: criteriaBlockers.length,
+    nextAction: firstBlocker?.action || 'none',
+    nextDetail: firstBlocker?.detail || 'Field verification is complete.',
+    requirements,
+    blockers,
+    replacementCriteria,
+    criteriaBlockers,
+  };
+}
+
+function classicRetirementGateMatchesProof(gate = null, proof = currentLaunchProof(), audit = null, config = currentLaunchConfig()) {
+  if (!gate || typeof gate !== 'object') return false;
+  config = proofConfigForFingerprint(proof, config);
+  const expected = buildClassicRetirementGate(proof, audit, config);
+  const requirements = Array.isArray(gate.requirements) ? gate.requirements : [];
+  const expectedRequirements = Array.isArray(expected.requirements) ? expected.requirements : [];
+  const criteria = Array.isArray(gate.replacementCriteria) ? gate.replacementCriteria : [];
+  const expectedCriteria = Array.isArray(expected.replacementCriteria) ? expected.replacementCriteria : [];
+  const sameRows = (rows, expectedRows) => (
+    rows.length === expectedRows.length
+    && rows.every((row, index) => (
+      String(row?.id || '').trim() === String(expectedRows[index]?.id || '').trim()
+      && row?.pass === expectedRows[index]?.pass
+      && generatedEvidenceTextMatches(row, expectedRows[index], ['label', 'detail', 'evidence'])
+    ))
+  );
+  return Boolean(
+    String(gate.source || '').trim() === 'trebuchet-v2-classic-retirement-gate'
+      && String(gate.proofFingerprint || '').trim() === launchProofFingerprint(proof, config)
+      && String(gate.state || '').trim() === String(expected.state || '').trim()
+      && Number(gate.passCount || 0) === Number(expected.passCount || 0)
+      && Number(gate.itemCount || 0) === Number(expected.itemCount || 0)
+      && Number(gate.criteriaPassCount || 0) === Number(expected.criteriaPassCount || 0)
+      && Number(gate.criteriaItemCount || 0) === Number(expected.criteriaItemCount || 0)
+      && sameRows(requirements, expectedRequirements)
+      && sameRows(criteria, expectedCriteria)
+  );
+}
+
+function fieldVerificationMatchesProof(packet = null, proof = currentLaunchProof(), config = currentLaunchConfig(), audit = null, retirementGate = null) {
+  if (!packet || typeof packet !== 'object') return false;
+  const expected = buildV2FieldVerification({
+    proof,
+    config,
+    audit,
+    retirementGate,
+  });
+  const requirements = Array.isArray(packet.requirements) ? packet.requirements : [];
+  const expectedRequirements = Array.isArray(expected.requirements) ? expected.requirements : [];
+  const criteria = Array.isArray(packet.replacementCriteria) ? packet.replacementCriteria : [];
+  const expectedCriteria = Array.isArray(expected.replacementCriteria) ? expected.replacementCriteria : [];
+  const sameRows = (rows, expectedRows) => (
+    rows.length === expectedRows.length
+    && rows.every((row, index) => (
+      String(row?.id || '').trim() === String(expectedRows[index]?.id || '').trim()
+      && row?.pass === expectedRows[index]?.pass
+      && generatedEvidenceTextMatches(row, expectedRows[index], ['label', 'action', 'detail'])
+    ))
+  );
+  return Boolean(
+    String(packet.source || '').trim() === 'trebuchet-v2-field-verification'
+      && String(packet.proofFingerprint || '').trim() === String(expected.proofFingerprint || '').trim()
+      && String(packet.state || '').trim() === String(expected.state || '').trim()
+      && packet.ready === expected.ready
+      && Number(packet.passCount || 0) === Number(expected.passCount || 0)
+      && Number(packet.itemCount || 0) === Number(expected.itemCount || 0)
+      && Number(packet.criteriaPassCount || 0) === Number(expected.criteriaPassCount || 0)
+      && Number(packet.criteriaItemCount || 0) === Number(expected.criteriaItemCount || 0)
+      && Number(packet.blockerCount || 0) === Number(expected.blockerCount || 0)
+      && Number(packet.criteriaBlockerCount || 0) === Number(expected.criteriaBlockerCount || 0)
+      && String(packet.nextAction || '').trim() === String(expected.nextAction || '').trim()
+      && sameRows(requirements, expectedRequirements)
+      && sameRows(criteria, expectedCriteria)
+  );
+}
+
+function buildV2LaunchReportData(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  config = proofConfigForFingerprint(proof, config);
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const recordedPoolIds = launchProofPoolIds(proof);
+  const token = proof?.token || {};
+  const reportPoolTopology = v2ReportPoolTopology(proof, config);
+  const targetMarketCapUsd = Number.isFinite(Number(reportPoolTopology?.targetMarketCapUsd ?? config?.funding?.targetMarketCapUsd))
+    ? Number(reportPoolTopology?.targetMarketCapUsd ?? config?.funding?.targetMarketCapUsd)
+    : null;
+  const transfer = proof?.transfer || null;
+  const finalSweep = finalSweepProofState(transfer);
+  const transferEvidenceHash = comparisonTransferEvidenceHash(transfer);
+  const reportPublish = currentReportPublish(proof, config, { allowTransient: true });
+  const localDossier = currentLocalDossier(proof, config);
+  const reportParityAudit = buildV2ReportParityAudit(proof, config);
+  const classicRetirementGate = buildClassicRetirementGate(proof, reportParityAudit, config);
+  const fieldVerification = buildV2FieldVerification({
+    proof,
+    config,
+    audit: reportParityAudit,
+    retirementGate: classicRetirementGate,
+  });
+  const classicReportComparison = normalizeClassicReportComparison(state.classicReportComparison).result;
+  const allocatedPercent = results.reduce((sum, pool) => {
+    const value = Number(pool?.supplyPercent);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+  const explicitPreallocationPercent = Number(reportPoolTopology?.preallocation?.supplyPercent || 0);
+  const airdropReservePercent = Number(reportPoolTopology?.airdrop?.supplyPercent || 0);
+  const unallocatedReservePercent = Number(
+    Number.isFinite(Number(reportPoolTopology?.reservePercent))
+      ? reportPoolTopology.reservePercent
+      : Math.max(0, 100 - allocatedPercent - explicitPreallocationPercent - airdropReservePercent),
+  );
+  return {
+    dataVersion: V2_REPORT_DATA_VERSION,
+    source: 'trebuchet-v2',
+    generatedAt: new Date().toISOString(),
+    launchConfig: exportableLaunchConfigSnapshot(config),
+    launchWallet: proof?.walletPublicKey || selectedLaunchWalletPublicKey() || null,
+    mint: token.mint || null,
+    name: token.name || config.token.name,
+    symbol: token.symbol || config.token.symbol,
+    decimals: token.decimals ?? config.token.decimals,
+    totalSupply: token.totalSupply ?? config.token.supply,
+    targetMarketCapUsd,
+    token: {
+      mint: token.mint || null,
+      tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+      metadataUri: token.metadataUri || null,
+      imageUri: token.imageUri || null,
+      authorities: {
+        mintAuthorityRenounced: token.mintAuthorityRenounced === true,
+        freezeAuthorityDisabled: token.freezeAuthorityDisabled === true,
+        metadataUpdateAuthorityRevoked: token.metadataUpdateAuthorityRevoked === true,
+        metadataImmutable: token.metadataImmutable === true,
+      },
+    },
+    supply: {
+      allocatedToPoolsPercent: Number(allocatedPercent.toFixed(4)),
+      preallocationPercent: Number(Math.max(0, 100 - allocatedPercent).toFixed(4)),
+      explicitPreallocationPercent: Number(Math.max(0, explicitPreallocationPercent).toFixed(4)),
+      airdropReservePercent: Number(Math.max(0, airdropReservePercent).toFixed(4)),
+      unallocatedReservePercent: Number(Math.max(0, unallocatedReservePercent).toFixed(4)),
+    },
+    heldReserveAudit: buildV2ReportHeldReserveAudit(config, currentClassicFundingEstimateForConfig(config)),
+    observedSpend: {
+      source: 'execution-ledger',
+      ...observedExecutionSpendSummary(),
+    },
+    plannedPools: buildV2ReportPoolPlan(config, results, proof),
+    pools: results.map((pool) => ({
+      poolId: pool.poolId || null,
+      quote: pool.quoteSymbol || pool.quoteToken || null,
+      quoteMint: pool.quoteMint || pool.quoteAddress || null,
+      supplyPercent: Number.isFinite(Number(pool.supplyPercent)) ? Number(pool.supplyPercent) : null,
+      createPoolTx: pool.txIds?.createPool || pool.createPoolTx || null,
+      allocationIndex: Number.isFinite(Number(pool.allocationIndex)) ? Number(pool.allocationIndex) : null,
+      tickSpacing: pool.tickSpacing ?? null,
+      initialPrice: pool.initialPrice ?? null,
+      launchedSide: pool.launchedSide || null,
+      mainPositions: Array.isArray(pool.mainPositions) ? pool.mainPositions.length : 0,
+      ladderPositions: Array.isArray(pool.ladderPositions) ? pool.ladderPositions.length : 0,
+      supportPositions: Array.isArray(pool.supportPositions) ? pool.supportPositions.length : 0,
+      hasBootstrap: Boolean(pool.bootstrap),
+      positions: [
+        ...(Array.isArray(pool.mainPositions) ? pool.mainPositions : []).map((position, index) => buildV2ReportPositionAuditRecord(position, 'main', {
+          sliceIndex: Number.isFinite(Number(position.sliceIndex)) ? Number(position.sliceIndex) : index,
+          sharePercent: v2ReportAuditNumber(position.sharePercent),
+          recipient: position.recipient || null,
+          transferredTo: position.transferredTo || null,
+        })),
+        ...(Array.isArray(pool.ladderPositions) ? pool.ladderPositions : []).map((position, index) => buildV2ReportPositionAuditRecord(position, 'ladder', {
+          bandIndex: Number.isFinite(Number(position.bandIndex)) ? Number(position.bandIndex) : index,
+          supplyPercent: v2ReportAuditNumber(position.supplyPercent),
+        })),
+        ...(Array.isArray(pool.supportPositions) ? pool.supportPositions : []).map((position, index) => buildV2ReportPositionAuditRecord(position, 'support', {
+          supportIndex: Number.isFinite(Number(position.supportIndex)) ? Number(position.supportIndex) : index,
+          depthPct: v2ReportAuditNumber(position.depthPct),
+          quoteRaw: position.quoteRaw || null,
+        })),
+        ...(pool.bootstrap ? [buildV2ReportPositionAuditRecord(pool.bootstrap, 'bootstrap', {
+          supplyPercent: v2ReportAuditNumber(pool.bootstrap.supplyPercent),
+        })] : []),
+      ],
+    })),
+    liquidity: {
+      poolCount: recordedPoolIds.length,
+      positionCount: proofPositions(results),
+      lockedPositionCount: Number(proof?.liquidity?.lockedPositionCount || proofLockedPositionCount(results)),
+      feeKeyCount: Number(proof?.liquidity?.feeKeyCount || proofFeeKeyCount(results)),
+    },
+    airdrop: {
+      plannedRecipientCount: Number(proof?.airdrop?.plannedRecipientCount || 0),
+      deliveredCount: Number(proof?.airdrop?.deliveredCount || 0),
+      failedCount: Number(proof?.airdrop?.failedCount || 0),
+      recipients: Array.isArray(proof?.airdrop?.recipients)
+        ? proof.airdrop.recipients
+        : Array.isArray(config?.poolTopology?.airdrop?.recipients)
+          ? config.poolTopology.airdrop.recipients
+          : [],
+      transferred: Array.isArray(proof?.airdrop?.transferred) ? proof.airdrop.transferred : [],
+      failed: Array.isArray(proof?.airdrop?.failed) ? proof.airdrop.failed : [],
+    },
+    airdropAudit: buildV2ReportAirdropAudit(proof, config),
+    reportPublish,
+    localDossier,
+    reportParityAudit,
+    classicRetirementGate,
+    fieldVerification,
+    classicReportComparison,
+    transfer,
+    transferEvidenceHash,
+    finalSweep: {
+      ...finalSweep,
+      destinationWallet: proofEffectiveDestination(proof, config),
+      transferEvidenceHash,
+    },
+    destinationWallet: proofEffectiveDestination(proof, config),
+    recoveryAudit: buildV2ReportRecoveryAudit(proof),
+    poolTopology: reportPoolTopology,
+    avatarCollection: config.avatarCollection,
+  };
+}
+
+function reportTimestamp(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value || 'Unknown');
+  const pad = (part) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function reportNumber(value, { maximumFractionDigits = 6, fallback = '-' } = {}) {
+  const number = Number(String(value ?? '').replace(/[$,\s]/g, ''));
+  if (!Number.isFinite(number)) return fallback;
+  return number.toLocaleString(undefined, { maximumFractionDigits });
+}
+
+function reportPercent(value, fallback = '-') {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return `${number.toFixed(2).replace(/\.?0+$/, '')}%`;
+}
+
+function reportExplorerUrl(value, kind = 'addr') {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  if (kind === 'url' || /^https?:\/\//i.test(text) || /^ar:\/\//i.test(text)) return text;
+  return kind === 'tx' ? solscanTxUrl(text) : solscanAccountUrl(text);
+}
+
+function renderV2ReportAddressRow(label, value, kind = 'addr') {
+  const text = String(value || '').trim();
+  if (!text) {
+    return `<div class="addr-row">
+      <span class="addr-label">${escapeHtml(label)}</span>
+      <span class="addr-value addr-missing">-</span>
+    </div>`;
+  }
+  const href = reportExplorerUrl(text, kind);
+  return `<div class="addr-row">
+    <span class="addr-label">${escapeHtml(label)}</span>
+    <code class="addr-value">${escapeHtml(text)}</code>
+    <button class="copy-btn" type="button" data-copy="${escapeHtml(text)}" title="Copy to clipboard">Copy</button>
+    ${href ? `<a class="explorer-link" href="${escapeHtml(href)}" target="_blank" rel="noopener" title="Open proof link">↗</a>` : ''}
+  </div>`;
+}
+
+function renderV2ReportFactRow(label, value) {
+  return `<div class="fact-row">
+    <span class="fact-label">${escapeHtml(label)}</span>
+    <span class="fact-value">${escapeHtml(String(value || '-'))}</span>
+  </div>`;
+}
+
+function renderV2ReportObservedSpend(observedSpend = {}) {
+  const summary = observedSpend && typeof observedSpend === 'object' ? observedSpend : {};
+  const outflowSol = Number(summary.outflowSol || 0);
+  const inflowSol = Number(summary.inflowSol || 0);
+  const measuredCount = Number(summary.measuredCount || 0);
+  const errorCount = Number(summary.errorCount || 0);
+  const hasMeasurements = measuredCount > 0;
+  const netOutflow = Math.max(0, outflowSol - inflowSol);
+  const measuredLabel = Number.isFinite(measuredCount) ? reportNumber(measuredCount, { maximumFractionDigits: 0 }) : '0';
+  const errorLabel = Number.isFinite(errorCount) ? reportNumber(errorCount, { maximumFractionDigits: 0 }) : '0';
+  const sourceLabel = summary.source === 'execution-ledger' ? 'Guarded execution ledger' : String(summary.source || 'Execution ledger');
+  const measurementNote = hasMeasurements
+    ? `Derived from ${measuredLabel} guarded wallet balance observation${measuredCount === 1 ? '' : 's'}.`
+    : 'No guarded wallet balance observations have been recorded in this local session yet.';
+  const gapNote = errorCount > 0
+    ? `${errorLabel} operation${errorCount === 1 ? '' : 's'} could not record a wallet balance delta.`
+    : 'No observation gaps recorded.';
+
+  return `<h3 class="subsection">Observed launch spend</h3>
+    <div class="pool-facts observed-spend-facts">
+      ${renderV2ReportFactRow('Observed SOL outflow', hasMeasurements ? `${reportNumber(outflowSol, { maximumFractionDigits: 6 })} SOL` : '-')}
+      ${renderV2ReportFactRow('Observed SOL inflow', hasMeasurements ? `${reportNumber(inflowSol, { maximumFractionDigits: 6 })} SOL` : '-')}
+      ${renderV2ReportFactRow('Net observed spend', hasMeasurements ? `${reportNumber(netOutflow, { maximumFractionDigits: 6 })} SOL` : '-')}
+      ${renderV2ReportFactRow('Measured operations', measuredLabel)}
+      ${renderV2ReportFactRow('Observation gaps', errorLabel)}
+      ${renderV2ReportFactRow('Source', sourceLabel)}
+    </div>
+    <p class="observed-spend-note">${escapeHtml(`${measurementNote} ${gapNote}`)}</p>`;
+}
+
+function v2ReportSweepTxCell(txId, fallback = '-') {
+  if (!txId) return escapeHtml(fallback);
+  return `<a href="${escapeHtml(solscanTxUrl(txId))}" target="_blank" rel="noopener">${escapeHtml(shortAddress(txId))}</a>`;
+}
+
+function v2ReportSweepAssetCell(value) {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  if (text.length >= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(text)) {
+    return `<a href="${escapeHtml(solscanAccountUrl(text))}" target="_blank" rel="noopener">${escapeHtml(shortAddress(text))}</a>`;
+  }
+  return escapeHtml(text);
+}
+
+function v2ReportSweepAmount(value, suffix = '') {
+  if (value == null || value === '') return '-';
+  const number = Number(value);
+  const label = Number.isFinite(number) ? reportNumber(number, { maximumFractionDigits: 9 }) : String(value);
+  return `${escapeHtml(label)}${suffix ? ` ${escapeHtml(suffix)}` : ''}`;
+}
+
+function buildV2ReportSweepTransferRows(transfer = {}) {
+  const rows = [];
+  const tokenTransfers = Array.isArray(transfer?.tokenSweep?.transferred) ? transfer.tokenSweep.transferred : [];
+  const nftTransfers = Array.isArray(transfer?.nftSweep?.transferred) ? transfer.nftSweep.transferred : [];
+  const tokenErrors = Array.isArray(transfer?.tokenTransferErrors)
+    ? transfer.tokenTransferErrors
+    : Array.isArray(transfer?.tokenSweep?.errors) ? transfer.tokenSweep.errors : [];
+  const nftErrors = Array.isArray(transfer?.nftTransferErrors)
+    ? transfer.nftTransferErrors
+    : Array.isArray(transfer?.nftSweep?.errors) ? transfer.nftSweep.errors : [];
+  const solAmount = transfer?.solSweep?.solTransferred ?? transfer?.solTransferred;
+  const solTx = transfer?.solSweep?.txId || transfer?.solTxId || transfer?.txId || transfer?.signature || null;
+
+  if (Number(solAmount || 0) > 0 || solTx) {
+    rows.push({
+      type: 'SOL',
+      asset: 'Native SOL',
+      amount: v2ReportSweepAmount(solAmount, 'SOL'),
+      tx: solTx,
+      status: solTx ? 'transferred' : 'amount recorded',
+    });
+  }
+
+  tokenTransfers.forEach((row) => {
+    rows.push({
+      type: 'Token',
+      asset: row.mint || row.tokenMint || '-',
+      amount: v2ReportSweepAmount(row.amount ?? row.amountUi ?? row.tokens ?? row.amountRaw),
+      tx: row.txId || row.signature || null,
+      status: 'transferred',
+    });
+  });
+
+  nftTransfers.forEach((row) => {
+    rows.push({
+      type: 'NFT',
+      asset: row.mint || row.nftMint || '-',
+      amount: row.programName || '1',
+      tx: row.txId || row.signature || null,
+      status: 'transferred',
+    });
+  });
+
+  if (transfer?.solSweepError) {
+    rows.push({
+      type: 'SOL',
+      asset: 'Native SOL',
+      amount: '-',
+      tx: null,
+      status: transfer.solSweepError,
+      error: true,
+    });
+  }
+
+  tokenErrors.forEach((row) => {
+    rows.push({
+      type: 'Token',
+      asset: row.mint || row.tokenMint || '-',
+      amount: '-',
+      tx: row.txId || row.signature || null,
+      status: row.error || row.reason || 'transfer failed',
+      error: true,
+    });
+  });
+
+  nftErrors.forEach((row) => {
+    rows.push({
+      type: 'NFT',
+      asset: row.mint || row.nftMint || '-',
+      amount: '-',
+      tx: row.txId || row.signature || null,
+      status: row.error || row.reason || 'transfer failed',
+      error: true,
+    });
+  });
+
+  if (!rows.length) {
+    return '<tr><td colspan="4">No final sweep transfer signatures recorded yet.</td></tr>';
+  }
+
+  return rows.map((row) => `<tr class="${row.error ? 'report-error-row' : ''}">
+    <td>${escapeHtml(row.type)}</td>
+    <td>${v2ReportSweepAssetCell(row.asset)}</td>
+    <td>${escapeHtml(row.amount == null || row.amount === '' ? '-' : String(row.amount))}</td>
+    <td>${row.tx ? `${v2ReportSweepTxCell(row.tx)}${row.error && row.status ? `<br><span class="sweep-error-reason">${escapeHtml(row.status)}</span>` : ''}` : escapeHtml(row.status || '-')}</td>
+  </tr>`).join('');
+}
+
+function v2ReportPositionList(pool = {}) {
+  return [
+    ...(Array.isArray(pool.mainPositions) ? pool.mainPositions : []),
+    ...(Array.isArray(pool.ladderPositions) ? pool.ladderPositions : []),
+    ...(Array.isArray(pool.supportPositions) ? pool.supportPositions : []),
+    ...(pool.bootstrap ? [pool.bootstrap] : []),
+  ];
+}
+
+function v2ReportLockSummary(results = []) {
+  let total = 0;
+  let locked = 0;
+  let transferred = 0;
+  let totalRecipient = 0;
+  results.forEach((pool) => {
+    const positions = v2ReportPositionList(pool);
+    total += positions.length;
+    locked += positions.filter((position) => position?.locked === true).length;
+    (Array.isArray(pool?.mainPositions) ? pool.mainPositions : []).forEach((position) => {
+      if (position?.recipient) {
+        totalRecipient += 1;
+        if (position.transferredTo || position.txIds?.transfer || position.transferTx) transferred += 1;
+      }
+    });
+  });
+  return {
+    total,
+    locked,
+    transferred,
+    totalRecipient,
+    allLocked: total > 0 && locked === total,
+  };
+}
+
+function renderV2ReportStatusBanner(results = []) {
+  const summary = v2ReportLockSummary(results);
+  if (!results.length) {
+    return `<div class="banner banner-warn">
+      <strong>No pool results captured.</strong>
+      This may indicate the launch did not reach the create-pool phase.
+    </div>`;
+  }
+  if (summary.allLocked) {
+    const transferIssue = summary.totalRecipient > 0 && summary.transferred < summary.totalRecipient;
+    return `<div class="banner banner-${transferIssue ? 'warn' : 'ok'}">
+      <strong>All ${summary.total} positions locked.</strong>
+      The liquidity is permanently committed via Burn &amp; Earn. Fees accrue to the Fee Key NFT holders.
+      ${transferIssue ? `<br><strong>${summary.transferred} / ${summary.totalRecipient} Fee Key NFTs reached their external recipients</strong> — the remaining ones should be forwarded manually from the destination wallet.` : ''}
+    </div>`;
+  }
+  return `<div class="banner banner-warn">
+    <strong>${summary.locked} / ${summary.total} positions locked.</strong>
+    Any unlocked position is still controlled by the launch wallet or the final sweep destination. Re-lock it through Raydium Burn &amp; Earn before treating the launch as complete.
+    ${summary.totalRecipient > 0 && summary.transferred < summary.totalRecipient ? `<br><strong>${summary.transferred} / ${summary.totalRecipient} Fee Key NFTs reached their external recipients.</strong>` : ''}
+  </div>`;
+}
+
+function renderV2ReportDemoBanner(proof, results = []) {
+  const tokenMint = String(proof?.token?.mint || '');
+  const demo = proof?.demo === true
+    || tokenMint.startsWith('Demo')
+    || results.some((pool) => String(pool?.poolId || '').startsWith('Demo'));
+  return demo
+    ? `<div class="banner banner-demo">
+        <strong>DEMO LAUNCH REPORT</strong>
+        Synthetic addresses, no real transactions. This report was generated in demo mode.
+      </div>`
+    : '';
+}
+
+function v2ClassicReportCss() {
+  return `
+    /* ============================================================
+       Theme - matches makesometokens.com
+       Parchment background, ink typography, engineering-manuscript
+       flourishes. Trebuchet MS body font is deliberately on-brand.
+       ============================================================ */
+    :root {
+      --parchment: #efe5cd;
+      --parchment-deep: #e6dab9;
+      --parchment-edge: #d6c8a3;
+      --ink: #1a1a1a;
+      --ink-soft: #3d3a32;
+      --ink-muted: #6b6657;
+      --rule: #1a1a1a;
+      --rule-soft: #b8ad8a;
+      --accent: #8a3a1a;
+      --ok: #2d5016;
+      --ok-bg: #d9e6c8;
+      --ok-edge: #8aa466;
+      --warn: #7a3a0a;
+      --warn-bg: #eed9b0;
+      --warn-edge: #c89860;
+      --mono: "Courier New", Courier, ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: "Trebuchet MS", "Lucida Sans Unicode", "Lucida Grande", Tahoma, sans-serif;
+      background: var(--parchment);
+      color: var(--ink);
+      line-height: 1.55;
+      font-size: 14.5px;
+      background-image:
+        radial-gradient(ellipse at center, transparent 0%, transparent 70%, rgba(110, 90, 50, 0.08) 100%),
+        repeating-linear-gradient(0deg, transparent 0 28px, rgba(110, 90, 50, 0.012) 28px 29px);
+      background-attachment: fixed;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 36px 32px 80px; }
+    a { color: var(--accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+    a:hover { text-decoration-thickness: 2px; }
+    code { font-family: var(--mono); font-size: 0.92em; }
+    .masthead {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding-bottom: 12px;
+      margin-bottom: 8px;
+      border-bottom: 2px solid var(--rule);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-soft);
+    }
+    .masthead-left { display: flex; align-items: center; gap: 18px; }
+    .masthead-brand { font-weight: 700; letter-spacing: 0.35em; color: var(--ink); }
+    .masthead-right { text-align: right; }
+    .title-block {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 32px;
+      align-items: center;
+      margin: 32px 0 24px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--rule-soft);
+    }
+    .hero-logo {
+      width: 120px;
+      height: 120px;
+      object-fit: contain;
+      border-radius: 50%;
+      background: var(--parchment-deep);
+      border: 2px solid var(--rule);
+      box-shadow: 0 2px 0 var(--rule-soft);
+    }
+    .hero-logo-placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--mono);
+      font-size: 34px;
+      font-weight: 700;
+      color: var(--ink-soft);
+      letter-spacing: 0.1em;
+    }
+    .doc-fig {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin: 0 0 8px;
+    }
+    .doc-title {
+      margin: 0;
+      font-size: 44px;
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+    .doc-title .doc-symbol {
+      color: var(--ink-muted);
+      font-weight: 500;
+      font-size: 0.6em;
+      letter-spacing: 0.02em;
+      margin-left: 0.4em;
+    }
+    .doc-subtitle {
+      margin: 10px 0 0;
+      color: var(--ink-soft);
+      font-size: 15px;
+      font-style: italic;
+      max-width: 60ch;
+    }
+    .enum-badge {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      padding: 3px 10px;
+      border: 1px solid var(--rule-soft);
+      background: var(--parchment-deep);
+      margin-bottom: 12px;
+    }
+    .section-rule {
+      margin: 36px 0 24px;
+      border: 0;
+      border-top: 2px solid var(--rule);
+      position: relative;
+    }
+    .section-rule::after {
+      content: "";
+      position: absolute;
+      top: 4px;
+      left: 0;
+      right: 0;
+      border-top: 1px solid var(--rule);
+    }
+    h2.section-title { margin: 0 0 18px; font-size: 22px; font-weight: 700; letter-spacing: 0; }
+    h3.subsection {
+      margin: 18px 0 8px;
+      font-family: var(--mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--ink-muted);
+      font-weight: 600;
+    }
+    .banner {
+      padding: 12px 16px;
+      margin: 20px 0 28px;
+      font-size: 13.5px;
+      border: 1px solid;
+      background: var(--parchment-deep);
+      position: relative;
+    }
+    .banner::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+    .banner strong { display: inline-block; margin-right: 6px; }
+    .banner-ok { border-color: var(--ok-edge); color: var(--ok); background: var(--ok-bg); }
+    .banner-ok::before { background: var(--ok); }
+    .banner-warn { border-color: var(--warn-edge); color: var(--warn); background: var(--warn-bg); }
+    .banner-warn::before { background: var(--warn); }
+    .banner-demo { border-color: #f0c040; color: #6b4b00; background: #fef3c7; }
+    .banner-demo::before { background: #f0c040; }
+    .token-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 0;
+      border: 1px solid var(--rule);
+      background: var(--parchment-deep);
+    }
+    .token-stat { padding: 14px 18px; border-right: 1px solid var(--rule-soft); min-width: 0; }
+    .token-stat:last-child { border-right: none; }
+    .token-stat-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--ink-muted);
+      margin-bottom: 6px;
+    }
+    .token-stat-value { font-size: 18px; font-weight: 700; letter-spacing: 0; overflow-wrap: anywhere; }
+    .tokenomics { display: grid; grid-template-columns: 320px 1fr; gap: 36px; align-items: start; margin-top: 16px; }
+    .tokenomics svg { display: block; margin: 0 auto; }
+    .donut-svg-wrap { width: 300px; aspect-ratio: 1; display: grid; place-items: center; margin: 0 auto; }
+    .donut-svg-wrap .tokenomics-svg { display: block; width: 100%; height: auto; }
+    .chart-caption {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      text-align: center;
+      color: var(--ink-muted);
+      margin-top: 4px;
+    }
+    .breakdown-list, .breakdown-pool { display: grid; gap: 6px; }
+    .breakdown-row, .breakdown-arc {
+      display: grid;
+      grid-template-columns: 14px 1fr auto auto;
+      gap: 10px;
+      align-items: center;
+      font-size: 13px;
+      padding: 3px 0;
+    }
+    .breakdown-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      border: 1px solid rgba(0,0,0,0.15);
+    }
+    .breakdown-row strong, .breakdown-row em, .breakdown-arc-share {
+      color: var(--ink-soft);
+      font-variant-numeric: tabular-nums;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-style: normal;
+      text-align: right;
+    }
+    .pool-section {
+      margin: 28px 0;
+      padding-top: 6px;
+      border-top: 2px solid var(--rule);
+    }
+    .pool-section-header, .pool-section-head { margin-bottom: 18px; }
+    .pool-title {
+      margin: 0 0 4px;
+      font-size: 24px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .pool-swatch {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border-radius: 2px;
+      border: 1px solid var(--rule);
+    }
+    .pool-meta {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+    }
+    .pool-addresses, .pool-facts {
+      margin-bottom: 20px;
+      padding: 14px 16px;
+      background: var(--parchment-deep);
+      border: 1px solid var(--rule-soft);
+    }
+    .pool-facts, .fact-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+    .slice-strip { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .slice-strip span { border: 1px solid var(--rule-soft); padding: 6px 8px; font-family: var(--mono); font-size: 12px; }
+    .slice-strip em { color: var(--ink-muted); font-style: normal; }
+    .pool-depth-chart {
+      margin: 12px 0 18px;
+      padding: 12px;
+      border: 1px solid var(--rule-soft);
+      background: var(--parchment-deep);
+    }
+    .pool-depth-chart svg { display: block; width: 100%; height: auto; }
+    .depth-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      margin-top: 8px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--ink-soft);
+    }
+    .depth-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .depth-legend i { width: 10px; height: 10px; border: 1px solid rgba(0,0,0,0.16); }
+    .depth-caption { margin: 8px 0 0; color: var(--ink-muted); font-size: 11.5px; line-height: 1.45; }
+    .positions-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+      gap: 14px;
+    }
+    .position-card {
+      background: var(--parchment-deep);
+      border: 1px solid var(--rule-soft);
+      padding: 14px 16px;
+      position: relative;
+      min-width: 0;
+    }
+    .position-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 8px;
+      height: 8px;
+      border-top: 2px solid var(--rule);
+      border-left: 2px solid var(--rule);
+    }
+    .position-card::after {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 8px;
+      height: 8px;
+      border-bottom: 2px solid var(--rule);
+      border-right: 2px solid var(--rule);
+    }
+    .position-header, .position-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px dashed var(--rule-soft);
+    }
+    .position-kind { font-weight: 700; font-size: 13.5px; letter-spacing: 0; }
+    .addr-row {
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr) auto auto;
+      gap: 8px;
+      align-items: center;
+      padding: 5px 0;
+      font-size: 12.5px;
+    }
+    .addr-label, .fact-label {
+      font-family: var(--mono);
+      color: var(--ink-muted);
+      font-size: 10.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .addr-value {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      background: var(--parchment);
+      padding: 4px 8px;
+      border: 1px solid var(--rule-soft);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .addr-missing { background: transparent; border: none; color: var(--ink-muted); font-style: italic; padding-left: 0; }
+    .copy-btn {
+      font: inherit;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      background: var(--parchment);
+      border: 1px solid var(--rule);
+      cursor: pointer;
+      color: var(--ink);
+      transition: all 120ms ease;
+    }
+    .copy-btn:hover { background: var(--ink); color: var(--parchment); }
+    .copy-btn.copied { background: var(--ok); border-color: var(--ok); color: var(--parchment); }
+    .explorer-link {
+      color: var(--ink-soft);
+      font-size: 14px;
+      text-decoration: none;
+      padding: 2px 6px;
+      border: 1px solid var(--rule-soft);
+      background: var(--parchment);
+      font-family: var(--mono);
+    }
+    .explorer-link:hover { background: var(--ink); color: var(--parchment); border-color: var(--ink); text-decoration: none; }
+    .fact-row {
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr);
+      gap: 8px;
+      padding: 4px 0;
+      font-size: 12.5px;
+    }
+    .fact-value { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      font-weight: 700;
+      border: 1px solid;
+    }
+    .badge-locked { background: var(--ok-bg); color: var(--ok); border-color: var(--ok-edge); }
+    .badge-unlocked, .badge-open, .badge-warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-edge); }
+    .report-table { width: 100%; border-collapse: collapse; margin: 10px 0 18px; font-size: 12px; }
+    .report-table th, .report-table td { border-bottom: 1px solid var(--rule-soft); padding: 8px; text-align: left; vertical-align: top; }
+    .report-overflow-row { color: var(--ink-muted); font-style: italic; background: var(--parchment-deep); }
+    .report-error-row { color: var(--warn); background: var(--warn-bg); }
+    .sweep-error-reason { display: inline-block; margin-top: 3px; color: var(--warn); }
+    .observed-spend-facts { margin-bottom: 8px; }
+    .observed-spend-note { margin: 0 0 22px; color: var(--ink-muted); font-size: 12.5px; line-height: 1.45; }
+    .held-reserve-audit { margin-top: 18px; }
+    .audit-note { margin: -8px 0 22px; color: var(--ink-muted); font-size: 12.5px; line-height: 1.45; }
+    .muted, .audit-copy p { color: var(--ink-muted); }
+    .doc-footer {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 2px solid var(--rule);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: var(--ink-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .doc-footer a {
+      color: var(--ink);
+      text-decoration: none;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .doc-footer a:hover { color: var(--accent); }
+    .toast {
+      position: fixed;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--ink);
+      color: var(--parchment);
+      padding: 10px 22px;
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      border: 2px solid var(--ink);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease, transform 180ms ease;
+      z-index: 1000;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    @media (max-width: 720px) {
+      .wrap { padding: 24px 14px 56px; }
+      .masthead, .masthead-left, .doc-footer, .position-header, .position-card-head { flex-direction: column; align-items: flex-start; }
+      .title-block, .tokenomics, .pool-facts, .fact-grid { grid-template-columns: 1fr; }
+      .positions-grid { grid-template-columns: 1fr; }
+      .addr-row, .fact-row { grid-template-columns: 1fr; align-items: start; }
+      .addr-value { white-space: normal; overflow-wrap: anywhere; }
+      .breakdown-row, .breakdown-arc { grid-template-columns: 14px minmax(0, 1fr) auto; }
+      .breakdown-row em { grid-column: 2 / -1; text-align: left; color: var(--ink-muted); }
+    }
+    @media print {
+      body { background: white; background-image: none; font-size: 11px; }
+      .wrap { padding: 0; max-width: none; }
+      .copy-btn { display: none; }
+      .positions-grid { grid-template-columns: 1fr; }
+      a { color: inherit; text-decoration: none; }
+      .pool-section, .position-card, .doc-footer { page-break-inside: avoid; }
+    }
+  `;
+}
+
+function v2ClassicReportScript() {
+  return `
+    document.body.addEventListener('click', function (event) {
+      var button = event.target.closest('.copy-btn');
+      if (!button) return;
+      var value = button.dataset.copy || '';
+      if (!value) return;
+      var showCopied = function () {
+        var original = button.textContent;
+        button.classList.add('copied');
+        button.textContent = 'Copied';
+        var toast = document.getElementById('toast');
+        if (toast) toast.classList.add('show');
+        setTimeout(function () {
+          button.classList.remove('copied');
+          button.textContent = original;
+          if (toast) toast.classList.remove('show');
+        }, 1400);
+      };
+      var legacyCopy = function () {
+        var input = document.createElement('textarea');
+        input.value = value;
+        input.setAttribute('readonly', '');
+        input.style.position = 'fixed';
+        input.style.opacity = '0';
+        document.body.appendChild(input);
+        input.select();
+        try { document.execCommand('copy'); } catch (error) {}
+        input.remove();
+        showCopied();
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(value).then(showCopied).catch(legacyCopy);
+      } else {
+        legacyCopy();
+      }
+    });
+  `;
+}
+
+function v2ReportPoolConfig(config, result, index) {
+  const pools = Array.isArray(config?.poolTopology?.pools) ? config.poolTopology.pools : [];
+  const allocationIndex = Number(result?.allocationIndex);
+  if (Number.isFinite(allocationIndex) && pools[allocationIndex]) return pools[allocationIndex];
+  return pools[index] || pools.find((pool) => (
+    String(pool.quoteSymbol || pool.quoteToken || '').toUpperCase()
+      === String(result?.quoteSymbol || result?.quoteToken || '').toUpperCase()
+  )) || null;
+}
+
+function v2ReportPoolFeeTierLabel(pool = {}, userPool = {}) {
+  const index = Math.floor(Number(pool.ammConfigIndex ?? userPool.ammConfigIndex));
+  const tickSpacing = numberOrNull(pool.tickSpacing ?? userPool.tickSpacing);
+  const tier = normalizeClmmFeeTiers(state.clmmFeeTiers).find((item) => item.index === index);
+  if (tier) {
+    const feePercent = Number(tier.tradeFeeRate || 0) / 10000;
+    return `${feePercent.toFixed(2)}% / spacing ${tickSpacing ?? tier.tickSpacing}`;
+  }
+  if (Number.isFinite(tickSpacing) && Number.isFinite(index)) return `index ${index} / spacing ${tickSpacing}`;
+  if (Number.isFinite(tickSpacing)) return `spacing ${tickSpacing}`;
+  if (Number.isFinite(index)) return `index ${index}`;
+  return 'not recorded';
+}
+
+function v2ReportMultiplierLabel(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return '0x';
+  if (number >= 1000) {
+    const compact = number >= 1000000 ? `${(number / 1000000).toFixed(1).replace(/\.0$/, '')}M` : `${Math.round(number / 1000)}k`;
+    return `${compact}x`;
+  }
+  const text = number < 10 ? number.toFixed(2).replace(/\.?0+$/, '') : String(Math.round(number));
+  return `${text}x`;
+}
+
+function v2ReportSimpleLadderBands(ladder = {}) {
+  const count = Math.floor(Number(ladder.bandCount || 0));
+  const ceiling = Number(ladder.ceilingMultiplier || CLASSIC_LADDER_DEFAULT_CEILING_MULTIPLIER);
+  if (count <= 0 || !Number.isFinite(ceiling) || ceiling <= 1) return [];
+  const supplyPercent = Number.isFinite(Number(ladder.supplyPercent)) ? Number(ladder.supplyPercent) : CLASSIC_LADDER_DEFAULT_SUPPLY_PERCENT;
+  const perBand = supplyPercent / count;
+  return Array.from({ length: count }, (_, index) => {
+    const lowerMultiplier = Math.pow(ceiling, index / count);
+    const upperMultiplier = Math.pow(ceiling, (index + 1) / count);
+    return {
+      supplyPercent: perBand,
+      lowerMultiplier: Number(lowerMultiplier.toFixed(4)),
+      upperMultiplier: Number(upperMultiplier.toFixed(4)),
+    };
+  });
+}
+
+function v2ReportLadderBands(pool = {}, userPool = {}) {
+  const ladder = userPool.ladder || {};
+  if (ladder.mode === 'manual' && Array.isArray(ladder.bands)) {
+    return ladder.bands.map((band) => ({
+      supplyPercent: Number(band.supplyPercent || 0),
+      lowerMultiplier: Number(band.lowerMultiplier || 1),
+      upperMultiplier: Number(band.upperMultiplier || 1),
+    })).filter((band) => band.supplyPercent > 0 && band.lowerMultiplier >= 1 && band.upperMultiplier > band.lowerMultiplier);
+  }
+  if (ladder.mode === 'simple') return v2ReportSimpleLadderBands(ladder);
+  return (Array.isArray(pool.ladderPositions) ? pool.ladderPositions : [])
+    .map((position) => ({
+      supplyPercent: Number(position.supplyPercent || 0),
+      lowerMultiplier: Number(position.lowerMultiplier || 1),
+      upperMultiplier: Number(position.upperMultiplier || 1),
+    }))
+    .filter((band) => band.supplyPercent > 0 && band.lowerMultiplier >= 1 && band.upperMultiplier > band.lowerMultiplier);
+}
+
+function renderV2ReportDepthChart(pool = {}, userPool = {}) {
+  const ladderBands = v2ReportLadderBands(pool, userPool);
+  const support = userPool.support || {};
+  const supportDepth = support.mode === 'custom' ? Number(support.depthPct || 0) : 0;
+  const supportSol = support.mode === 'custom' ? Number(support.solValue || 0) : 0;
+  if (!ladderBands.length && !(supportSol > 0 && supportDepth > 0)) return '';
+
+  const bootstrapPercent = userPool.bootstrap?.mode === 'custom' ? Number(userPool.bootstrap.supplyPercent || 0) : 0;
+  const ladderTotal = ladderBands.reduce((sum, band) => sum + Number(band.supplyPercent || 0), 0);
+  const widePercent = Math.max(0, 100 - bootstrapPercent - ladderTotal);
+  const ladderTop = ladderBands.length ? Math.max(...ladderBands.map((band) => Number(band.upperMultiplier || 1))) : 10;
+  const maxX = Math.max(10, ladderTop);
+  const supportLow = supportSol > 0 && supportDepth > 0 ? Math.max(0.05, 1 - supportDepth / 100) : 1;
+  const minX = supportLow < 1 ? supportLow : 1;
+  const logMin = Math.log(minX);
+  const logSpan = Math.max(0.0001, Math.log(maxX) - logMin);
+  const xFor = (value) => 34 + ((Math.log(Math.max(minX, Number(value) || minX)) - logMin) / logSpan) * 572;
+  const weights = [
+    widePercent,
+    ...ladderBands.map((band) => Number(band.supplyPercent || 0) * 1.4),
+    supportSol > 0 ? supportSol * 45 : 0,
+  ].filter((value) => value > 0);
+  const maxWeight = Math.max(1, ...weights);
+  const heightFor = (weight) => Math.max(12, Math.min(92, (Number(weight || 0) / maxWeight) * 92));
+  const baseY = 120;
+  const colors = ['#9a2424', '#2f6f5e', '#c0871f', '#3f5a8a', '#8a3f6a', '#5f6a2a', '#7a4a2a'];
+  const rect = ({ lo, hi, height, color, opacity = 0.9 }) => {
+    const x = xFor(lo);
+    const width = Math.max(2, xFor(hi) - x);
+    return `<rect x="${x.toFixed(1)}" y="${(baseY - height).toFixed(1)}" width="${width.toFixed(1)}" height="${height.toFixed(1)}" fill="${color}" fill-opacity="${opacity}"></rect>`;
+  };
+  const supportRect = supportSol > 0 && supportDepth > 0
+    ? rect({ lo: supportLow, hi: 1, height: heightFor(supportSol * 45), color: '#4f8a5a', opacity: 0.86 })
+    : '';
+  const wideRect = widePercent > 0
+    ? rect({ lo: 1, hi: maxX, height: heightFor(widePercent), color: '#d8c39a', opacity: 0.78 })
+    : '';
+  const ladderRects = ladderBands.map((band, index) => rect({
+    lo: band.lowerMultiplier,
+    hi: band.upperMultiplier,
+    height: heightFor(Number(band.supplyPercent || 0) * 1.4),
+    color: colors[index % colors.length],
+    opacity: 0.92,
+  })).join('');
+  const launchX = xFor(1);
+  const legend = [
+    widePercent > 0 ? `<span><i style="background:#d8c39a"></i><strong>Wide / main</strong>${reportPercent(widePercent)} pool share</span>` : '',
+    supportSol > 0 && supportDepth > 0 ? `<span><i style="background:#4f8a5a"></i><strong>Support wall</strong>${reportNumber(supportSol, { maximumFractionDigits: 3 })} SOL to -${reportNumber(supportDepth, { maximumFractionDigits: 0 })}%</span>` : '',
+    ...ladderBands.map((band, index) => `<span><i style="background:${colors[index % colors.length]}"></i><strong>Ladder ${index + 1}</strong>${reportPercent(band.supplyPercent)} · ${v2ReportMultiplierLabel(band.lowerMultiplier)}-${v2ReportMultiplierLabel(band.upperMultiplier)}</span>`),
+  ].filter(Boolean).join('');
+
+  return `<div class="pool-depth-chart">
+    <svg viewBox="0 0 640 158" width="100%" role="img" aria-label="Liquidity depth chart for ${escapeHtml(pool.quoteSymbol || userPool.quoteSymbol || userPool.quoteToken || 'pool')} pool">
+      <rect x="18" y="14" width="604" height="126" rx="0" fill="#f4ecd8" stroke="#c8bd9a"></rect>
+      <line x1="34" y1="${baseY}" x2="606" y2="${baseY}" stroke="#3a2d1e" stroke-opacity="0.35"></line>
+      ${supportRect}
+      ${wideRect}
+      ${ladderRects}
+      <line x1="${launchX.toFixed(1)}" y1="24" x2="${launchX.toFixed(1)}" y2="128" stroke="#1c1610" stroke-dasharray="4 4" stroke-opacity="0.5"></line>
+      <text x="${launchX.toFixed(1)}" y="144" text-anchor="middle" fill="#6f6658" font-family="JetBrains Mono, monospace" font-size="10">1x launch</text>
+      <text x="34" y="144" text-anchor="start" fill="#6f6658" font-family="JetBrains Mono, monospace" font-size="10">${escapeHtml(v2ReportMultiplierLabel(minX))}</text>
+      <text x="606" y="144" text-anchor="end" fill="#6f6658" font-family="JetBrains Mono, monospace" font-size="10">${escapeHtml(v2ReportMultiplierLabel(maxX))}</text>
+    </svg>
+    <div class="depth-legend">${legend}</div>
+    <p class="depth-caption">Liquidity depth sketch: taller bands slow price movement through that range. It is derived from the launch topology, not from live market data.</p>
+  </div>`;
+}
+
+function v2ReportPositionRows(pool = {}) {
+  const rows = [];
+  (Array.isArray(pool.mainPositions) ? pool.mainPositions : []).forEach((position, index) => {
+    rows.push({ title: `Main slice ${Number(position.sliceIndex ?? index) + 1}`, kind: 'main', position });
+  });
+  if (pool.bootstrap) rows.push({ title: 'Bootstrap quote-side', kind: 'bootstrap', position: pool.bootstrap });
+  (Array.isArray(pool.ladderPositions) ? pool.ladderPositions : []).forEach((position, index) => {
+    rows.push({ title: `Ladder band ${Number(position.bandIndex ?? index) + 1}`, kind: 'ladder', position });
+  });
+  (Array.isArray(pool.supportPositions) ? pool.supportPositions : []).forEach((position, index) => {
+    rows.push({ title: `Support band ${index + 1}`, kind: 'support', position });
+  });
+  return rows;
+}
+
+function v2ReportPositionRange(position = {}) {
+  const lower = Number(position.tickLower);
+  const upper = Number(position.tickUpper);
+  if (Number.isFinite(lower) && Number.isFinite(upper)) return `${lower} to ${upper}`;
+  const lowerMultiplier = Number(position.lowerMultiplier);
+  const upperMultiplier = Number(position.upperMultiplier);
+  if (Number.isFinite(lowerMultiplier) && Number.isFinite(upperMultiplier)) {
+    return `${lowerMultiplier}x to ${upperMultiplier}x`;
+  }
+  return 'not recorded';
+}
+
+function renderV2ReportPositionCard(entry) {
+  const position = entry.position || {};
+  const status = position.locked ? 'Locked' : position.txIds?.open || position.openTx ? 'Opened' : 'Planned';
+  const badgeClass = position.locked ? 'badge-locked' : status === 'Opened' ? 'badge-open' : 'badge-warn';
+  const positionMint = position.positionNftMint || position.nftMint || position.positionMint || null;
+  const feeKeyMint = position.feeKeyNftMint || position.feeKeyMint || null;
+  const configuredRecipient = position.recipient || null;
+  const deliveredRecipient = position.transferredTo || null;
+  const recipient = deliveredRecipient || configuredRecipient || null;
+  const transferTx = position.txIds?.transfer || position.transferTx;
+  const share = Number.isFinite(Number(position.sharePercent)) ? reportPercent(position.sharePercent) : null;
+  const depth = Number.isFinite(Number(position.depthPct)) ? `${reportPercent(position.depthPct)} depth` : null;
+  return `<article class="position-card ${escapeHtml(entry.kind)}">
+    <div class="position-header">
+      <span class="position-kind">${escapeHtml(entry.title)}</span>
+      <span class="badge ${badgeClass}">${escapeHtml(status)}</span>
+    </div>
+    <div class="fact-grid">
+      ${renderV2ReportFactRow('Range', v2ReportPositionRange(position))}
+      ${share ? renderV2ReportFactRow('Supply share', share) : ''}
+      ${depth ? renderV2ReportFactRow('Support', depth) : ''}
+      ${recipient ? renderV2ReportFactRow(position.transferredTo ? 'Fee Key sent to' : 'Fee Key recipient', shortAddress(recipient)) : ''}
+    </div>
+    ${renderV2ReportAddressRow('Position NFT', positionMint)}
+    ${renderV2ReportAddressRow('Fee Key NFT', feeKeyMint)}
+    ${configuredRecipient ? renderV2ReportAddressRow('Fee Key recipient', configuredRecipient) : ''}
+    ${configuredRecipient || deliveredRecipient || transferTx ? renderV2ReportAddressRow('Fee Key delivered to', deliveredRecipient) : ''}
+    ${renderV2ReportAddressRow('Open TX', position.txIds?.open || position.openTx, 'tx')}
+    ${renderV2ReportAddressRow('Lock TX', position.txIds?.lock || position.lockTx, 'tx')}
+    ${renderV2ReportAddressRow('Fee Key transfer TX', transferTx, 'tx')}
+  </article>`;
+}
+
+function buildV2ReportHeldReserveAuditSection(audit = {}) {
+  const state = audit?.state || 'warn';
+  const badgeClass = state === 'danger' ? 'badge-danger' : state === 'pass' ? 'badge-ok' : 'badge-warn';
+  const coverage = Number(audit?.coverage);
+  return `<div class="held-reserve-audit">
+    <h3 class="subsection">Held reserve audit <span class="badge ${badgeClass}">${escapeHtml(state)}</span></h3>
+    <div class="pool-facts">
+      ${renderV2ReportFactRow('Held reserve', reportPercent(audit?.heldReservePercent))}
+      ${renderV2ReportFactRow('Explicit prealloc', reportPercent(audit?.explicitPreallocationPercent))}
+      ${renderV2ReportFactRow('Airdrop reserve', reportPercent(audit?.airdropReservePercent))}
+      ${renderV2ReportFactRow('Unallocated reserve', reportPercent(audit?.unallocatedReservePercent))}
+      ${renderV2ReportFactRow('Configured support', audit?.supportSol != null ? `${reportNumber(audit.supportSol, { maximumFractionDigits: 3 })} SOL` : '-')}
+      ${renderV2ReportFactRow('Required support', audit?.requiredSupportSol != null ? `${reportNumber(audit.requiredSupportSol, { maximumFractionDigits: 3 })} SOL` : '-')}
+      ${renderV2ReportFactRow('Coverage', Number.isFinite(coverage) ? reportPercent(coverage * 100) : '-')}
+      ${renderV2ReportFactRow('Estimate rate', audit?.solUsd ? `$${reportNumber(audit.solUsd, { maximumFractionDigits: 2 })} / SOL` : 'not attached')}
+    </div>
+    <p class="audit-note">${escapeHtml(audit?.detail || 'Held reserve backing was not evaluated.')}</p>
+  </div>`;
+}
+
+function buildV2ReportTokenomics(data, config, results) {
+  const items = buildV2TokenomicsItems(config, results);
+  const placedPercent = items.reduce((sum, item) => sum + (Number(item.percent) || 0), 0);
+  const supply = Number(String(data.totalSupply ?? config.token.supply ?? '').replace(/[$,\s]/g, ''));
+  const logoDataUrl = String(config?.token?.logo?.dataUrl || '');
+  const logoSrc = data?.token?.imageUri || (logoDataUrl.length > 0 && logoDataUrl.length <= 60000 ? logoDataUrl : null);
+  const chartSvg = renderV2TokenomicsDonutSvg(items, {
+    size: 220,
+    centerLabel: reportPercent(placedPercent),
+    centerDetail: 'placed',
+    logoSrc,
+  });
+  const rows = items.map((item) => {
+    const amount = Number.isFinite(supply) ? supply * (item.percent / 100) : null;
+    return `<div class="breakdown-row">
+      <span class="breakdown-swatch" style="background:${escapeHtml(item.color)}"></span>
+      <span>${escapeHtml(item.label)}</span>
+      <strong>${reportPercent(item.percent)}</strong>
+      <em>${amount == null ? '-' : reportNumber(amount, { maximumFractionDigits: 0 })}</em>
+    </div>`;
+  }).join('');
+
+  return `<div class="tokenomics">
+    <div>
+      <div class="donut-svg-wrap">${chartSvg}</div>
+      <div class="chart-caption">FIG. 02 · Token supply across launch surfaces</div>
+    </div>
+    <div class="breakdown-list">${rows}</div>
+  </div>
+  ${buildV2ReportHeldReserveAuditSection(data.heldReserveAudit)}`;
+}
+
+function buildV2ReportPoolSections(results, config) {
+  const topologyPools = Array.isArray(config?.poolTopology?.pools) ? config.poolTopology.pools : [];
+  if (!results.length && !topologyPools.length) {
+    return '<p class="muted">No liquidity pool proof or planned topology is recorded yet.</p>';
+  }
+
+  const rows = results.length ? results : topologyPools.map((pool, index) => ({
+    allocationIndex: index,
+    quoteSymbol: pool.quoteSymbol || pool.quoteToken,
+    supplyPercent: pool.supplyPercent,
+    plannedOnly: true,
+    mainPositions: [],
+    ladderPositions: [],
+    supportPositions: [],
+    bootstrap: null,
+    txIds: {},
+  }));
+  const colorItems = buildV2TokenomicsItems(config, rows);
+
+  return rows.map((pool, index) => {
+    const userPool = v2ReportPoolConfig(config, pool, index) || {};
+    const quote = pool.quoteSymbol || userPool.quoteSymbol || userPool.quoteToken || 'quote';
+    const positionRows = v2ReportPositionRows(pool);
+    const distribution = Array.isArray(userPool.distribution) ? userPool.distribution : [];
+    const ladder = userPool.ladder || {};
+    const support = userPool.support || {};
+    const feeTierSummary = v2ReportPoolFeeTierLabel(pool, userPool);
+    const distributionRows = distribution.length
+      ? distribution.map((slice, sliceIndex) => `<span>${escapeHtml(`Slice ${sliceIndex + 1}`)} <strong>${reportPercent(slice.sharePercent)}</strong>${slice.recipient ? ` <em>${escapeHtml(shortAddress(slice.recipient))}</em>` : ''}</span>`).join('')
+      : '<span>Main liquidity <strong>100%</strong></span>';
+    const poolEnum = String(index + 1).padStart(2, '0');
+    return `<section class="pool-section">
+      <div class="pool-section-header">
+        <div class="enum-badge">POOL · ${poolEnum}</div>
+        <h2 class="pool-title">
+          <span class="pool-swatch" style="background:${escapeHtml(colorItems[index % Math.max(1, colorItems.length)]?.color || '#8a3a1a')}"></span>
+          ${escapeHtml(quote)} pool
+        </h2>
+        <div class="pool-meta">${escapeHtml(reportPercent(pool.supplyPercent ?? userPool.supplyPercent))} of token supply · Fee tier ${escapeHtml(feeTierSummary)} · ${pool.plannedOnly ? 'Planned topology' : 'Recorded on-chain'}</div>
+      </div>
+      <div class="pool-facts">
+        ${renderV2ReportFactRow('Supply allocation', reportPercent(pool.supplyPercent ?? userPool.supplyPercent))}
+        ${renderV2ReportFactRow('Fee tier index', pool.ammConfigIndex ?? userPool.ammConfigIndex ?? '-')}
+        ${renderV2ReportFactRow('Tick spacing', pool.tickSpacing ?? '-')}
+        ${renderV2ReportFactRow('Initial price', pool.initialPrice ?? '-')}
+        ${renderV2ReportFactRow('Launch side', pool.launchedSide || '-')}
+        ${renderV2ReportFactRow('Ladder', ladder.mode === 'manual' ? `${(ladder.bands || []).length} manual bands` : ladder.mode === 'simple' ? `${ladder.bandCount || 0} bands` : 'off')}
+        ${renderV2ReportFactRow('Support', support.mode === 'custom' ? `${reportNumber(support.solValue, { maximumFractionDigits: 3 })} SOL at ${reportPercent(support.depthPct)} depth` : 'off')}
+      </div>
+      <div class="slice-strip">${distributionRows}</div>
+      <div class="pool-addresses">
+        ${renderV2ReportAddressRow('Pool ID', pool.poolId)}
+        ${renderV2ReportAddressRow('Quote token mint', pool.quoteAddress || pool.quoteMint || userPool.quoteMint)}
+        ${renderV2ReportAddressRow('Create-pool TX', pool.txIds?.createPool || pool.createPoolTx, 'tx')}
+      </div>
+      ${renderV2ReportDepthChart(pool, userPool)}
+      <div class="positions-grid">
+        ${positionRows.length ? positionRows.map(renderV2ReportPositionCard).join('') : '<p class="muted">No position records have been written for this pool yet.</p>'}
+      </div>
+    </section>`;
+  }).join('');
+}
+
+function buildV2ReportAirdropSection(proof, config) {
+  const audit = buildV2ReportAirdropAudit(proof, config);
+  const sampleLimit = 100;
+  const overflowRowHtml = (hidden, noun) => (hidden > 0
+    ? `<tr><td colspan="3" class="report-overflow-row">&hellip;and ${Number(hidden).toLocaleString()} more ${escapeHtml(noun)} - full row evidence is retained in the JSON proof or hash-bound embedded proof.</td></tr>`
+    : '');
+  const planned = Number(proof?.airdrop?.plannedRecipientCount || config?.poolTopology?.airdrop?.recipientCount || 0);
+  const delivered = Number(proof?.airdrop?.deliveredCount || 0);
+  const failed = Number(proof?.airdrop?.failedCount || 0);
+  const transferred = Array.isArray(proof?.airdrop?.transferred) ? proof.airdrop.transferred : [];
+  const failedRows = Array.isArray(proof?.airdrop?.failed) ? proof.airdrop.failed : [];
+  const plannedRows = Array.isArray(config?.poolTopology?.airdrop?.recipients) ? config.poolTopology.airdrop.recipients : [];
+  const deliveredRows = transferred.length
+    ? transferred.slice(0, sampleLimit).map((row) => `<tr>
+      <td>${escapeHtml(row.wallet || row.recipient || '-')}</td>
+      <td>${escapeHtml(String(row.tokens ?? row.amount ?? '-'))}</td>
+      <td>${row.txId || row.signature ? `<a href="${escapeHtml(solscanTxUrl(row.txId || row.signature))}" target="_blank" rel="noopener">${escapeHtml(shortAddress(row.txId || row.signature))}</a>` : '-'}</td>
+    </tr>`).join('') + overflowRowHtml(transferred.length - sampleLimit, 'delivered recipients')
+    : '<tr><td colspan="3">No delivered airdrop transfers recorded.</td></tr>';
+  const failedTableRows = failedRows.length
+    ? failedRows.slice(0, sampleLimit).map((row) => `<tr>
+      <td>${escapeHtml(row.wallet || '-')}</td>
+      <td>${escapeHtml(String(row.tokens ?? '-'))}</td>
+      <td>${escapeHtml(row.error || row.reason || 'failed')}</td>
+    </tr>`).join('') + overflowRowHtml(failedRows.length - sampleLimit, 'failed recipients')
+    : '<tr><td colspan="3">No failed airdrop recipients recorded.</td></tr>';
+  const plannedTableRows = !transferred.length && plannedRows.length
+    ? plannedRows.slice(0, sampleLimit).map((row) => `<tr>
+      <td>${escapeHtml(row.wallet || '-')}</td>
+      <td>${escapeHtml(String(row.tokens ?? '-'))}</td>
+      <td>pending</td>
+    </tr>`).join('') + overflowRowHtml(plannedRows.length - sampleLimit, 'pending recipients')
+    : '';
+
+  return `<hr class="section-rule">
+    <div class="enum-badge">[ 04 ] &nbsp; Airdrop</div>
+    <h2 class="section-title">Airdrop distribution</h2>
+    <div class="token-summary-grid">
+      <div class="token-stat"><div class="token-stat-label">Planned</div><div class="token-stat-value">${planned}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Delivered</div><div class="token-stat-value">${delivered}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Failed</div><div class="token-stat-value">${failed}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Budget</div><div class="token-stat-value">${reportPercent(audit.effectiveSupplyPercent)}</div></div>
+    </div>
+    <h3 class="subsection">Budget and source</h3>
+    <div class="pool-facts">
+      ${renderV2ReportFactRow('Source', audit.source)}
+      ${renderV2ReportFactRow('Requested budget', reportPercent(audit.requestedSupplyPercent))}
+      ${renderV2ReportFactRow('Required budget', reportPercent(audit.requiredSupplyPercent))}
+      ${renderV2ReportFactRow('Budget tokens', reportNumber(audit.budgetTokens, { maximumFractionDigits: 0 }))}
+      ${renderV2ReportFactRow('Explicit CSV tokens', reportNumber(audit.explicitTokens, { maximumFractionDigits: 0 }))}
+      ${renderV2ReportFactRow('Remaining budget', reportNumber(audit.remainingTokens, { maximumFractionDigits: 0 }))}
+      ${renderV2ReportFactRow('Execution estimate', `${reportNumber(audit.executionCostSol, { maximumFractionDigits: 6 })} SOL`)}
+      ${renderV2ReportFactRow('Budget warning', audit.budgetError || 'clear')}
+    </div>
+    <h3 class="subsection">${plannedTableRows ? 'Pending recipients' : 'Delivered recipients'}</h3>
+    <table class="report-table">
+      <thead><tr><th>Wallet</th><th>Tokens</th><th>${plannedTableRows ? 'State' : 'Tx'}</th></tr></thead>
+      <tbody>${plannedTableRows || deliveredRows}</tbody>
+    </table>
+    <h3 class="subsection">Failed recipients</h3>
+    <table class="report-table">
+      <thead><tr><th>Wallet</th><th>Tokens</th><th>Reason</th></tr></thead>
+      <tbody>${failedTableRows}</tbody>
+    </table>`;
+}
+
+function buildV2ReportRecoverySection(data) {
+  const audit = data?.recoveryAudit || buildV2ReportRecoveryAudit();
+  const journals = Array.isArray(audit.relatedJournals) ? audit.relatedJournals : [];
+  const journalRows = journals.length
+    ? journals.map((journal) => `<tr>
+      <td>${escapeHtml(journal.id || '-')}</td>
+      <td>${escapeHtml(`${journal.status || '-'} / ${journal.stage || '-'}`)}</td>
+      <td>${escapeHtml(`${journal.poolProgress?.recordedPools || 0}/${journal.poolProgress?.plannedPools || 0}`)}</td>
+      <td>${escapeHtml(journal.resumePlan?.manualRecoveryRequired ? 'manual recovery' : journal.resumePlan?.title || 'review')}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="4">No related recovery journals are loaded in this local session.</td></tr>';
+
+  return `<hr class="section-rule">
+    <div class="enum-badge">[ 06 ] &nbsp; Recovery</div>
+    <h2 class="section-title">Launch journal and recovery state</h2>
+    <div class="token-summary-grid">
+      <div class="token-stat"><div class="token-stat-label">Proof stage</div><div class="token-stat-value">${escapeHtml(audit.stage || 'draft')}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Active journals</div><div class="token-stat-value">${audit.activeJournalCount || 0}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Failed journals</div><div class="token-stat-value">${audit.failedJournalCount || 0}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Pending wallets</div><div class="token-stat-value">${audit.pendingWalletCount || 0}</div></div>
+    </div>
+    ${renderV2ReportFactRow('Journal ID', audit.journalId || '-')}
+    ${renderV2ReportFactRow('Proof status', audit.status || 'draft')}
+    ${renderV2ReportFactRow('Last checkpoint', audit.updatedAt ? reportTimestamp(audit.updatedAt) : '-')}
+    <h3 class="subsection">Resume evidence</h3>
+    <table class="report-table">
+      <thead><tr><th>Journal</th><th>Status / stage</th><th>Pools</th><th>Resume plan</th></tr></thead>
+      <tbody>${journalRows}</tbody>
+    </table>`;
+}
+
+function buildV2ReportFieldVerificationSection(fieldVerification = null) {
+  if (!fieldVerification || typeof fieldVerification !== 'object') return '';
+  const requirements = Array.isArray(fieldVerification.requirements) ? fieldVerification.requirements : [];
+  const criteriaBlockers = Array.isArray(fieldVerification.criteriaBlockers) ? fieldVerification.criteriaBlockers : [];
+  const rows = requirements.length
+    ? requirements.map((item) => `<tr>
+      <td>${escapeHtml(item.label || item.id || '-')}</td>
+      <td>${escapeHtml(item.pass ? 'pass' : 'blocked')}</td>
+      <td>${escapeHtml(item.action || (item.pass ? 'none' : 'review-blocker'))}</td>
+      <td>${escapeHtml(item.detail || '-')}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="4">No field verification rows were generated.</td></tr>';
+  const criteriaRows = criteriaBlockers.length
+    ? `<h3 class="subsection">Replacement blockers</h3>
+      <table class="report-table">
+        <thead><tr><th>Criterion</th><th>Action</th><th>Evidence</th></tr></thead>
+        <tbody>${criteriaBlockers.map((item) => `<tr>
+          <td>${escapeHtml(item.label || item.id || '-')}</td>
+          <td>${escapeHtml(item.action || 'review-replacement-criterion')}</td>
+          <td>${escapeHtml(item.detail || '-')}</td>
+        </tr>`).join('')}</tbody>
+      </table>`
+    : '';
+  const criteriaBlockerCount = Number(fieldVerification.criteriaBlockerCount || criteriaBlockers.length || 0);
+  const state = fieldVerification.ready ? 'ok' : 'warn';
+  return `<h3 class="subsection">Field verification packet</h3>
+    <div class="banner banner-${state}">
+      <strong>${escapeHtml(fieldVerification.ready ? 'Field parity packet complete.' : 'Field parity packet blocked.')}</strong>
+      ${escapeHtml(`${fieldVerification.passCount || 0}/${fieldVerification.itemCount || requirements.length || 0} field checks passing · ${criteriaBlockerCount} criterion blocker${criteriaBlockerCount === 1 ? '' : 's'} · next action: ${fieldVerification.nextAction || 'none'}.`)}
+    </div>
+    <div class="pool-facts">
+      ${renderV2ReportFactRow('Packet version', fieldVerification.version || 1)}
+      ${renderV2ReportFactRow('Proof fingerprint', fieldVerification.proofFingerprint || '-')}
+      ${renderV2ReportFactRow('Replacement criteria', `${fieldVerification.criteriaPassCount || 0}/${fieldVerification.criteriaItemCount || 0}`)}
+      ${renderV2ReportFactRow('Criterion blockers', criteriaBlockerCount)}
+      ${renderV2ReportFactRow('Next detail', fieldVerification.nextDetail || '-')}
+    </div>
+    <table class="report-table">
+      <thead><tr><th>Field check</th><th>State</th><th>Action</th><th>Evidence</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${criteriaRows}`;
+}
+
+function buildV2ReportParityAuditSection(audit = buildV2ReportParityAudit(), retirementGate = null, fieldVerification = null) {
+  const items = Array.isArray(audit?.items) ? audit.items : [];
+  const rows = items.length
+    ? items.map((item) => `<tr>
+      <td>${escapeHtml(item.label)}</td>
+      <td>${escapeHtml(item.state)}</td>
+      <td>${escapeHtml(item.detail)}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="3">No parity audit rows were generated.</td></tr>';
+  const gate = retirementGate || buildClassicRetirementGate(currentLaunchProof(), audit);
+  const gateRows = Array.isArray(gate?.requirements)
+    ? gate.requirements.map((item) => `<tr>
+      <td>${escapeHtml(item.id || '-')}</td>
+      <td>${escapeHtml(item.pass ? 'pass' : 'blocked')}</td>
+      <td>${escapeHtml(item.detail || '-')}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="3">No Classic retirement gate rows were generated.</td></tr>';
+  const criteria = Array.isArray(gate?.replacementCriteria) ? gate.replacementCriteria : [];
+  const criteriaRows = criteria.length
+    ? criteria.map((item) => `<tr>
+      <td>${escapeHtml(item.label || item.id || '-')}</td>
+      <td>${escapeHtml(item.pass ? 'pass' : 'needs proof')}</td>
+      <td>${escapeHtml(`${item.evidence || '-'} ${item.detail || ''}`.trim())}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="3">No replacement criteria audit rows were generated.</td></tr>';
+  return `<hr class="section-rule">
+    <div class="enum-badge">[ 07 ] &nbsp; Classic Parity</div>
+    <h2 class="section-title">Classic report parity audit</h2>
+    <div class="banner banner-${gate?.state === 'pass' ? 'ok' : 'warn'}">
+      <strong>${escapeHtml(gate?.state === 'pass' ? 'Classic retirement ready.' : 'Classic retirement blocked.')}</strong>
+      ${escapeHtml(`${gate?.passCount || 0}/${gate?.itemCount || 0} retirement checks passing · ${gate?.detail || 'Review live proof before replacing Classic.'}`)}
+    </div>
+    <h3 class="subsection">Classic retirement gate</h3>
+    <table class="report-table">
+      <thead><tr><th>Requirement</th><th>State</th><th>Evidence</th></tr></thead>
+      <tbody>${gateRows}</tbody>
+    </table>
+    ${buildV2ReportFieldVerificationSection(fieldVerification)}
+    <h3 class="subsection">Replacement criteria</h3>
+    <table class="report-table">
+      <thead><tr><th>Criterion</th><th>State</th><th>Evidence</th></tr></thead>
+      <tbody>${criteriaRows}</tbody>
+    </table>
+    <div class="banner banner-${audit?.status === 'pass' ? 'ok' : 'warn'}">
+      <strong>${escapeHtml(audit?.status === 'pass' ? 'Classic evidence complete.' : 'Review before retiring Classic.')}</strong>
+      ${escapeHtml(`${audit?.score || 0}% complete · ${audit?.passCount || 0}/${audit?.itemCount || items.length || 0} checks passing · ${audit?.missingCount || 0} missing · ${audit?.warnCount || 0} warning${Number(audit?.warnCount || 0) === 1 ? '' : 's'}.`)}
+    </div>
+    <div class="token-summary-grid">
+      <div class="token-stat"><div class="token-stat-label">Pass</div><div class="token-stat-value">${Number(audit?.passCount || 0)}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Warnings</div><div class="token-stat-value">${Number(audit?.warnCount || 0)}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Missing</div><div class="token-stat-value">${Number(audit?.missingCount || 0)}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Score</div><div class="token-stat-value">${Number(audit?.score || 0)}%</div></div>
+    </div>
+    <h3 class="subsection">Evidence checklist</h3>
+    <table class="report-table">
+      <thead><tr><th>Classic field</th><th>State</th><th>Evidence</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function buildV2LaunchReportHtml({ proof = currentLaunchProof(), config = currentLaunchConfig(), launchData = null } = {}) {
+  config = proofConfigForFingerprint(proof, config);
+  const rawData = launchData || buildV2LaunchReportData(proof, config);
+  const parityBundle = proofExportParityBundle(proof, config, rawData);
+  const data = rawData && typeof rawData === 'object'
+    ? { ...rawData, ...parityBundle }
+    : rawData;
+  const embeddedProofPayload = buildV2ProofExportPayload({
+    proof,
+    config,
+    launchData: data,
+    compactForHtml: true,
+  });
+  const token = proof?.token || {};
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const report = currentReportPublish(proof, config);
+  const reportUri = report?.htmlUri || report?.jsonUri || null;
+  const name = token.name || config.token.name || data.name || 'Untitled token';
+  const symbol = token.symbol || config.token.symbol || data.symbol || 'TOK';
+  const generatedAt = data.generatedAt || new Date().toISOString();
+  const authorityRows = [
+    ['Mint authority', token.mintAuthorityRenounced ? 'Renounced - supply is permanently capped' : 'Not confirmed revoked'],
+    ['Freeze authority', token.freezeAuthorityDisabled ? 'Disabled - holders cannot be frozen' : 'Not confirmed disabled'],
+    ['Metadata update authority', token.metadataUpdateAuthorityRevoked ? 'Revoked - name, symbol, and media are locked' : 'Not confirmed revoked'],
+    ['Metadata immutability', token.metadataImmutable ? 'Immutable' : 'Not confirmed immutable'],
+    ['Token program', 'SPL Token (classic) - no Token-2022 extensions in the v1 launch path'],
+  ].map(([label, value]) => renderV2ReportFactRow(label, value)).join('');
+  const lockCount = Number(proof?.liquidity?.lockedPositionCount || proofLockedPositionCount(results));
+  const feeKeyCount = Number(proof?.liquidity?.feeKeyCount || proofFeeKeyCount(results));
+  const transfer = proof?.transfer || {};
+  const finalDestination = proofEffectiveDestination(proof, config);
+  const finalSweep = finalSweepProofState(transfer);
+  const transferEvidenceHash = data?.finalSweep?.transferEvidenceHash || data?.transferEvidenceHash || comparisonTransferEvidenceHash(transfer);
+  const finalSweepRows = [
+    renderV2ReportFactRow('Sweep status', finalSweep.label),
+    renderV2ReportFactRow('Wallet empty', transfer.walletEmpty === true ? 'yes' : transfer.walletEmpty === false ? 'no' : '-'),
+    renderV2ReportAddressRow('Destination wallet', finalDestination),
+    renderV2ReportFactRow('SOL transferred', transfer.solTransferred == null ? '-' : `${reportNumber(transfer.solTransferred, { maximumFractionDigits: 6 })} SOL`),
+    renderV2ReportFactRow('Tokens transferred', transfer.tokensTransferred == null ? '-' : reportNumber(transfer.tokensTransferred, { maximumFractionDigits: 0 })),
+    renderV2ReportFactRow('NFTs transferred', Array.isArray(transfer.nftTransfers) ? String(transfer.nftTransfers.length) : transfer.nftsTransferred ?? '-'),
+    renderV2ReportFactRow('Sweep evidence hash', transferEvidenceHash || '-'),
+    renderV2ReportAddressRow('Published report', reportUri, 'url'),
+  ].join('');
+  const finalSweepTransferRows = buildV2ReportSweepTransferRows(transfer);
+  const tokenDescription = String(config.token.description || '').trim();
+  const localLogoDataUrl = String(config.token.logo?.dataUrl || '');
+  const logoSrc = token.imageUri || (localLogoDataUrl.length > 0 && localLogoDataUrl.length <= 60000 ? localLogoDataUrl : null);
+  const logoBlock = logoSrc
+    ? `<img class="hero-logo" src="${escapeHtml(logoSrc)}" alt="${escapeHtml(symbol)} logo">`
+    : `<div class="hero-logo hero-logo-placeholder">${escapeHtml(String(symbol || '?').slice(0, 3).toUpperCase())}</div>`;
+  const plannedPoolCount = Array.isArray(data.plannedPools) ? data.plannedPools.length : 0;
+  const targetMarketCapUsd = Number.isFinite(Number(data.targetMarketCapUsd))
+    ? Number(data.targetMarketCapUsd)
+    : Number.isFinite(Number(config?.poolTopology?.targetMarketCapUsd ?? config?.funding?.targetMarketCapUsd))
+      ? Number(config?.poolTopology?.targetMarketCapUsd ?? config?.funding?.targetMarketCapUsd)
+      : null;
+  const quoteRouteCount = new Set([
+    ...results.map((pool) => pool.quoteSymbol || pool.quoteToken).filter(Boolean),
+    ...(Array.isArray(data.plannedPools) ? data.plannedPools.map((pool) => pool.quoteSymbol || pool.quoteToken).filter(Boolean) : []),
+  ]).size || '-';
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#efe5cd">
+  <title>${escapeHtml(name)} (${escapeHtml(symbol)}) - Launch Dossier</title>
+  <style>
+    ${v2ClassicReportCss()}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="masthead">
+      <div class="masthead-left">
+        <span class="masthead-brand">T R E B U C H E T</span>
+        <span>FIG. 01 · Launch Dossier</span>
+      </div>
+      <div class="masthead-right">${escapeHtml(reportTimestamp(generatedAt))}</div>
+    </div>
+
+    <header class="title-block">
+      ${logoBlock}
+      <div>
+        <p class="doc-fig">Token launch report · permanent record</p>
+        <h1 class="doc-title">${escapeHtml(name)} <span class="doc-symbol">· ${escapeHtml(symbol)}</span></h1>
+        ${tokenDescription ? `<p class="doc-subtitle">${escapeHtml(tokenDescription)}</p>` : ''}
+      </div>
+    </header>
+
+    ${renderV2ReportDemoBanner(proof, results)}
+    ${renderV2ReportStatusBanner(results)}
+
+    <hr class="section-rule">
+    <div class="enum-badge">[ 01 ] &nbsp; Token</div>
+    <h2 class="section-title">Token specification</h2>
+    <div class="token-summary-grid">
+      <div class="token-stat"><div class="token-stat-label">Total supply</div><div class="token-stat-value">${reportNumber(token.totalSupply ?? config.token.supply, { maximumFractionDigits: 0 })}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Decimals</div><div class="token-stat-value">${escapeHtml(String(token.decimals ?? config.token.decimals ?? '-'))}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Launch market cap</div><div class="token-stat-value">${targetMarketCapUsd && targetMarketCapUsd > 0 ? `$${reportNumber(targetMarketCapUsd, { maximumFractionDigits: 0 })}` : '-'}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Pools</div><div class="token-stat-value">${results.length || plannedPoolCount}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Positions</div><div class="token-stat-value">${proofPositions(results)}</div></div>
+    </div>
+
+    <h3 class="subsection">Mint &amp; launch wallet</h3>
+    ${renderV2ReportAddressRow('Token mint', token.mint)}
+    ${renderV2ReportAddressRow('Launch wallet', proof?.walletPublicKey || data.launchWallet)}
+    ${renderV2ReportAddressRow('Planned sweep destination', finalDestination)}
+    ${renderV2ReportAddressRow('Metadata URI', token.metadataUri, 'url')}
+    ${renderV2ReportAddressRow('Image URI', token.imageUri, 'url')}
+
+    <h3 class="subsection">Contract safety</h3>
+    <div class="pool-facts">${authorityRows}</div>
+
+    <hr class="section-rule">
+    <div class="enum-badge">[ 02 ] &nbsp; Tokenomics</div>
+    <h2 class="section-title">Supply distribution</h2>
+    ${buildV2ReportTokenomics(data, config, results)}
+    ${renderV2ReportObservedSpend(data.observedSpend)}
+
+    <hr class="section-rule">
+    <div class="enum-badge">[ 03 ] &nbsp; Pools &amp; Positions</div>
+    <h2 class="section-title">Liquidity pool breakdown</h2>
+    <div class="token-summary-grid">
+      <div class="token-stat"><div class="token-stat-label">Pool IDs</div><div class="token-stat-value">${Number(data?.liquidity?.poolCount || launchProofPoolIds(proof).length || 0)}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Locked positions</div><div class="token-stat-value">${lockCount}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Fee Keys</div><div class="token-stat-value">${feeKeyCount || '-'}</div></div>
+      <div class="token-stat"><div class="token-stat-label">Quote routes</div><div class="token-stat-value">${quoteRouteCount}</div></div>
+    </div>
+    ${buildV2ReportPoolSections(results, config)}
+
+    ${buildV2ReportAirdropSection(proof, config)}
+
+    ${buildV2ReportRecoverySection(data)}
+
+    ${buildV2ReportParityAuditSection(data.reportParityAudit, data.classicRetirementGate, data.fieldVerification)}
+
+    <hr class="section-rule">
+    <div class="enum-badge">[ 08 ] &nbsp; Verification</div>
+    <h2 class="section-title">Auditing this launch</h2>
+    <div class="audit-copy">
+      <p><strong>Safe token contract</strong> - fetch the mint account and verify that mint and freeze authorities are unset. If metadata is recorded above, verify the metadata account shows the expected update-authority posture.</p>
+      <p><strong>Locked liquidity</strong> - every position card lists the position NFT, lock transaction, and Fee Key NFT when those facts are available. Burn &amp; Earn custody should match the lock transaction for each locked position.</p>
+      <p><strong>Concentrated LP shape</strong> - the tick ranges above define the tradable bands. Compare the pool and position accounts against the configured slices, ladder bands, support bands, and Fee Key recipients.</p>
+      <p><strong>Report authenticity</strong> - a permanent publish should be signed by the launch wallet that minted the token and created the pools. The Arweave items should carry <code>Data-Protocol: trebuchet-launch-report</code>; ignore third-party reposts that cannot be tied back to the launch wallet.</p>
+    </div>
+
+    <hr class="section-rule">
+    <div class="enum-badge">[ 09 ] &nbsp; Final Sweep</div>
+    <h2 class="section-title">Remaining assets and report custody</h2>
+    ${finalSweepRows}
+    <h3 class="subsection">Final sweep transfer evidence</h3>
+    <table class="report-table">
+      <thead><tr><th>Type</th><th>Asset</th><th>Amount</th><th>Transaction / state</th></tr></thead>
+      <tbody>${finalSweepTransferRows}</tbody>
+    </table>
+
+    <footer class="doc-footer">
+      <div>
+        <div>Trebuchet - launch Solana tokens, no middleman.</div>
+        <div style="margin-top:4px;text-transform:none;letter-spacing:0.04em;">Solscan links use mainnet-beta. Use copy buttons for every address and transaction.</div>
+      </div>
+      <div><a href="https://makesometokens.com/" target="_blank" rel="noopener">makesometokens.com</a></div>
+    </footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite">Copied</div>
+  <script id="trebuchet-v2-proof" type="application/json">${htmlScriptJson(embeddedProofPayload)}</script>
+  <script>
+    ${v2ClassicReportScript()}
+  </script>
+</body>
+</html>`;
+}
+
+function renderReportPanel() {
+  const topology = currentClassicModel();
+  const destination = topology.sweepDestination;
+  const destinationState = destination
+    ? isProbablySolanaAddress(destination) ? 'Looks valid' : 'Check address'
+    : 'Missing';
+  const publish = topology.report.publish;
+  const summary = $('#reportSummary');
+  summary.textContent = publish ? 'Publish on' : 'Local only';
+  summary.className = `risk-badge ${publish ? '' : 'warn'}`;
+  $('#reportPreview').innerHTML = `
+    <div class="mini-row"><span>Report</span><strong>${publish ? 'Arweave + local' : 'Local download'}</strong></div>
+    <div class="mini-row ${destination && !isProbablySolanaAddress(destination) ? 'danger' : ''}"><span>Sweep destination</span><strong>${escapeHtml(destinationState)}</strong></div>
+    <div class="mini-row"><span>Airdrop rows</span><strong>${topology.airdrop.recipients.length || topology.airdrop.recipientCount}</strong></div>
+    <div class="mini-row"><span>Fee Key recipient</span><strong>${topology.feeKeyRecipient ? escapeHtml(shortAddress(topology.feeKeyRecipient)) : 'Launch wallet'}</strong></div>
+  `;
+}
+
+function phaseState(phase, config) {
+  if (phase.id === 'wallet') return state.managedWallets.length ? 'pass' : 'warn';
+  if (phase.id === 'vanity') return state.selectedVanityPublicKey ? 'pass' : state.vanityCandidates.length ? 'warn' : 'warn';
+  if (phase.id === 'token') return config.token.name && config.token.symbol && config.token.supply ? 'pass' : 'danger';
+  if (phase.id === 'pools') return topologyAllocationIssues(config.poolTopology).length ? 'danger' : 'pass';
+  if (phase.id === 'funding') {
+    const funding = fundingMeterSnapshot(config);
+    const quoteAcquireReady = quoteAcquireStatus(config).ready;
+    const manualItems = quoteManualPrefundItems();
+    const manualSummary = manualPrefundSummary(manualItems);
+    const fundingEstimateStatus = classicFundingEstimateStatus(config);
+    const fundingEstimateReady = fundingEstimateStatus.matchesConfig;
+    const fundingBalanceReady = state.apiStatus === 'connected' && funding.hasWalletBalance === true && funding.walletBalanceFresh === true;
+    const fundingSolReady = Number(funding.missingSol || 0) <= 0.001;
+    const manualPrefundReady = !manualItems.length || manualSummary.className === '';
+    return fundingEstimateReady && fundingBalanceReady && fundingSolReady && quoteAcquireReady && manualPrefundReady
+      ? 'pass'
+      : 'warn';
+  }
+  if (phase.id === 'execution') {
+    if (state.executionReadiness?.status === 'ready') return 'pass';
+    if (state.executionReadiness?.status === 'blocked') return 'danger';
+    return 'warn';
+  }
+  if (phase.id === 'recovery') return state.recovery.activeJournalCount || state.recovery.failedJournalCount ? 'warn' : 'pass';
+  if (phase.id === 'sweep') return config.poolTopology.sweepDestination ? 'pass' : 'warn';
+  return 'warn';
+}
+
+function readinessBadge(readiness) {
+  if (!readiness) return { label: 'Unchecked', className: 'warn' };
+  if (readiness.status === 'ready') return { label: 'Ready', className: '' };
+  return { label: 'Blocked', className: 'danger' };
+}
+
+function quoteAcquireRoutes() {
+  if (!classicFundingEstimateStatus(currentLaunchConfig()).matchesConfig) return [];
+  return Array.isArray(state.classicFundingEstimate?.autoSwapPlan)
+    ? state.classicFundingEstimate.autoSwapPlan
+    : [];
+}
+
+function quoteAcquireFingerprint(config = currentLaunchConfig(), walletPublicKey = selectedLaunchWalletPublicKey()) {
+  const fundingEstimateStatus = classicFundingEstimateStatus(config);
+  const routes = fundingEstimateStatus.matchesConfig && Array.isArray(state.classicFundingEstimate?.autoSwapPlan)
+    ? state.classicFundingEstimate.autoSwapPlan
+    : [];
+  return JSON.stringify(stableFundingFingerprintValue({
+    walletPublicKey: String(walletPublicKey || '').trim() || null,
+    fundingFingerprint: fundingEstimateStatus.expectedFingerprint,
+    routes,
+  }));
+}
+
+function quoteAcquireResultMatchesRoute(result, route) {
+  if (!result || result.success !== true) return false;
+  const routeMint = String(route?.quoteMint || '').trim().toLowerCase();
+  const resultMint = String(result?.quoteMint || '').trim().toLowerCase();
+  if (routeMint) return Boolean(resultMint && resultMint === routeMint);
+  const routeIndex = Number(route?.allocationIndex);
+  const resultIndex = Number(result?.allocationIndex);
+  return Boolean(Number.isFinite(routeIndex) && Number.isFinite(resultIndex) && routeIndex === resultIndex);
+}
+
+function quoteAcquireSuccessEvidence(routes, job) {
+  if (!routes.length) return true;
+  const results = Array.isArray(job?.results) ? job.results : [];
+  return routes.every((route) => results.some((result) => quoteAcquireResultMatchesRoute(result, route)));
+}
+
+function quoteAcquireStatus(config = currentLaunchConfig()) {
+  const routes = quoteAcquireRoutes();
+  const progress = quoteAcquireProgress();
+  const job = state.quoteAcquire.job || null;
+  const hasJob = Boolean(job || state.quoteAcquire.jobId);
+  const expectedFingerprint = quoteAcquireFingerprint(config);
+  const actualFingerprint = String(
+    job?.v2QuoteAcquireFingerprint
+    || state.quoteAcquire.fingerprint
+    || '',
+  ).trim();
+  const stale = Boolean(routes.length && hasJob && (!actualFingerprint || actualFingerprint !== expectedFingerprint));
+  const successEvidence = quoteAcquireSuccessEvidence(routes, job);
+  const ready = !routes.length || Boolean(
+    job?.status === 'done'
+    && !stale
+    && successEvidence
+    && Number(progress.completed || 0) >= Number(progress.total || routes.length)
+    && Number(progress.failed || 0) === 0
+  );
+  return {
+    routes,
+    progress,
+    expectedFingerprint,
+    actualFingerprint,
+    stale,
+    successEvidence,
+    ready,
+  };
+}
+
+function quoteAcquireManualCount() {
+  if (!classicFundingEstimateStatus(currentLaunchConfig()).matchesConfig) return 0;
+  return Object.keys(state.classicFundingEstimate?.byQuote || {}).length;
+}
+
+function formatManualPrefundAmount(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return null;
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: amount >= 1 ? 6 : 9,
+    minimumFractionDigits: 0,
+  }).format(amount);
+}
+
+function plainManualPrefundAmount(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return null;
+  return amount.toFixed(amount >= 1 ? 6 : 9).replace(/\.?0+$/, '');
+}
+
+function parseRawTokenAmount(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/.test(text)) return null;
+  try {
+    return BigInt(text);
+  } catch {
+    return null;
+  }
+}
+
+function formatRawTokenAmount(value, decimals = 0) {
+  const raw = parseRawTokenAmount(value);
+  if (raw == null) return null;
+  const places = Math.max(0, Math.min(18, Math.floor(Number(decimals) || 0)));
+  if (!places) return raw.toString();
+  const scale = 10n ** BigInt(places);
+  const whole = raw / scale;
+  const fraction = raw % scale;
+  const fractionText = fraction.toString().padStart(places, '0').replace(/0+$/, '');
+  return fractionText ? `${whole}.${fractionText}` : whole.toString();
+}
+
+function manualPrefundBalanceSnapshotStatus(walletPublicKey = selectedLaunchWalletPublicKey()) {
+  const balance = state.manualPrefund.balance && typeof state.manualPrefund.balance === 'object'
+    ? state.manualPrefund.balance
+    : null;
+  const snapshotWalletPublicKey = state.manualPrefund.walletPublicKey || null;
+  const checkedAt = state.manualPrefund.lastUpdatedAt || null;
+  const checkedAtMs = Date.parse(checkedAt || '');
+  const ageMs = Number.isFinite(checkedAtMs) ? Date.now() - checkedAtMs : Infinity;
+  const fresh = Boolean(balance && Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= WALLET_BALANCE_FRESH_MS);
+  return {
+    walletPublicKey,
+    snapshotWalletPublicKey,
+    balance,
+    checkedAt,
+    ageMs,
+    hasBalance: Boolean(balance),
+    matchesWallet: Boolean(walletPublicKey && snapshotWalletPublicKey === walletPublicKey),
+    fresh,
+    stale: Boolean(balance && !fresh),
+  };
+}
+
+function manualPrefundTokenBalance(mint) {
+  const tokens = state.manualPrefund.balance?.tokens;
+  return tokens && typeof tokens === 'object' ? tokens[mint] || null : null;
+}
+
+function formatManualPrefundBalance(token) {
+  if (!token) return '0';
+  const uiAmount = Number(token.amountUi);
+  if (Number.isFinite(uiAmount)) return formatManualPrefundAmount(uiAmount) || '0';
+  return formatRawTokenAmount(token.amountRaw, token.decimals) || String(token.amountRaw || '0');
+}
+
+function manualPrefundStatus(item) {
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  const snapshot = manualPrefundBalanceSnapshotStatus(walletPublicKey);
+  if (!walletPublicKey) {
+    return { label: 'No wallet', className: 'warn', detail: 'Generate or select a Trebuchet wallet first.' };
+  }
+  if (state.apiStatus !== 'connected') {
+    return { label: 'Static', className: 'warn', detail: 'Open through the local Trebuchet app to check balances.' };
+  }
+  if (state.manualPrefund.error) {
+    return { label: 'Check failed', className: 'danger', detail: state.manualPrefund.error };
+  }
+  if (snapshot.snapshotWalletPublicKey && !snapshot.matchesWallet) {
+    return {
+      label: 'Check balance',
+      className: 'warn',
+      detail: 'Balance snapshot belongs to another Trebuchet wallet; recheck the selected launch wallet.',
+    };
+  }
+  if (!snapshot.hasBalance) {
+    return {
+      label: state.manualPrefund.polling ? 'Checking' : 'Not checked',
+      className: 'warn',
+      detail: state.manualPrefund.polling ? 'Reading the selected wallet balance.' : 'Click Check balance or wait for the live poll.',
+    };
+  }
+  if (!snapshot.fresh) {
+    return {
+      label: state.manualPrefund.polling ? 'Checking' : 'Recheck',
+      className: 'warn',
+      detail: 'Balance snapshot is stale; wait for the live poll or click Check balance.',
+    };
+  }
+
+  const token = manualPrefundTokenBalance(item.mint);
+  const requiredRaw = parseRawTokenAmount(item.rawAmount);
+  const currentRaw = parseRawTokenAmount(token?.amountRaw ?? '0') ?? 0n;
+  const need = formatManualPrefundAmount(item.amount)
+    || (requiredRaw == null ? item.rawAmount : formatRawTokenAmount(requiredRaw.toString(), token?.decimals))
+    || 'unknown';
+  const have = formatManualPrefundBalance(token);
+
+  if (requiredRaw == null) {
+    return token
+      ? { label: 'Seen', className: 'warn', detail: `Wallet has ${have}; compare against raw requirement ${item.rawAmount || 'unknown'}.` }
+      : { label: 'Missing', className: 'danger', detail: `No ${item.symbol} token balance found in the selected wallet.` };
+  }
+  if (currentRaw >= requiredRaw) {
+    return { label: 'Funded', className: '', detail: `Wallet has ${have}; needs ${need}.` };
+  }
+  const shortRaw = requiredRaw - currentRaw;
+  const short = formatRawTokenAmount(shortRaw.toString(), token?.decimals) || `${shortRaw.toString()} raw`;
+  return { label: 'Short', className: 'danger', detail: `Wallet has ${have}; needs ${need}. Short ${short}.` };
+}
+
+function manualPrefundSummary(items) {
+  if (state.manualPrefund.error) return { label: 'Check failed', className: 'danger' };
+  if (!items.length) return { label: 'None', className: '' };
+  const snapshot = manualPrefundBalanceSnapshotStatus();
+  if (!snapshot.hasBalance) {
+    return { label: state.manualPrefund.polling ? 'Checking' : 'Check balance', className: 'warn' };
+  }
+  const statuses = items.map((item) => manualPrefundStatus(item));
+  const shortCount = statuses.filter((item) => item.className === 'danger').length;
+  if (shortCount) return { label: `${shortCount} short`, className: 'danger' };
+  const warningCount = statuses.filter((item) => item.className === 'warn').length;
+  if (warningCount) return { label: `${warningCount} verify`, className: 'warn' };
+  return { label: `${items.length}/${items.length} funded`, className: '' };
+}
+
+function quoteManualPrefundItems() {
+  if (!classicFundingEstimateStatus(currentLaunchConfig()).matchesConfig) return [];
+  const estimate = state.classicFundingEstimate || {};
+  const byQuote = estimate.byQuote && typeof estimate.byQuote === 'object'
+    ? estimate.byQuote
+    : {};
+  const breakdown = Array.isArray(estimate.quoteBreakdown)
+    ? estimate.quoteBreakdown
+    : [];
+  const rowsByMint = new Map();
+  breakdown.forEach((row) => {
+    const mint = String(row?.mint || '').trim();
+    if (!mint) return;
+    if (!rowsByMint.has(mint)) rowsByMint.set(mint, []);
+    rowsByMint.get(mint).push(row);
+  });
+
+  const mints = new Set([
+    ...Object.keys(byQuote),
+    ...rowsByMint.keys(),
+  ].filter(Boolean));
+
+  return [...mints].map((mint) => {
+    const rows = rowsByMint.get(mint) || [];
+    const amount = rows.reduce((sum, row) => {
+      const value = Number(row?.amount);
+      return Number.isFinite(value) ? sum + value : sum;
+    }, 0);
+    const symbol = rows.find((row) => row?.symbol)?.symbol || shortAddress(mint);
+    return {
+      mint,
+      rawAmount: byQuote[mint] == null ? null : String(byQuote[mint]),
+      symbol,
+      amount: amount > 0 ? amount : null,
+      rows,
+    };
+  });
+}
+
+function quoteAcquireProgress() {
+  const job = state.quoteAcquire.job;
+  const total = Number(job?.total || quoteAcquireRoutes().length || 0);
+  const completed = Number(job?.completed || 0);
+  const failed = Array.isArray(job?.results)
+    ? job.results.filter((row) => row && row.success === false).length
+    : 0;
+  const percent = total > 0 ? clampPercent((completed / total) * 100) : 0;
+  return { total, completed, failed, percent };
+}
+
+function quoteAcquireBadge() {
+  const { total, completed, failed } = quoteAcquireProgress();
+  const status = quoteAcquireStatus();
+  const fundingEstimateStatus = classicFundingEstimateStatus(currentLaunchConfig());
+  if (fundingEstimateStatus.stale) return { label: 'Re-estimate', className: 'warn' };
+  if (!fundingEstimateStatus.hasEstimate) return { label: 'Estimate', className: 'warn' };
+  if (state.quoteAcquire.error) return { label: 'Error', className: 'danger' };
+  if (status.stale) return { label: 'Stale', className: 'warn' };
+  if (state.quoteAcquire.running || state.quoteAcquire.job?.status === 'running') return { label: `${completed}/${total}`, className: 'warn' };
+  if (state.quoteAcquire.job?.status === 'done') {
+    if (failed) return { label: `${failed} failed`, className: 'danger' };
+    return status.ready ? { label: 'Done', className: '' } : { label: 'Verify', className: 'warn' };
+  }
+  if (quoteAcquireRoutes().length > 0) return { label: 'Ready', className: '' };
+  if (quoteAcquireManualCount() > 0) return { label: 'Manual', className: 'warn' };
+  return { label: 'None', className: '' };
+}
+
+function quoteAcquireRouteLabel(route) {
+  const symbol = route?.quoteSymbol || route?.quoteMint || 'Quote';
+  const pool = Number.isFinite(Number(route?.allocationIndex))
+    ? `Pool ${Number(route.allocationIndex) + 1}`
+    : 'Pool';
+  const spend = Number(route?.estSolSpend || 0);
+  return `${symbol} / ${pool}${spend > 0 ? ` / ~${spend.toFixed(3)} SOL` : ''}`;
+}
+
+function quoteKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function sameQuoteIdentity(a, b) {
+  return quoteKey(a) && quoteKey(a) === quoteKey(b);
+}
+
+function findQuoteRouteForPool(pool, poolIndex, routes = quoteAcquireRoutes()) {
+  return routes.find((route) => Number(route?.allocationIndex) === poolIndex)
+    || routes.find((route) => sameQuoteIdentity(route?.quoteMint, pool.quoteMint))
+    || routes.find((route) => sameQuoteIdentity(route?.quoteSymbol, pool.quoteSymbol));
+}
+
+function findManualPrefundForPool(pool, items = quoteManualPrefundItems()) {
+  return items.find((item) => sameQuoteIdentity(item.mint, pool.quoteMint))
+    || items.find((item) => sameQuoteIdentity(item.symbol, pool.quoteSymbol));
+}
+
+function quotePoolGuidanceItems() {
+  const topology = currentClassicModel();
+  const routes = quoteAcquireRoutes();
+  const manualItems = quoteManualPrefundItems();
+  const hasEstimate = classicFundingEstimateStatus(currentLaunchConfig()).matchesConfig;
+
+  return topology.pools
+    .map((pool, poolIndex) => ({ pool, poolIndex }))
+    .filter(({ pool }) => String(pool.quoteSymbol || pool.quoteToken || '').toUpperCase() !== 'SOL')
+    .map(({ pool, poolIndex }) => {
+      const quoteSymbol = String(pool.quoteSymbol || pool.quoteToken || `Q${poolIndex + 1}`).trim().toUpperCase();
+      const quoteMint = String(pool.quoteMint || '').trim();
+      const route = findQuoteRouteForPool(pool, poolIndex, routes);
+      const manual = findManualPrefundForPool(pool, manualItems);
+      const displayAmount = manual ? formatManualPrefundAmount(manual.amount) : null;
+      const venue = Object.values(CLASSIC_QUOTE_VENUES).find((item) => `${item.key}-flywheel` === pool.id);
+      const label = venue ? venue.label : `Pool ${poolIndex + 1} ${quoteSymbol}`;
+
+      if (!quoteMint) {
+        return {
+          label,
+          quoteSymbol,
+          quoteMint,
+          supplyPercent: pool.supplyPercent,
+          status: 'missing',
+          badge: 'Needs mint',
+          className: 'danger',
+          icon: 'fa-triangle-exclamation',
+          detail: 'Add the quote mint before estimating or launching this pool.',
+        };
+      }
+      if (!hasEstimate) {
+        return {
+          label,
+          quoteSymbol,
+          quoteMint,
+          supplyPercent: pool.supplyPercent,
+          status: 'estimate',
+          badge: 'Estimate',
+          className: 'warn',
+          icon: 'fa-magnifying-glass-chart',
+          detail: 'Run estimate to decide whether Trebuchet can acquire this token from SOL.',
+        };
+      }
+      if (route) {
+        return {
+          label,
+          quoteSymbol,
+          quoteMint,
+          supplyPercent: pool.supplyPercent,
+          status: 'auto',
+          badge: 'Auto acquire',
+          className: '',
+          icon: 'fa-route',
+          detail: quoteAcquireRouteLabel(route),
+        };
+      }
+      if (manual) {
+        return {
+          label,
+          quoteSymbol,
+          quoteMint,
+          supplyPercent: pool.supplyPercent,
+          status: 'manual',
+          badge: 'Manual prefund',
+          className: 'warn',
+          icon: 'fa-wallet',
+          detail: displayAmount
+            ? `Send ${displayAmount} ${manual.symbol || quoteSymbol} to the selected Trebuchet wallet.`
+            : `Send the required ${manual.symbol || quoteSymbol} raw amount to the selected Trebuchet wallet.`,
+        };
+      }
+      return {
+        label,
+        quoteSymbol,
+        quoteMint,
+        supplyPercent: pool.supplyPercent,
+        status: 'covered',
+        badge: 'Covered',
+        className: '',
+        icon: 'fa-circle-check',
+        detail: 'Estimator did not require extra quote-token funding for this pool.',
+      };
+    });
+}
+
+function renderQuotePoolGuidance() {
+  const items = quotePoolGuidanceItems();
+  if (!items.length) return '';
+  const fundingEstimateStatus = classicFundingEstimateStatus(currentLaunchConfig());
+  const autoCount = items.filter((item) => item.status === 'auto').length;
+  const manualCount = items.filter((item) => item.status === 'manual').length;
+  const blockedCount = items.filter((item) => item.status === 'missing').length;
+  const estimateCount = items.filter((item) => item.status === 'estimate').length;
+  const badge = blockedCount
+    ? { label: `${blockedCount} blocked`, className: 'danger' }
+    : estimateCount
+      ? { label: 'Estimate', className: 'warn' }
+      : manualCount
+        ? { label: `${manualCount} manual`, className: 'warn' }
+        : autoCount
+          ? { label: `${autoCount} auto`, className: '' }
+          : { label: 'Covered', className: '' };
+  const detail = fundingEstimateStatus.stale
+    ? 'Funding estimate is stale for this launch model; rerun it before acquiring quote tokens.'
+    : fundingEstimateStatus.matchesConfig
+      ? 'Every non-SOL pool is classified from the current classic funding estimate.'
+      : 'Run the estimate before launch so flywheel quote-token funding is explicit.';
+
+  return `
+    <div class="quote-guidance-panel">
+      <div class="quote-guidance-head">
+        <span>
+          <span class="eyebrow">Flywheel quote tokens</span>
+          <h3>Acquire map</h3>
+          <p>${escapeHtml(detail)}</p>
+        </span>
+        <span class="risk-badge ${escapeHtml(badge.className)}">${escapeHtml(badge.label)}</span>
+      </div>
+      <div class="quote-guidance-list">
+        ${items.map((item) => `
+          <article class="${escapeHtml(item.className)}">
+            <i class="fa-solid ${escapeHtml(item.icon)}"></i>
+            <span>
+              <strong>${escapeHtml(item.label)} <em>${formatPercent(item.supplyPercent)}%</em></strong>
+              <small>${escapeHtml(item.detail)}</small>
+            </span>
+            <code title="${escapeHtml(item.quoteMint || 'Quote mint missing')}">${escapeHtml(item.quoteMint ? shortAddress(item.quoteMint) : 'No mint')}</code>
+            <span class="risk-badge ${escapeHtml(item.className)}">${escapeHtml(item.badge)}</span>
+          </article>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderManualPrefundPanel() {
+  const items = quoteManualPrefundItems();
+  if (!classicFundingEstimateStatus(currentLaunchConfig()).matchesConfig || !items.length) return '';
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  const summary = manualPrefundSummary(items);
+  const canCheck = state.apiStatus === 'connected' && Boolean(walletPublicKey) && !state.manualPrefund.polling;
+  const checkedLabel = state.manualPrefund.lastUpdatedAt
+    ? `Checked ${formatDate(state.manualPrefund.lastUpdatedAt)}`
+    : (state.apiStatus === 'connected' ? 'Awaiting balance check' : 'Static preview');
+  return `
+    <div class="manual-prefund-panel">
+      <div class="manual-prefund-head">
+        <span>
+          <span class="eyebrow">Manual prefund checklist</span>
+          <h3>Send quote tokens to Trebuchet wallet</h3>
+          <p>${escapeHtml(checkedLabel)}</p>
+        </span>
+        <span class="manual-prefund-head-actions">
+          <span class="risk-badge ${escapeHtml(summary.className)}">${escapeHtml(summary.label)}</span>
+          <button class="pill-button" type="button" data-action="refresh-manual-prefund" ${canCheck ? '' : 'disabled'}>
+            ${state.manualPrefund.polling ? 'Checking' : 'Check balance'}
+          </button>
+        </span>
+      </div>
+      <div class="manual-prefund-wallet">
+        <span>
+          <small>Destination wallet</small>
+          <code>${walletPublicKey ? escapeHtml(walletPublicKey) : 'Generate or select a Trebuchet wallet first'}</code>
+        </span>
+        <button class="pill-button" type="button" data-action="copy-manual-prefund" data-copy="wallet" ${walletPublicKey ? '' : 'disabled'}>
+          <i class="fa-solid fa-copy"></i><span>Copy wallet</span>
+        </button>
+      </div>
+      <div class="manual-prefund-list">
+        ${items.map((item) => {
+          const displayAmount = formatManualPrefundAmount(item.amount);
+          const copyAmount = plainManualPrefundAmount(item.amount) || item.rawAmount || '';
+          const status = manualPrefundStatus(item);
+          const lineItems = item.rows.length
+            ? item.rows.map((row) => `
+              <li>
+                <span>${escapeHtml(row.label || 'Quote prefund')}</span>
+                <strong>${escapeHtml(formatManualPrefundAmount(row.amount) || String(row.amount || ''))} ${escapeHtml(row.symbol || item.symbol)}</strong>
+              </li>
+            `).join('')
+            : `<li><span>Aggregate raw amount</span><strong>${escapeHtml(item.rawAmount || 'unknown')}</strong></li>`;
+          return `
+            <article class="manual-prefund-row">
+              <span class="manual-prefund-token">
+                <strong>${escapeHtml(copyAmount || 'Amount')} ${escapeHtml(item.symbol)}</strong>
+                <code>${escapeHtml(item.mint)}</code>
+              </span>
+              <span class="manual-prefund-actions">
+                <span class="risk-badge ${escapeHtml(status.className)}">${escapeHtml(status.label)}</span>
+                <button class="pill-button" type="button" data-action="copy-manual-prefund" data-copy="amount" data-mint="${escapeHtml(item.mint)}" ${copyAmount ? '' : 'disabled'}>Amount</button>
+                <button class="pill-button" type="button" data-action="copy-manual-prefund" data-copy="mint" data-mint="${escapeHtml(item.mint)}">Mint</button>
+              </span>
+              <p class="manual-prefund-status">${escapeHtml(status.detail)}</p>
+              <ul>${lineItems}</ul>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderQuoteAcquirePanel() {
+  const routes = quoteAcquireRoutes();
+  const manualCount = quoteAcquireManualCount();
+  const fundingEstimateStatus = classicFundingEstimateStatus(currentLaunchConfig());
+  const hasCurrentEstimate = fundingEstimateStatus.matchesConfig;
+  const acquireStatus = quoteAcquireStatus();
+  const badge = quoteAcquireBadge();
+  const { total, completed, failed, percent } = quoteAcquireProgress();
+  const job = state.quoteAcquire.job;
+  const rows = Array.isArray(job?.results) && job.results.length
+    ? job.results.map((result) => `
+      <article class="${result.success === false ? 'danger' : ''}">
+        <i class="fa-solid ${result.success === false ? 'fa-triangle-exclamation' : 'fa-circle-check'}"></i>
+        <span>
+          <strong>${escapeHtml(result.quoteSymbol || result.quoteMint || 'Quote')}</strong>
+          <small>${escapeHtml(result.success === false ? (result.error || 'Swap failed') : (result.txId || 'Already funded'))}</small>
+        </span>
+      </article>
+    `).join('')
+    : routes.slice(0, 4).map((route) => `
+      <article>
+        <i class="fa-solid fa-route"></i>
+        <span>
+          <strong>${escapeHtml(quoteAcquireRouteLabel(route))}</strong>
+          <small>${escapeHtml(shortAddress(route.quoteMint || ''))}</small>
+        </span>
+      </article>
+    `).join('');
+  const detail = fundingEstimateStatus.stale
+    ? 'Funding estimate is stale for this launch model; rerun it before acquiring quote tokens.'
+    : acquireStatus.stale
+      ? 'Previous quote acquire belongs to another wallet or launch model; run it again for the selected Trebuchet wallet.'
+      : hasCurrentEstimate
+      ? (routes.length
+        ? `${routes.length} route${routes.length === 1 ? '' : 's'} can be auto-acquired from the managed wallet.`
+        : manualCount
+          ? `${manualCount} quote token${manualCount === 1 ? '' : 's'} require manual prefund.`
+          : 'No quote-token acquire needed for this launch plan.')
+      : 'Run the classic funding estimate to discover quote-token acquire routes.';
+  const canStart = state.apiStatus === 'connected'
+    && Boolean(selectedLaunchWalletPublicKey())
+    && routes.length > 0
+    && !state.quoteAcquire.running;
+  const startLabel = state.quoteAcquire.running
+    ? 'Acquiring'
+    : state.quoteAcquire.job?.status === 'done' ? 'Run again' : 'Acquire';
+  const button = state.quoteAcquire.running
+    ? `<button class="pill-button" type="button" data-action="poll-quote-acquire">Refresh</button>`
+    : `<button class="pill-button" type="button" data-action="${hasCurrentEstimate ? 'start-quote-acquire' : 'estimate-funding'}" ${canStart || !hasCurrentEstimate ? '' : 'disabled'}>${escapeHtml(fundingEstimateStatus.stale ? 'Re-estimate' : hasCurrentEstimate ? startLabel : 'Estimate')}</button>`;
+  const clear = state.quoteAcquire.jobId && !state.quoteAcquire.running
+    ? '<button class="pill-button" type="button" data-action="clear-quote-acquire">Clear</button>'
+    : '';
+
+  return `
+    <div class="quote-acquire-panel">
+      <div class="quote-acquire-head">
+        <span>
+          <span class="eyebrow">Quote-token acquire</span>
+          <h3>Classic funding step</h3>
+          <p>${escapeHtml(detail)}</p>
+        </span>
+        <span class="risk-badge ${escapeHtml(badge.className)}">${escapeHtml(badge.label)}</span>
+      </div>
+      <div class="quote-acquire-progress">
+        <span style="width:${percent}%"></span>
+      </div>
+      <div class="quote-acquire-stats">
+        <span><small>Routes</small><strong>${routes.length}</strong></span>
+        <span><small>Manual</small><strong>${manualCount}</strong></span>
+        <span><small>Complete</small><strong>${completed}/${total}</strong></span>
+        <span><small>Failed</small><strong>${failed}</strong></span>
+      </div>
+      ${renderQuotePoolGuidance()}
+      <div class="quote-acquire-feed">
+        ${rows || '<article><i class="fa-solid fa-wallet"></i><span><strong>No route rows yet</strong><small>Estimate funding first</small></span></article>'}
+      </div>
+      <div class="operator-toolbar compact">${button}${clear}</div>
+      ${renderFundingWalletHint({ compact: true })}
+      ${renderManualPrefundPanel()}
+      ${state.quoteAcquire.error ? `<p class="quote-acquire-error">${escapeHtml(state.quoteAcquire.error)}</p>` : ''}
+    </div>
+  `;
+}
+
+function finalizationBadge(proof) {
+  if (!proof?.token?.mint) return { label: 'Needs token', className: 'warn' };
+  const config = proofConfigForFingerprint(proof, currentLaunchConfig());
+  if (!proofHasReportablePoolIdentity(proof, config)) return { label: 'Needs pools', className: 'warn' };
+  if (!proofHasReportPublishEvidence(proof, config)) return { label: 'Needs proof', className: 'warn' };
+  if (state.reportPublishing) return { label: 'Publishing', className: '' };
+  const reportArtifact = currentReportArtifact(proof, config, { allowTransient: true });
+  if (!reportArtifact && staleReportPublishForProof(proof, config)) return { label: 'Report stale', className: 'warn' };
+  const report = currentReportPublish(proof, config, { allowTransient: true });
+  if (report?.status === 'failed' || report?.failed) return { label: 'Report retry', className: 'danger' };
+  if (reportArtifact) {
+    const finalSweepComplete = transferHasWalletEmptyFinalSweepEvidence(proof?.transfer);
+    const reportArtifactRecord = reportArtifact.record || reportArtifact;
+    if (finalSweepComplete && !reportArtifactMatchesTerminalSweep(reportArtifactRecord, proof)) {
+      return { label: 'Final proof', className: 'warn' };
+    }
+    if (!finalSweepComplete) return { label: 'Needs sweep', className: 'warn' };
+    return { label: 'Proof ready', className: '' };
+  }
+  return { label: 'Finalize', className: 'warn' };
+}
+
+function proofExplorerItems(proof = currentLaunchProof(), reportUri = null, config = proofConfigForFingerprint(proof, currentLaunchConfig())) {
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const poolIds = [
+    ...(Array.isArray(proof?.liquidity?.poolIds) ? proof.liquidity.poolIds : []),
+    ...results.map((result) => result?.poolId).filter(Boolean),
+  ].filter((value, index, list) => value && list.indexOf(value) === index);
+  const items = [];
+  if (proof?.token?.mint) {
+    items.push({ label: 'Mint', value: shortAddress(proof.token.mint), href: solscanAccountUrl(proof.token.mint) });
+  }
+  if (proof?.walletPublicKey) {
+    items.push({ label: 'Launch wallet', value: shortAddress(proof.walletPublicKey), href: solscanAccountUrl(proof.walletPublicKey) });
+  }
+  poolIds.slice(0, 3).forEach((poolId, index) => {
+    items.push({ label: `Pool ${index + 1}`, value: shortAddress(poolId), href: solscanAccountUrl(poolId) });
+  });
+  if (poolIds.length > 3) {
+    items.push({ label: 'More pools', value: `${poolIds.length - 3} more`, href: null });
+  }
+  const destination = proofEffectiveDestination(proof, config);
+  if (destination) {
+    items.push({ label: 'Destination', value: shortAddress(destination), href: solscanAccountUrl(destination) });
+  }
+  if (reportUri) {
+    items.push({ label: 'Report', value: shortAddress(reportUri), href: reportUri });
+  } else {
+    const localDossier = currentLocalDossier(proof, config);
+    if (localDossier) {
+      items.push({ label: 'Dossier', value: 'Local file', href: null });
+    }
+  }
+  return items;
+}
+
+function buildProofShareSummary(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  config = proofConfigForFingerprint(proof, config);
+  const token = proof?.token || {};
+  const symbol = token.symbol || config.token.symbol || 'TOKEN';
+  const report = currentReportPublish(proof, config, { allowTransient: true });
+  const reportUri = report?.htmlUri || report?.jsonUri || null;
+  const localDossier = currentLocalDossier(proof, config);
+  const poolCount = launchProofPoolIds(proof).length;
+  const positionCount = proofPositions(proof?.liquidity?.results || []);
+  const airdropStatus = airdropCompletionStatus(proof, config.poolTopology);
+  const airdropSummary = airdropStatus.configured
+    ? airdropStatus.complete
+      ? `${airdropStatus.delivered} delivered / ${airdropStatus.failed} failed`
+      : `needs proof: ${(airdropStatus.missing || []).join(', ') || `${airdropStatus.pending} pending`}`
+    : 'not configured';
+  const audit = buildV2ReportParityAudit(proof, config);
+  const retirementGate = buildClassicRetirementGate(proof, audit, config);
+  const fieldVerification = buildV2FieldVerification({
+    proof,
+    config,
+    audit,
+    retirementGate,
+  });
+  const fieldBlockerCount = Number(fieldVerification.blockerCount || 0);
+  const criterionBlockerCount = Number(fieldVerification.criteriaBlockerCount || 0);
+  const totalFieldBlockerCount = fieldBlockerCount + criterionBlockerCount;
+  const fieldStatus = fieldVerification.ready
+    ? `${fieldVerification.passCount}/${fieldVerification.itemCount} checks passing`
+    : `${fieldVerification.passCount}/${fieldVerification.itemCount} checks passing; ${totalFieldBlockerCount} blocker${totalFieldBlockerCount === 1 ? '' : 's'}${criterionBlockerCount ? ` (${criterionBlockerCount} criteria)` : ''}`;
+  return [
+    `Trebuchet launch proof: ${symbol}`,
+    `Mint: ${token.mint || 'pending'}`,
+    `Pools: ${poolCount}`,
+    `Positions: ${positionCount}`,
+    `Airdrop: ${airdropSummary}`,
+    `Destination: ${proofEffectiveDestination(proof, config) || 'pending'}`,
+    `Report: ${reportUri || (localDossier ? `local dossier ${localDossier.filename}` : 'local proof pending')}`,
+    `Classic retirement: ${retirementGate.state === 'pass' ? 'ready' : 'blocked'}`,
+    `Field parity: ${fieldStatus}`,
+    ...fieldVerificationHandoffLines(fieldVerification),
+    `Next action: ${fieldVerification.nextAction || 'none'} - ${fieldVerification.nextDetail || 'Field verification is complete.'}`,
+  ].join('\n');
+}
+
+function fieldVerificationHandoffLines(fieldVerification = {}) {
+  if (fieldVerification.ready) return [];
+  const formatRows = (rows = []) => {
+    const visible = rows.slice(0, 2).map((item) => {
+      const label = item.label || item.title || item.id || 'Proof row';
+      const detail = item.detail || item.evidence || item.action || 'Needs proof.';
+      return `${label}: ${detail}`;
+    });
+    const remaining = rows.length - visible.length;
+    if (remaining > 0) visible.push(`+${remaining} more`);
+    return visible.join(' | ');
+  };
+  const lines = [];
+  const blockers = Array.isArray(fieldVerification.blockers) ? fieldVerification.blockers.filter((item) => item?.pass !== true) : [];
+  const criteriaBlockers = Array.isArray(fieldVerification.criteriaBlockers)
+    ? fieldVerification.criteriaBlockers.filter((item) => item?.pass !== true)
+    : [];
+  if (blockers.length) lines.push(`Missing field proof: ${formatRows(blockers)}`);
+  if (criteriaBlockers.length) lines.push(`Missing replacement criteria: ${formatRows(criteriaBlockers)}`);
+  return lines;
+}
+
+function reportParityClass(stateName) {
+  if (stateName === 'pass') return '';
+  if (stateName === 'mismatch') return 'danger';
+  if (stateName === 'missing') return 'danger';
+  return 'warn';
+}
+
+function renderClassicArtifactComparisonPanel() {
+  const comparison = state.classicReportComparison || {};
+  const inputResult = comparison.result || null;
+  const proof = currentLaunchProof();
+  const config = proofConfigForFingerprint(proof, currentLaunchConfig());
+  const selectedResult = currentClassicComparisonForProof(proof, config);
+  const inputResultMatchesProof = Boolean(inputResult && classicComparisonMatchesProof(inputResult, proof, config));
+  const result = selectedResult || inputResult;
+  const usingProofSavedResult = Boolean(result && inputResult && !inputResultMatchesProof && result !== inputResult);
+  const staleResult = Boolean(result && !classicComparisonMatchesProof(result, proof, config));
+  const visibleComparisonError = usingProofSavedResult ? null : comparison.error;
+  const badgeClass = staleResult ? 'warn' : result ? reportParityClass(result.status) : visibleComparisonError ? 'danger' : 'warn';
+  const badgeLabel = usingProofSavedResult ? 'proof' : staleResult ? 'stale' : result ? result.status : visibleComparisonError ? 'error' : 'waiting';
+  const rows = Array.isArray(result?.rows) ? result.rows : [];
+  const resultSummary = result
+    ? staleResult
+      ? 'Comparison is for another v2 proof'
+      : result.status === 'missing'
+      ? `${result.missingCount}/${result.fieldCount} proof fields missing`
+      : result.status === 'mismatch'
+        ? `${result.mismatchCount}/${result.fieldCount} fields mismatch`
+        : `${result.passCount}/${result.fieldCount} fields match`
+    : 'Paste classic report JSON or HTML';
+  return `
+    <details class="classic-compare-panel" ${result || visibleComparisonError ? 'open' : ''}>
+      <summary>
+        <span>
+          <small>Classic artifact compare</small>
+          <strong>${escapeHtml(resultSummary)}</strong>
+        </span>
+        <span class="risk-badge ${escapeHtml(badgeClass)}">${escapeHtml(badgeLabel)}</span>
+      </summary>
+      <textarea class="classic-artifact-text" rows="4" spellcheck="false" placeholder="Paste a completed classic report JSON export or HTML dossier">${escapeHtml(comparison.input || '')}</textarea>
+      <div class="operator-toolbar compact">
+        <button class="pill-button" type="button" data-action="load-classic-artifact">Load artifact</button>
+        <button class="pill-button" type="button" data-action="compare-classic-artifact">Compare artifact</button>
+        <button class="pill-button" type="button" data-action="clear-classic-artifact" ${comparison.input || result || visibleComparisonError ? '' : 'disabled'}>Clear</button>
+      </div>
+      ${usingProofSavedResult ? '<p class="classic-compare-note">Using the proof-saved Classic comparison; pasted artifact text is stale for this proof.</p>' : ''}
+      ${visibleComparisonError ? `<p class="classic-compare-error">${escapeHtml(visibleComparisonError)}</p>` : ''}
+      ${rows.length ? `<div class="classic-compare-list">
+        ${rows.slice(0, 6).map((row) => `
+          <article class="${escapeHtml(reportParityClass(row.state))}">
+            <i class="fa-solid ${row.state === 'pass' ? 'fa-check' : row.state === 'mismatch' ? 'fa-circle-xmark' : row.state === 'missing' ? 'fa-circle-exclamation' : 'fa-triangle-exclamation'}"></i>
+            <span>
+              <strong>${escapeHtml(row.label)}</strong>
+              <small>${escapeHtml(row.detail)}</small>
+            </span>
+          </article>
+        `).join('')}
+      </div>` : ''}
+    </details>
+  `;
+}
+
+function renderReportParityAuditPanel(audit = buildV2ReportParityAudit()) {
+  const items = Array.isArray(audit?.items) ? audit.items : [];
+  const orderedItems = [
+    ...items.filter((item) => item.state === 'missing'),
+    ...items.filter((item) => item.state === 'warn'),
+    ...items.filter((item) => item.state === 'pass'),
+  ];
+  const comparisonItem = items.find((item) => item.id === 'classic-comparison');
+  const focusItems = comparisonItem
+    ? [comparisonItem, ...orderedItems.filter((item) => item.id !== comparisonItem)].slice(0, 6)
+    : orderedItems.slice(0, 6);
+  return `
+    <div class="report-parity-audit ${escapeHtml(reportParityClass(audit?.status))}">
+      <div class="report-parity-head">
+        <span>
+          <span class="eyebrow">Classic report parity audit</span>
+          <strong>${escapeHtml(audit?.status === 'pass' ? 'Classic evidence complete' : audit?.status === 'missing' ? 'Proof fields missing' : 'Ready for review')}</strong>
+          <em>${escapeHtml(`${audit?.score || 0}% complete · ${audit?.passCount || 0}/${audit?.itemCount || items.length || 0} checks passing`)}</em>
+        </span>
+        <span class="risk-badge ${escapeHtml(reportParityClass(audit?.status))}">${escapeHtml(audit?.status || 'missing')}</span>
+      </div>
+      <div class="report-parity-stats">
+        <span><small>Pass</small><strong>${Number(audit?.passCount || 0)}</strong></span>
+        <span><small>Warn</small><strong>${Number(audit?.warnCount || 0)}</strong></span>
+        <span><small>Missing</small><strong>${Number(audit?.missingCount || 0)}</strong></span>
+      </div>
+      <div class="report-parity-list">
+        ${focusItems.map((item) => `
+          <article class="${escapeHtml(reportParityClass(item.state))}">
+            <i class="fa-solid ${item.state === 'pass' ? 'fa-check' : item.state === 'missing' ? 'fa-circle-exclamation' : 'fa-triangle-exclamation'}"></i>
+            <span>
+              <strong>${escapeHtml(item.label)}</strong>
+              <small>${escapeHtml(item.detail)}</small>
+            </span>
+          </article>
+        `).join('')}
+      </div>
+      ${renderClassicArtifactComparisonPanel()}
+    </div>
+  `;
+}
+
+function finalizationNoticeRows({
+  report,
+  localDossier,
+  staleReport,
+  reportNeedsFinalArtifact,
+  airdropStatus,
+  failedAirdrop,
+} = {}) {
+  const rows = [];
+  if (report?.status === 'failed' || report?.failed) {
+    rows.push({
+      state: 'danger',
+      text: `Report publish failed: ${report.error || 'retry after checking RPC, Arweave, and Recovery PIN state'}. Click Publish report to retry.`,
+    });
+  } else if (report?.status === 'skipped') {
+    rows.push({
+      state: 'warn',
+      text: `Report publish skipped: ${report.reason || 'server did not return a permanent report URI'}. Click Publish report to retry when proof is ready.`,
+    });
+  }
+  if (staleReport) {
+    rows.push({
+      state: 'warn',
+      text: 'Existing report proof belongs to an older launch state. Regenerate the report before comparing against Classic.',
+    });
+  }
+  if (reportNeedsFinalArtifact) {
+    rows.push({
+      state: 'warn',
+      text: 'Terminal sweep is recorded. Download a fresh final dossier so the artifact carries the final sweep hash.',
+    });
+  }
+  if (state.prefs.publishLaunchReport === false && !localDossier) {
+    rows.push({
+      state: 'warn',
+      text: 'Report publishing is off. Download the local dossier before treating Step 6 as reviewable.',
+    });
+  }
+  const airdropIssue = airdropCompletionIssue(airdropStatus, 'publishing the report or sweeping');
+  if (airdropIssue) {
+    rows.push({
+      state: airdropStatus?.retryRequired ? 'danger' : 'warn',
+      text: airdropIssue,
+    });
+  } else if (failedAirdrop > 0) {
+    rows.push({
+      state: 'warn',
+      text: `${failedAirdrop} airdrop recipient${failedAirdrop === 1 ? '' : 's'} still need attention before you call the launch clean.`,
+    });
+  }
+  return rows;
+}
+
+function renderFinalizationPanel() {
+  const proof = currentLaunchProof();
+  const config = proofConfigForFingerprint(proof, currentLaunchConfig());
+  const badge = finalizationBadge(proof);
+  const reportParityAudit = buildV2ReportParityAudit(proof, config);
+  const retirementGate = buildClassicRetirementGate(proof, reportParityAudit, config);
+  const fieldVerification = buildV2FieldVerification({
+    proof,
+    config,
+    audit: reportParityAudit,
+    retirementGate,
+  });
+  const tokenMint = proof?.token?.mint || null;
+  const poolCount = launchProofPoolIds(proof).length;
+  const positionCount = proofPositions(proof?.liquidity?.results || []);
+  const report = currentReportPublish(proof, config, { allowTransient: true });
+  const staleReport = staleReportPublishForProof(proof, config);
+  const reportUri = report?.htmlUri || report?.jsonUri || null;
+  const localDossier = currentLocalDossier(proof, config);
+  const finalDestination = proofEffectiveDestination(proof, config);
+  const finalSweepComplete = transferHasWalletEmptyFinalSweepEvidence(proof?.transfer);
+  const reportArtifactRecord = report || localDossier || null;
+  const reportArtifactSweepBound = Boolean(
+    finalSweepComplete
+    && reportArtifactRecord
+    && reportArtifactMatchesTerminalSweep(reportArtifactRecord, proof)
+  );
+  const reportNeedsFinalArtifact = Boolean(
+    finalSweepComplete
+    && (reportUri || localDossier)
+    && !reportArtifactSweepBound
+  );
+  const airdropStatus = airdropCompletionStatus(proof, config.poolTopology);
+  const plannedAirdrop = Number(airdropStatus.planned || proof?.airdrop?.plannedRecipientCount || config.poolTopology?.airdrop?.recipients?.length || 0);
+  const deliveredAirdrop = Number(airdropStatus.delivered || proof?.airdrop?.deliveredCount || 0);
+  const failedAirdrop = Number(airdropStatus.failed || proof?.airdrop?.failedCount || 0);
+  const airdropRecipientRows = Array.isArray(proof?.airdrop?.recipients) ? proof.airdrop.recipients : [];
+  const airdropNeedsEvidenceRepair = Boolean(
+    airdropStatus.configured
+    && !airdropStatus.complete
+    && !airdropStatus.retryRequired
+    && Number(airdropStatus.pending || 0) <= 0
+    && airdropRecipientRows.length > 0
+  );
+  const reportProofReady = proofHasReportPublishEvidence(proof, config) && airdropStatus.complete;
+  const canPublish = state.apiStatus === 'connected'
+    && proof?.canPublishReport
+    && reportProofReady
+    && state.prefs.publishLaunchReport !== false
+    && !state.reportPublishing;
+  const canRunAirdrop = state.apiStatus === 'connected'
+    && !state.demoActive
+    && proof?.canRunAirdrop
+    && plannedAirdrop > 0
+    && (airdropStatus.pending > 0 || airdropNeedsEvidenceRepair)
+    && !state.airdropRunning;
+  const canRetryAirdrop = state.apiStatus === 'connected'
+    && !state.demoActive
+    && failedAirdrop > 0
+    && !state.airdropRunning;
+  const canDownload = Boolean(proof || state.launchPlan);
+  const canDownloadDossier = canDownload && (!proof?.token?.mint || reportProofReady || reportNeedsFinalArtifact);
+  const reportLabel = state.reportPublishing
+    ? 'Publishing report'
+    : reportNeedsFinalArtifact ? 'Report needs final proof' : reportUri ? 'Report published' : localDossier ? 'Dossier downloaded' : state.prefs.publishLaunchReport === false ? 'Report local only' : 'Publish report';
+  const dossierDownloadLabel = reportNeedsFinalArtifact ? 'Download final dossier' : 'Download dossier';
+  const airdropLabel = state.airdropRunning
+    ? 'Airdropping'
+    : airdropNeedsEvidenceRepair ? 'Repair proof'
+    : deliveredAirdrop || failedAirdrop ? 'Airdrop recorded' : 'Run airdrop';
+  const explorerItems = proofExplorerItems(proof, reportUri, config);
+  const fieldHandoffRows = fieldVerification.ready ? [] : [
+    ...(Array.isArray(fieldVerification.blockers) ? fieldVerification.blockers.map((item) => ({ ...item, group: 'Field' })) : []),
+    ...(Array.isArray(fieldVerification.criteriaBlockers) ? fieldVerification.criteriaBlockers.map((item) => ({ ...item, group: 'Criterion' })) : []),
+  ].filter((item) => item?.pass !== true).slice(0, 3);
+  const fieldHandoffRemaining = Math.max(0, Number(fieldVerification.blockerCount || 0) + Number(fieldVerification.criteriaBlockerCount || 0) - fieldHandoffRows.length);
+  const notices = finalizationNoticeRows({
+    report,
+    localDossier,
+    staleReport,
+    reportNeedsFinalArtifact,
+    airdropStatus,
+    failedAirdrop,
+  });
+
+  return `
+    <div class="finalize-panel">
+      <div class="finalize-head">
+        <span>
+          <span class="eyebrow">Classic Step 6 parity</span>
+          <h3>Report, airdrop, proof review</h3>
+          <p>${tokenMint ? `Mint ${shortAddress(tokenMint)} has ${poolCount} recorded pool ID${poolCount === 1 ? '' : 's'}.` : 'Create token and liquidity before final proof.'}</p>
+        </span>
+        <span class="risk-badge ${escapeHtml(badge.className)}">${escapeHtml(badge.label)}</span>
+      </div>
+      <div class="finalize-grid">
+        <span>
+          <small>Report</small>
+          <strong>${escapeHtml(reportNeedsFinalArtifact ? 'Needs final proof' : reportUri ? 'Published' : localDossier ? 'Local dossier' : staleReport ? 'Stale' : state.prefs.publishLaunchReport === false ? 'Local' : canPublish ? 'Ready' : 'Waiting')}</strong>
+          <em>${reportNeedsFinalArtifact ? 'download after sweep' : reportUri ? escapeHtml(shortAddress(reportUri)) : localDossier ? escapeHtml(localDossier.filename) : staleReport ? 'regenerate required' : `${poolCount} pool ID proof${poolCount === 1 ? '' : 's'}`}</em>
+        </span>
+        <span>
+          <small>Airdrop</small>
+          <strong>${deliveredAirdrop}/${plannedAirdrop}</strong>
+          <em>${failedAirdrop} failed</em>
+        </span>
+        <span>
+          <small>Positions</small>
+          <strong>${positionCount}</strong>
+          <em>${Number(proof?.liquidity?.lockedPositionCount || 0)} locked</em>
+        </span>
+        <span>
+          <small>Sweep</small>
+          <strong>${finalSweepComplete ? 'Recorded' : proof?.transfer ? 'Needs proof' : proof?.canSweep ? 'Ready' : 'Waiting'}</strong>
+          <em>${finalDestination ? escapeHtml(shortAddress(finalDestination)) : 'no destination'}</em>
+        </span>
+      </div>
+      <div class="proof-review-panel">
+        <div class="proof-review-head">
+          <span>
+            <span class="eyebrow">Proof review</span>
+            <strong>${tokenMint ? 'Explorer bundle ready' : 'Waiting for launch proof'}</strong>
+          </span>
+          <button class="pill-button" type="button" data-action="copy-v2-proof-summary" ${canDownload ? '' : 'disabled'}>Copy summary</button>
+        </div>
+        <div class="proof-link-grid">
+          ${explorerItems.length ? explorerItems.map((item) => (
+            item.href
+              ? `<a href="${escapeHtml(item.href)}" target="_blank" rel="noopener"><small>${escapeHtml(item.label)}</small><strong>${escapeHtml(item.value)}</strong></a>`
+              : `<span><small>${escapeHtml(item.label)}</small><strong>${escapeHtml(item.value)}</strong></span>`
+          )).join('') : '<span><small>Status</small><strong>No proof yet</strong></span>'}
+        </div>
+        ${fieldHandoffRows.length ? `<div class="field-handoff-list" aria-label="Missing field proof">
+          ${fieldHandoffRows.map((item) => `<article>
+            <small>${escapeHtml(item.group || 'Proof')} · ${escapeHtml(item.action || 'review')}</small>
+            <strong>${escapeHtml(item.label || item.id || 'Proof row')}</strong>
+            <span>${escapeHtml(item.detail || item.evidence || 'Evidence is missing.')}</span>
+          </article>`).join('')}
+          ${fieldHandoffRemaining ? `<p>+${fieldHandoffRemaining} more blocker${fieldHandoffRemaining === 1 ? '' : 's'} in the field parity packet.</p>` : ''}
+        </div>` : ''}
+      </div>
+      ${renderReportParityAuditPanel(reportParityAudit)}
+      <div class="operator-toolbar compact">
+        <button class="pill-button" type="button" data-action="publish-v2-report" ${canPublish ? '' : 'disabled'}>${escapeHtml(reportLabel)}</button>
+        <button class="pill-button" type="button" data-action="run-v2-airdrop" ${canRunAirdrop ? '' : 'disabled'}>${escapeHtml(airdropLabel)}</button>
+        <button class="pill-button" type="button" data-action="retry-v2-airdrop" ${canRetryAirdrop ? '' : 'disabled'}>Retry failed</button>
+        <button class="pill-button" type="button" data-action="load-v2-proof">Load proof</button>
+        <button class="pill-button" type="button" data-action="download-v2-dossier" ${canDownloadDossier ? '' : 'disabled'}>${escapeHtml(dossierDownloadLabel)}</button>
+        <button class="pill-button" type="button" data-action="download-v2-proof" ${canDownload ? '' : 'disabled'}>Download proof</button>
+        ${reportUri ? `<a class="pill-button link-button" href="${escapeHtml(reportUri)}" target="_blank" rel="noopener">Open report</a>` : ''}
+      </div>
+      ${notices.length ? `<div class="finalize-notices">
+        ${notices.map((notice) => `<p class="finalize-warning ${escapeHtml(notice.state)}">${escapeHtml(notice.text)}</p>`).join('')}
+      </div>` : ''}
+    </div>
+  `;
+}
+
+function renderCancelRefundPanel(config = currentLaunchConfig()) {
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  const destinationWallet = config.poolTopology.sweepDestination || '';
+  const busy = Boolean(
+    state.fullRunRunning
+    || state.realExecutionRunning
+    || state.demoLaunchRunning
+    || state.reportPublishing
+    || state.airdropRunning
+    || state.quoteAcquire.running
+    || state.cancelRefund.running
+  );
+  const validDestination = isProbablySolanaAddress(destinationWallet);
+  const sameWallet = walletPublicKey && destinationWallet === walletPublicKey;
+  const canCancel = state.apiStatus === 'connected'
+    && Boolean(state.apiClient?.cancelLaunchRefund || state.apiClient?.sweepPendingWallet)
+    && Boolean(walletPublicKey)
+    && validDestination
+    && !sameWallet
+    && !busy
+    && !state.secretPin.locked;
+  const result = state.cancelRefund.lastResult;
+  const metrics = result ? recoverySweepMetrics({
+    result: result.result,
+    warningCount: result.warningCount,
+    stillPending: result.partial,
+  }) : null;
+  const badge = state.cancelRefund.running
+    ? { label: 'Sweeping', className: 'warn' }
+    : state.cancelRefund.error
+      ? { label: 'Failed', className: 'danger' }
+      : result?.partial
+        ? { label: 'Review', className: 'warn' }
+        : result
+          ? { label: 'Refunded', className: '' }
+          : !walletPublicKey
+            ? { label: 'Needs wallet', className: 'warn' }
+            : !validDestination || sameWallet
+              ? { label: 'Needs destination', className: 'warn' }
+              : busy
+                ? { label: 'Busy', className: 'warn' }
+                : { label: 'Ready', className: '' };
+  const detail = state.cancelRefund.error
+    || (result
+      ? result.message
+      : 'Classic Cancel & Refund parity: sweep the selected launch wallet back to your destination. Already-created token or pools remain on-chain.');
+  return `
+    <div class="cancel-refund-panel ${escapeHtml(badge.className)}">
+      <div class="cancel-refund-head">
+        <span>
+          <span class="eyebrow">Classic cancel/refund</span>
+          <h3>Abort launch and sweep wallet</h3>
+          <p>${escapeHtml(detail)}</p>
+        </span>
+        <span class="risk-badge ${escapeHtml(badge.className)}">${escapeHtml(badge.label)}</span>
+      </div>
+      <div class="cancel-refund-grid">
+        <span><small>Launch wallet</small><strong>${walletPublicKey ? escapeHtml(shortAddress(walletPublicKey)) : 'Select'}</strong></span>
+        <span><small>Destination</small><strong>${destinationWallet ? escapeHtml(shortAddress(destinationWallet)) : 'Set sweep'}</strong></span>
+        <span><small>Tokens</small><strong>${metrics ? metrics.tokens : '-'}</strong></span>
+        <span><small>NFTs</small><strong>${metrics ? metrics.nfts : '-'}</strong></span>
+        <span><small>SOL</small><strong>${metrics ? metrics.sol.toFixed(4) : '-'}</strong></span>
+        <span><small>Warnings</small><strong>${metrics ? metrics.warnings : '-'}</strong></span>
+      </div>
+      <div class="operator-toolbar compact">
+        <button class="pill-button danger" type="button" data-action="cancel-refund-launch" ${canCancel ? '' : 'disabled'}>
+          ${state.cancelRefund.running ? 'Refunding' : 'Cancel & refund'}
+        </button>
+        <button class="pill-button" type="button" data-action="inspect-recovery">Recovery</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderClassicBridge() {
+  const config = currentLaunchConfig();
+  const topology = config.poolTopology;
+  const poolCount = topology.pools.length;
+  const sliceCount = topology.pools.reduce((sum, pool) => sum + (pool.distribution?.length || 1), 0);
+  const ladderCount = topology.pools.reduce((sum, pool) => sum + Number(pool.ladder?.bandCount || pool.ladder?.bands?.length || 0), 0);
+  const fundingEstimateStatus = classicFundingEstimateStatus(config);
+  const estimate = fundingEstimateStatus.matchesConfig ? state.classicFundingEstimate : null;
+  const totalSol = Number(estimate?.totalSol || state.launchPlan?.funding?.estimatedSolCost || 0);
+  const routeCount = estimate?.autoSwapPlan?.length || 0;
+  const readiness = state.executionReadiness;
+  const readinessMeta = readinessBadge(readiness);
+  const quoteSafety = customQuoteSafetySummary(topology);
+  const effectiveReadinessMeta = quoteSafety.blockers.length
+    ? { label: 'Blocked', className: 'danger' }
+    : quoteSafety.warnings.length && readinessMeta.className !== 'danger'
+      ? { label: readinessMeta.label === 'Ready' ? 'Review' : readinessMeta.label, className: 'warn' }
+      : readinessMeta;
+  const blockers = Array.isArray(readiness?.blockers) ? readiness.blockers : [];
+  const warnings = Array.isArray(readiness?.warnings) ? readiness.warnings : [];
+  const phaseSummary = Array.isArray(readiness?.phases) && readiness.phases.length
+    ? readiness.phases.slice(0, 6).map((phase) => `
+      <span class="readiness-phase ${escapeHtml(phase.state)}">
+        <small>${escapeHtml(phase.title)}</small>
+        <strong>${escapeHtml(phase.state)}</strong>
+      </span>
+    `).join('')
+    : `
+      <span class="readiness-phase waiting"><small>Create token</small><strong>check</strong></span>
+      <span class="readiness-phase waiting"><small>Create LP</small><strong>check</strong></span>
+      <span class="readiness-phase waiting"><small>Resume</small><strong>check</strong></span>
+      <span class="readiness-phase waiting"><small>Sweep</small><strong>check</strong></span>
+    `;
+  const readinessDetail = quoteSafety.blockers[0]?.detail
+    || blockers[0]?.detail
+    || readiness?.nextEndpoint
+    || (state.apiStatus === 'connected' ? 'Check the managed-wallet and classic endpoint payloads.' : 'Open through the local Trebuchet app to check execution.');
+  const demoRunLabel = state.demoLaunchRunning
+    ? 'Running demo'
+    : state.lastDemoLaunchRun
+      ? 'Rerun demo'
+      : 'Run demo';
+  const canExecuteNext = !state.demoActive
+    && readiness?.status === 'ready'
+    && Boolean(readiness?.nextEndpoint)
+    && state.apiStatus === 'connected'
+    && quoteSafety.blockers.length === 0;
+  const canRunFull = canExecuteNext && !state.fullRunRunning && !state.realExecutionRunning;
+  const executeNextLabel = state.realExecutionRunning
+    ? 'Executing'
+    : readiness?.nextAction || 'Execute next';
+  const fullRunLabel = state.fullRunRunning
+    ? state.fullRunStep || 'Running'
+    : 'Run full';
+  $('#classicSummary').textContent = `${poolCount} pool${poolCount === 1 ? '' : 's'} · ${sliceCount} slice${sliceCount === 1 ? '' : 's'} · ${ladderCount} ladder`;
+
+  const phaseRows = classicParityPhases.map((phase) => {
+    const stateName = phaseState(phase, config);
+    const icon = stateName === 'pass' ? 'fa-check' : stateName === 'danger' ? 'fa-ban' : 'fa-triangle-exclamation';
+    const actionLabel = {
+      wallet: 'Wallet',
+      vanity: state.vanityRunning ? 'Cancel' : 'Grind',
+      token: 'Plan',
+      pools: 'Plan',
+      funding: 'Estimate',
+      execution: state.executionChecking ? 'Checking' : 'Check',
+      recovery: 'Journal',
+      sweep: 'Plan',
+    }[phase.id] || 'Open';
+    const detail = phase.id === 'funding' && fundingEstimateStatus.stale
+      ? 'Funding estimate is stale; rerun before execution'
+      : phase.id === 'funding' && estimate
+        ? `${totalSol.toFixed(3)} SOL / ${routeCount} acquire route${routeCount === 1 ? '' : 's'}`
+      : phase.id === 'pools'
+        ? `${poolCount} pools, ${sliceCount} main slices, ${ladderCount} ladder bands`
+        : phase.id === 'vanity' && state.vanityCandidates.length
+          ? `${state.vanityCandidates.length} saved option${state.vanityCandidates.length === 1 ? '' : 's'}`
+          : phase.detail;
+    return `
+      <article class="classic-phase ${stateName}">
+        <i class="fa-solid ${icon}" aria-hidden="true"></i>
+        <span>
+          <h3>${escapeHtml(phase.title)}</h3>
+          <p>${escapeHtml(detail)}</p>
+        </span>
+        <button class="pill-button" type="button" data-action="${escapeHtml(phase.action)}">${escapeHtml(actionLabel)}</button>
+      </article>
+    `;
+  }).join('');
+
+  $('#classicBridge').innerHTML = `
+    <div class="classic-bridge-head">
+      <span>
+        <span class="eyebrow">Classic parity bridge</span>
+        <h2>Production engine surfaces in v2</h2>
+      </span>
+      <span class="risk-badge ${state.apiStatus === 'connected' ? '' : 'warn'}">${state.apiStatus === 'connected' ? 'Local API' : 'Preview'}</span>
+    </div>
+    <div class="classic-stats">
+      <span><small>Pools</small><strong>${poolCount}</strong></span>
+      <span><small>LP slices</small><strong>${sliceCount}</strong></span>
+      <span><small>Ladder</small><strong>${ladderCount}</strong></span>
+      <span><small>Prealloc</small><strong>${topology.preallocation.supplyPercent.toFixed(1)}%</strong></span>
+      <span><small>Reserve</small><strong>${topology.reservePercent.toFixed(1)}%</strong></span>
+      <span><small>Funding</small><strong>${fundingEstimateStatus.stale ? 'Re-estimate' : totalSol ? `${totalSol.toFixed(2)} SOL` : 'Run estimate'}</strong></span>
+    </div>
+    <div class="execution-readiness ${escapeHtml(effectiveReadinessMeta.className)}">
+      <div class="readiness-main">
+        <span>
+          <span class="eyebrow">Execution readiness</span>
+          <strong>${escapeHtml(readiness?.nextAction || 'Classic endpoint check')}</strong>
+          <small>${escapeHtml(readinessDetail)}</small>
+        </span>
+        <span class="readiness-counts">
+          <strong>${escapeHtml(readiness?.nextEndpoint || 'No endpoint')}</strong>
+          <small>${blockers.length + quoteSafety.blockers.length} blocker${blockers.length + quoteSafety.blockers.length === 1 ? '' : 's'} · ${warnings.length + quoteSafety.warnings.length} warning${warnings.length + quoteSafety.warnings.length === 1 ? '' : 's'}</small>
+        </span>
+        <span class="risk-badge ${escapeHtml(effectiveReadinessMeta.className)}">${escapeHtml(effectiveReadinessMeta.label)}</span>
+        ${state.demoActive ? `<button class="pill-button" type="button" data-action="run-demo-launch" ${state.demoLaunchRunning ? 'disabled' : ''}>${escapeHtml(demoRunLabel)}</button>` : ''}
+        ${!state.demoActive ? `<button class="pill-button danger" type="button" data-action="run-full-launch" ${!canRunFull ? 'disabled' : ''}>${escapeHtml(fullRunLabel)}</button>` : ''}
+        ${!state.demoActive ? `<button class="pill-button" type="button" data-action="execute-next-run" ${!canExecuteNext || state.realExecutionRunning || state.fullRunRunning ? 'disabled' : ''}>${escapeHtml(executeNextLabel)}</button>` : ''}
+        <button class="pill-button" type="button" data-action="check-readiness" ${state.executionChecking ? 'disabled' : ''}>${state.executionChecking ? 'Checking' : 'Check'}</button>
+    </div>
+    <div class="readiness-phases">${phaseSummary}</div>
+    </div>
+    ${renderQuoteAcquirePanel()}
+    ${renderCancelRefundPanel(config)}
+    ${renderFinalizationPanel()}
+    <div class="classic-phase-grid">${phaseRows}</div>
+    <div class="phase-tree">${renderClassicPhaseTree(topology)}</div>
+  `;
+}
+
+function activityLogEntries() {
+  const logs = state.liveOps.logs.map((entry, index) => ({
+    id: `log-${entry.seq || index}`,
+    type: 'log',
+    level: String(entry.level || 'log').toLowerCase(),
+    label: String(entry.level || 'log').toUpperCase(),
+    message: entry.msg || '',
+    time: entry.ts || null,
+    seq: Number(entry.seq || 0),
+  }));
+  const progress = state.liveOps.lpEvents.map((event, index) => ({
+    id: `progress-${index}-${event.stage || 'event'}`,
+    type: 'progress',
+    level: 'progress',
+    label: 'PROGRESS',
+    message: progressEventLabel(event),
+    time: event.ts || null,
+    seq: 0,
+  }));
+  const airdrops = state.liveOps.airdropSnapshots.map((entry, index) => ({
+    id: `airdrop-${index}-${entry.key || entry.status || 'event'}`,
+    type: 'airdrop',
+    level: airdropProgressLevel(entry),
+    label: 'AIRDROP',
+    message: airdropProgressLogLabel(entry),
+    time: entry.ts || entry.updatedAt || entry.startedAt || null,
+    seq: 0,
+  }));
+  return [...logs, ...progress, ...airdrops]
+    .sort((a, b) => {
+      const timeA = Date.parse(a.time || '') || 0;
+      const timeB = Date.parse(b.time || '') || 0;
+      if (timeA !== timeB) return timeA - timeB;
+      return a.seq - b.seq;
+    })
+    .slice(-80)
+    .reverse();
+}
+
+function activityLogMatchesFilter(entry) {
+  const filter = state.activityLog.filter || 'all';
+  if (filter === 'all') return true;
+  if (filter === 'progress') return entry.type === 'progress';
+  if (filter === 'airdrop') return entry.type === 'airdrop';
+  if (filter === 'warn') return ['warn', 'warning'].includes(entry.level);
+  if (filter === 'error') return entry.level === 'error';
+  if (filter === 'log') return entry.type === 'log' && !['warn', 'warning', 'error'].includes(entry.level);
+  return true;
+}
+
+function renderActivityLogDrawer() {
+  const drawer = $('#activityLogDrawer');
+  if (!drawer) return;
+  const entries = activityLogEntries();
+  const logCount = entries.filter((entry) => entry.type === 'log' && !['warn', 'warning', 'error'].includes(entry.level)).length;
+  const filters = [
+    { id: 'all', label: 'All', count: entries.length },
+    { id: 'progress', label: 'Progress', count: entries.filter((entry) => entry.type === 'progress').length },
+    { id: 'airdrop', label: 'Airdrop', count: entries.filter((entry) => entry.type === 'airdrop').length },
+    { id: 'log', label: 'Log', count: logCount },
+    { id: 'warn', label: 'Warn', count: entries.filter((entry) => ['warn', 'warning'].includes(entry.level)).length },
+    { id: 'error', label: 'Error', count: entries.filter((entry) => entry.level === 'error').length },
+  ];
+  const filteredEntries = entries.filter(activityLogMatchesFilter);
+
+  drawer.classList.toggle('is-open', state.activityLog.open);
+  drawer.setAttribute('aria-hidden', state.activityLog.open ? 'false' : 'true');
+  drawer.innerHTML = `
+    <button class="activity-drawer-backdrop" type="button" data-action="close-activity-log" aria-label="Close activity log"></button>
+    <section class="activity-drawer-panel" role="dialog" aria-modal="true" aria-label="Activity log">
+      <header class="activity-drawer-head">
+        <span>
+          <span class="eyebrow">Activity log</span>
+          <h3>${entries.length} event${entries.length === 1 ? '' : 's'}</h3>
+        </span>
+        <button class="icon-button" type="button" data-action="close-activity-log" aria-label="Close activity log">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </header>
+      <div class="activity-filter-tabs">
+        ${filters.map((filter) => `
+          <button type="button" class="${state.activityLog.filter === filter.id ? 'is-selected' : ''}" data-action="filter-activity-log" data-log-filter="${escapeHtml(filter.id)}">
+            <span>${escapeHtml(filter.label)}</span>
+            <strong>${filter.count}</strong>
+          </button>
+        `).join('')}
+      </div>
+      <div class="activity-log-list">
+        ${filteredEntries.length ? filteredEntries.map((entry) => `
+          <article class="${escapeHtml(entry.level)}">
+            <span class="activity-log-meta">
+              <strong>${escapeHtml(entry.label)}</strong>
+              <small>${entry.time ? escapeHtml(formatDate(entry.time)) : 'live'}</small>
+            </span>
+            <p>${escapeHtml(entry.message)}</p>
+          </article>
+        `).join('') : `
+          <article class="empty">
+            <span class="activity-log-meta"><strong>EMPTY</strong><small>${escapeHtml(state.activityLog.filter)}</small></span>
+            <p>No matching activity yet.</p>
+          </article>
+        `}
+      </div>
+    </section>
+  `;
+}
+
+function renderLiveOpsPanel() {
+  const panel = $('#liveOpsPanel');
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  const lp = state.liveOps.lp;
+  const airdrop = state.liveOps.airdrop;
+  const logs = state.liveOps.logs.slice(-5).reverse();
+  const lpEvents = state.liveOps.lpEvents.slice(-4).reverse();
+  const airdropEvents = state.liveOps.airdropSnapshots.slice(-3).reverse();
+  const lpStatus = lp?.status || (state.apiStatus === 'connected' ? 'idle' : 'static');
+  const airdropStatus = airdrop?.status || 'idle';
+  const airdropTotal = Number(airdrop?.total || 0);
+  const airdropDone = Number(airdrop?.completed || 0) + Number(airdrop?.failedCount || 0);
+
+  panel.innerHTML = `
+    <div class="live-ops-head">
+      <span>
+        <span class="eyebrow">Live operations</span>
+        <h3>${walletPublicKey ? escapeHtml(shortAddress(walletPublicKey)) : 'No launch wallet'}</h3>
+      </span>
+      <span class="live-ops-actions">
+        <span class="risk-badge ${state.liveOps.polling ? '' : 'warn'}">${state.liveOps.polling ? 'Polling' : state.apiStatus === 'connected' ? 'Ready' : 'Static'}</span>
+        <button class="pill-button" type="button" data-action="open-activity-log">Logs</button>
+      </span>
+    </div>
+    <div class="live-ops-grid">
+      <span>
+        <small>LP progress</small>
+        <strong>${escapeHtml(lpStatus)}</strong>
+        <em>${Number(lp?.totalEvents || state.liveOps.lpCursor || 0)} event${Number(lp?.totalEvents || state.liveOps.lpCursor || 0) === 1 ? '' : 's'}</em>
+      </span>
+      <span>
+        <small>Airdrop</small>
+        <strong>${escapeHtml(airdropStatus)}</strong>
+        <em>${airdropTotal ? `${airdropDone}/${airdropTotal}` : 'no active run'}</em>
+      </span>
+      <span>
+        <small>Backend logs</small>
+        <strong>${state.liveOps.logs.length}</strong>
+        <em>${state.liveOps.lastUpdatedAt ? `updated ${formatDate(state.liveOps.lastUpdatedAt)}` : 'waiting'}</em>
+      </span>
+    </div>
+    <div class="live-ops-feed">
+      ${lpEvents.length ? lpEvents.map((event) => `
+        <article>
+          <i class="fa-solid fa-circle-check"></i>
+          <span>${escapeHtml(progressEventLabel(event))}</span>
+        </article>
+      `).join('') : '<article><i class="fa-solid fa-wave-square"></i><span>No LP progress events yet</span></article>'}
+      ${airdropEvents.map((entry) => `
+        <article class="${escapeHtml(airdropProgressLevel(entry))}">
+          <i class="fa-solid fa-paper-plane"></i>
+          <span>${escapeHtml(airdropProgressLogLabel(entry))}</span>
+        </article>
+      `).join('')}
+      ${logs.length ? logs.map((entry) => `
+        <article class="${escapeHtml(entry.level || '')}">
+          <i class="fa-solid fa-terminal"></i>
+          <span>${escapeHtml(entry.msg || '')}</span>
+        </article>
+      `).join('') : '<article><i class="fa-solid fa-terminal"></i><span>No backend log entries yet</span></article>'}
+    </div>
+  `;
+  renderActivityLogDrawer();
+}
+
+function renderExecutionLedger() {
+  const entries = Array.isArray(state.executionLedger) ? state.executionLedger : [];
+  const rows = entries.length ? entries.slice(0, 4).map((entry) => `
+    <article class="execution-ledger-row ${escapeHtml(entry.status || '')}">
+      <span class="execution-ledger-icon">
+        <i class="fa-solid ${executionLedgerIcon(entry.status)}"></i>
+      </span>
+      <span class="execution-ledger-copy">
+        <strong>${escapeHtml(entry.label || 'Classic operation')}</strong>
+        <small>${escapeHtml(entry.detail || entry.error || 'Guarded local-wallet execution.')}</small>
+      </span>
+      <span class="execution-ledger-meta">
+        <strong>${escapeHtml([entry.phase || 'run', executionLedgerAttemptLabel(entry)].filter(Boolean).join(' / '))}</strong>
+        <small>${escapeHtml(formatLedgerCost(entry))} / ${escapeHtml(formatLedgerDuration(entry))}</small>
+      </span>
+    </article>
+  `).join('') : `
+    <article class="execution-ledger-row idle">
+      <span class="execution-ledger-icon">
+        <i class="fa-solid fa-shield-halved"></i>
+      </span>
+      <span class="execution-ledger-copy">
+        <strong>No guarded operations yet</strong>
+        <small>Executed classic operations will appear here with retries, duration, and observed SOL deltas.</small>
+      </span>
+      <span class="execution-ledger-meta">
+        <strong>armed run</strong>
+        <small>waiting</small>
+      </span>
+    </article>
+  `;
+  return `
+    <section class="execution-ledger" aria-label="Execution ledger">
+      <div class="execution-ledger-head">
+        <span>
+          <span class="eyebrow">Execution ledger</span>
+          <strong>${entries.length ? entries[0]?.status === 'running' ? 'Operation running' : 'Latest guarded operations' : 'Classic proof trail'}</strong>
+        </span>
+        <span>${entries.length} event${entries.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="execution-ledger-list">
+        ${rows}
+      </div>
+    </section>
+  `;
+}
+
+function renderSignaturePanel() {
+  const context = runProgressContext();
+  const { rows, total, signed, percent, activeId } = context;
+  const activeTx = rows.find((tx) => tx.id === activeId) || rows[0];
+  const panel = $('#signaturePanel');
+  const completionLabel = context.isLive ? 'phases complete' : 'operations complete';
+
+  panel.classList.toggle('is-staged', state.transactions.length > 0 || context.isLive);
+  panel.classList.toggle('is-live', context.isLive);
+  panel.innerHTML = `
+    <div class="signature-head">
+      <span>
+        <span class="eyebrow">${escapeHtml(context.headingLabel)}</span>
+        <h2>${signed} / ${total} ${completionLabel}</h2>
+      </span>
+      <span class="signature-source">${escapeHtml(context.source)}</span>
+    </div>
+    <div class="signature-progress" aria-label="Run progress">
+      <span style="width:${percent}%"></span>
+    </div>
+    <div class="signature-focus">
+      <span class="signature-index">${Math.max(1, rows.findIndex((tx) => tx.id === activeTx?.id) + 1)}</span>
+      <span>
+        <small>${escapeHtml(context.focusLabel)}</small>
+        <strong>${escapeHtml(activeTx?.label || 'Review run plan first')}</strong>
+        <p>${escapeHtml(activeTx?.effects?.[0] || 'Trebuchet will list the local-wallet run before you arm it.')}</p>
+      </span>
+    </div>
+    <div class="signature-track">
+      ${rows.map((tx, index) => {
+        const stateLabel = tx.state === 'signed'
+          ? 'signed'
+          : tx.state === 'blocked'
+            ? 'blocked'
+            : tx.id === activeId && (state.transactions.length || context.isLive)
+              ? 'next'
+              : state.transactions.length || context.isLive ? 'pending' : 'draft';
+        const actionAttrs = state.transactions.length
+          ? `data-action="review" data-tx="${escapeHtml(tx.id)}"`
+          : `data-action="noop" data-message="${escapeHtml(context.isLive ? (tx.effects?.[0] || tx.label) : 'Review the launch plan first')}"`;
+        return `
+          <button class="signature-step ${stateLabel}" type="button" title="${escapeHtml(tx.label)}" ${actionAttrs}>
+            <span class="signature-index">${index + 1}</span>
+          </button>
+        `;
+      }).join('')}
+    </div>
+    ${renderExecutionLedger()}
+  `;
+}
+
+function buildFieldRunbookContext(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  config = proofConfigForFingerprint(proof, config);
+  const audit = buildV2ReportParityAudit(proof, config);
+  const retirementGate = buildClassicRetirementGate(proof, audit, config);
+  const fieldVerification = buildV2FieldVerification({
+    proof,
+    config,
+    audit,
+    retirementGate,
+  });
+  const requirementsById = new Map((Array.isArray(fieldVerification.requirements) ? fieldVerification.requirements : [])
+    .filter((item) => item?.id)
+    .map((item) => [item.id, item]));
+  const criteriaById = new Map((Array.isArray(fieldVerification.replacementCriteria) ? fieldVerification.replacementCriteria : [])
+    .filter((item) => item?.id)
+    .map((item) => [item.id, item]));
+  return {
+    audit,
+    retirementGate,
+    fieldVerification,
+    requirementsById,
+    criteriaById,
+  };
+}
+
+function fieldRunbookStageChecks(stage = {}, context = buildFieldRunbookContext()) {
+  const requirementChecks = (Array.isArray(stage.requirements) ? stage.requirements : [])
+    .map((id) => context.requirementsById.get(id) || {
+      id,
+      label: id,
+      pass: false,
+      action: 'review-field-proof',
+      detail: 'Field proof row is not available yet.',
+    });
+  const criterionChecks = (Array.isArray(stage.criteria) ? stage.criteria : [])
+    .map((id) => context.criteriaById.get(id) || {
+      id,
+      label: id,
+      pass: false,
+      action: 'review-replacement-criterion',
+      detail: 'Replacement-criteria row is not available yet.',
+    });
+  return [...requirementChecks, ...criterionChecks];
+}
+
+function buildFieldRunbookStages(context = buildFieldRunbookContext()) {
+  const rows = launchStages.map((stage, index) => {
+    const checks = fieldRunbookStageChecks(stage, context);
+    const blockers = checks.filter((item) => item.pass !== true);
+    const pass = checks.length > 0 && blockers.length === 0;
+    const evidenceCount = checks.filter((item) => item.pass === true).length;
+    const firstBlocker = blockers[0] || null;
+    return {
+      ...stage,
+      index,
+      pass,
+      evidenceCount,
+      checkCount: checks.length,
+      blockers,
+      firstBlocker,
+      action: firstBlocker?.action || 'none',
+      detail: firstBlocker?.detail || stage.detail,
+    };
+  });
+  const firstBlockedIndex = rows.findIndex((stage) => !stage.pass);
+  rows.forEach((stage) => {
+    if (stage.pass) {
+      stage.state = 'done';
+      stage.stateClass = 'is-done';
+      stage.badge = 'Proof';
+      stage.detail = stage.detail || 'Field proof is attached.';
+      return;
+    }
+    if (stage.index === firstBlockedIndex) {
+      stage.state = 'active';
+      stage.stateClass = stage.evidenceCount > 0 ? 'is-active is-warn' : 'is-active';
+      stage.badge = stage.evidenceCount > 0 ? 'Review' : 'Active';
+      return;
+    }
+    stage.state = 'queued';
+    stage.stateClass = 'is-queued';
+    stage.badge = 'Queued';
+  });
+  return rows;
+}
+
+function renderFieldRunbookSummary(context, rows) {
+  const fieldVerification = context.fieldVerification || {};
+  if (fieldVerification.ready) return 'Field parity ready';
+  const criteriaBlockers = Number(fieldVerification.criteriaBlockerCount || 0);
+  const blockerCount = Number(fieldVerification.blockerCount || 0) + criteriaBlockers;
+  const nextAction = fieldVerification.nextAction || rows.find((stage) => !stage.pass)?.action || 'review-field-proof';
+  return `${blockerCount} blocker${blockerCount === 1 ? '' : 's'} · ${nextAction}`;
+}
+
+function fieldRunbookActionControl(action = '', stage = {}) {
+  const detail = stage.detail || stage.firstBlocker?.detail || 'Review the current field-verification blocker.';
+  const fallback = (label, message = detail) => ({
+    dataAction: 'noop',
+    label,
+    message,
+    disabled: false,
+  });
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  const selectedWallet = selectedManagedWallet();
+  const walletLocked = state.secretPin.locked === true || selectedWallet?.secretPinLocked === true;
+
+  if (!action || action === 'none') return null;
+  if (action === 'run-demo-launch') {
+    return { dataAction: 'run-demo-launch', label: 'Run demo', disabled: state.demoLaunchRunning === true };
+  }
+  if (action === 'generate-or-unlock-wallet') {
+    if (walletPublicKey && walletLocked) return { dataAction: 'unlock-secret-pin', label: 'Unlock PIN' };
+    return { dataAction: walletPublicKey ? 'import-wallet' : 'generate-wallet', label: walletPublicKey ? 'Import wallet' : 'Generate wallet' };
+  }
+  if (action === 'grind-or-select-vanity-ca') {
+    return { dataAction: 'start-vanity', label: state.vanityGrinding ? 'Grinding' : 'Grind CA', disabled: state.vanityGrinding === true };
+  }
+  if (['stage-launch-plan', 'fix-pool-topology'].includes(action)) {
+    return { dataAction: 'review-plan', label: 'Stage plan' };
+  }
+  if (action === 'run-viewport-smoke') {
+    return fallback('Smoke test', 'Run `npm run test:v2:viewport`, then reconnect the local app so Trebuchet can verify the proof hash.');
+  }
+  if (['run-funding-and-quote-checks', 'back-held-reserve'].includes(action)) {
+    const fundingEstimateStatus = classicFundingEstimateStatus(currentLaunchConfig());
+    if (!fundingEstimateStatus.matchesConfig) {
+      return { dataAction: 'estimate-funding', label: fundingEstimateStatus.stale ? 'Re-estimate' : 'Estimate' };
+    }
+    const quoteStatus = quoteAcquireStatus(currentLaunchConfig());
+    if (quoteAcquireRoutes().length && !quoteStatus.ready) {
+      return { dataAction: state.quoteAcquire.running ? 'poll-quote-acquire' : 'start-quote-acquire', label: state.quoteAcquire.running ? 'Refresh quote' : 'Acquire quote' };
+    }
+    if (quoteManualPrefundItems().length) {
+      return { dataAction: 'refresh-manual-prefund', label: 'Check prefund', disabled: state.manualPrefund.polling === true };
+    }
+    return { dataAction: 'check-readiness', label: 'Check' };
+  }
+  if (action === 'run-non-demo-v2-launch') {
+    const canRunFull = state.apiStatus === 'connected'
+      && !state.demoActive
+      && state.executionReadiness?.status === 'ready'
+      && state.executionReadiness?.nextEndpoint
+      && !state.fullRunRunning
+      && !state.realExecutionRunning;
+    return canRunFull
+      ? { dataAction: 'run-full-launch', label: 'Run live' }
+      : { dataAction: 'check-readiness', label: state.executionChecking ? 'Checking' : 'Check', disabled: state.executionChecking === true };
+  }
+  if (['attach-terminal-report', 'publish-report-and-sweep'].includes(action)) {
+    const proof = currentLaunchProof();
+    const config = proofConfigForFingerprint(proof, currentLaunchConfig());
+    const reportPublishEvidence = proofHasReportPublishEvidence(proof, config);
+    const airdropStatus = airdropCompletionStatus(proof, config.poolTopology);
+    const reportProofReady = reportPublishEvidence && airdropStatus.complete;
+    if (proof?.canPublishReport && reportProofReady) return { dataAction: 'publish-v2-report', label: state.reportPublishing ? 'Publishing' : 'Publish', disabled: state.reportPublishing === true };
+    return { dataAction: 'download-v2-dossier', label: 'Dossier', disabled: !proof?.token?.mint || !reportProofReady };
+  }
+  if (action === 'compare-classic-artifact') {
+    const comparisonInput = String(
+      state.classicReportComparison?.input
+      || document.querySelector('.classic-artifact-text')?.value
+      || '',
+    ).trim();
+    if (!comparisonInput) return { dataAction: 'load-classic-artifact', label: 'Load artifact' };
+    return { dataAction: 'compare-classic-artifact', label: 'Compare' };
+  }
+  if (action === 'load-or-resume-journal') {
+    return { dataAction: 'inspect-recovery', label: 'Recovery' };
+  }
+  if (action === 'resolve-proof-audit') {
+    return fallback('Audit', 'Open Diagnostics and resolve the missing proof-audit rows before retiring Classic.');
+  }
+  if (action === 'complete-replacement-criteria') {
+    return fallback('Criteria', 'Complete every replacement-criteria chip before retiring Classic.');
+  }
+  return fallback('Review');
+}
+
+function renderStages() {
+  const context = buildFieldRunbookContext();
+  const rows = buildFieldRunbookStages(context);
+  $('#runbookSummary').textContent = renderFieldRunbookSummary(context, rows);
+  $('#stageList').innerHTML = rows.map((stage, index) => {
+    const done = stage.pass;
+    const active = !done && stage.state === 'active';
+    const queued = !done && !active;
+    const badgeClass = done ? '' : active && stage.evidenceCount > 0 ? 'warn' : active ? 'danger' : 'warn';
+    const actionLine = done
+      ? `${stage.evidenceCount}/${stage.checkCount} proof checks attached.`
+      : active
+        ? `Next: ${stage.action || 'review-field-proof'}`
+        : `Waiting on ${stage.firstBlocker?.label || 'prior field proof'}.`;
+    const control = active ? fieldRunbookActionControl(stage.action, stage) : null;
+    const controlAttrs = control
+      ? [
+        `data-action="${escapeHtml(control.dataAction)}"`,
+        control.message ? `data-message="${escapeHtml(control.message)}"` : '',
+        control.disabled ? 'disabled' : '',
+      ].filter(Boolean).join(' ')
+      : '';
+    return `
+      <article class="stage-row ${stage.stateClass || ''}">
+        <span class="stage-num">${done ? '<i class="fa-solid fa-check"></i>' : index + 1}</span>
+        <span class="stage-copy">
+          <h3>${escapeHtml(stage.title)}</h3>
+          <p>${escapeHtml(stage.detail)}</p>
+          <small class="stage-action">${escapeHtml(actionLine)}</small>
+        </span>
+        <span class="stage-status-stack">
+          <span class="tx-state ${badgeClass}">${done ? 'Done' : active ? stage.badge : queued ? 'Queued' : stage.badge}</span>
+          ${control ? `<button class="pill-button stage-control" type="button" ${controlAttrs}>${escapeHtml(control.label)}</button>` : ''}
+        </span>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderQueue() {
+  const context = runProgressContext();
+  const { rows, total, signed, pending, percent, activeId, isLive } = context;
+  const activeTx = rows.find((tx) => tx.id === activeId) || rows[0] || null;
+  const pendingRows = state.transactions.length
+    ? rows.filter((tx) => tx.state === 'pending')
+    : isLive
+      ? activeTx ? [activeTx] : []
+      : rows.slice(0, 4);
+  const planSource = state.launchPlan?.source === 'local-api' ? 'local API' : 'static';
+  const queueTitle = state.transactions.length
+    ? `${signed} / ${total} complete`
+    : isLive
+      ? activeTx?.state === 'blocked' ? 'Resolve blocker' : activeTx?.label || context.headingLabel
+      : 'Review run plan';
+  $('#queueTitle').textContent = queueTitle;
+  $('#queueList').innerHTML = state.transactions.length
+    ? `
+      <div class="queue-progress">
+        <span style="width:${percent}%"></span>
+      </div>
+      ${pendingRows.length ? pendingRows.slice(0, 1).map((tx) => `
+        <article class="queue-row compact">
+          <span class="queue-copy">
+            <h3>Run envelope armed</h3>
+            <p>Trebuchet will sign ${pending} queued operation${pending === 1 ? '' : 's'} from ${escapeHtml(account().name)}.</p>
+          </span>
+          <button class="secondary-button compact" type="button" data-action="review" data-tx="${escapeHtml(tx.id)}">
+            <i class="fa-solid fa-shield-halved"></i>
+            <span>Envelope</span>
+          </button>
+        </article>
+      `).join('') : '<div class="empty-state">Run complete.</div>'}
+      <div class="kv-row"><span>Plan source</span><strong>${escapeHtml(planSource)}</strong></div>
+      <div class="next-hint">One armed run replaces per-transaction wallet prompts.</div>
+    `
+    : isLive ? `
+      <div class="queue-progress">
+        <span style="width:${percent}%"></span>
+      </div>
+      <div class="queue-row compact ${escapeHtml(activeTx?.state || '')}">
+        <span class="queue-copy">
+          <h3>${escapeHtml(activeTx?.state === 'blocked' ? 'Live checkpoint blocked' : context.focusLabel)}</h3>
+          <p>${escapeHtml(activeTx?.effects?.[0] || 'v2 is watching launch proof and readiness evidence.')}</p>
+        </span>
+      </div>
+      <div class="kv-row"><span>Source</span><strong>${escapeHtml(context.source)}</strong></div>
+      <div class="kv-row"><span>Progress</span><strong>${signed}/${total}</strong></div>
+      <div class="kv-row"><span>Next</span><strong>${escapeHtml(activeTx?.label || 'Review proof')}</strong></div>
+      <div class="next-hint">Live evidence replaces repeated wallet prompts once Trebuchet controls the launch key.</div>
+    `
+    : `
+      <div class="queue-progress">
+        <span style="width:0%"></span>
+      </div>
+      <div class="queue-row compact">
+        <span class="queue-copy">
+          <h3>Fund first, run later</h3>
+          <p>Trebuchet stages one decoded run envelope for its local launch wallet.</p>
+        </span>
+      </div>
+      <div class="kv-row"><span>Mode</span><strong>${escapeHtml(state.launchMode)}</strong></div>
+      <div class="kv-row"><span>Blockers</span><strong>${bootGuardrails().filter((item) => item.state === 'danger').length}</strong></div>
+      <div class="kv-row"><span>Runtime</span><strong>${escapeHtml(state.apiStatus === 'connected' ? 'Local app' : 'Preview')}</strong></div>
+    `;
+
+  const stageButton = $('#stageButton');
+  stageButton.disabled = state.staging;
+  stageButton.querySelector('span').textContent = state.staging
+    ? 'Reviewing'
+    : state.transactions.length ? 'Review again' : 'Review run plan';
+  if (pending === 0 && (state.transactions.length > 0 || isLive)) {
+    $('#queueTitle').textContent = 'Complete';
+  }
+}
+
+function bootGuardrails() {
+  const apiState = state.apiStatus === 'connected' ? 'pass' : 'warn';
+  const rpcState = state.apiStatus === 'connected' && state.rpcHealth !== 'error' ? 'pass' : 'warn';
+  const recoveryState = state.recovery.failedJournalCount > 0 || state.recovery.pendingWalletCount > 0
+    ? 'warn'
+    : 'pass';
+  const recoveryDetail = state.apiStatus === 'connected'
+    ? `${state.recovery.journalCount} launch journals, ${state.recovery.pendingWalletCount} pending wallets.`
+    : 'Recovery inventory is available after the local API connects.';
+  const planGuardrails = Array.isArray(state.launchPlan?.guardrails)
+    ? state.launchPlan.guardrails.map((item) => ({
+      id: item.id,
+      title: item.title,
+      detail: item.detail,
+      state: item.state || 'pass',
+    }))
+    : [];
+
+  return [
+    {
+      id: 'api',
+      title: state.apiStatus === 'connected' ? 'Local API connected' : 'Static preview',
+      detail: state.apiDetail,
+      state: apiState,
+    },
+    {
+      id: 'rpc',
+      title: 'RPC health',
+      detail: state.apiStatus === 'connected'
+        ? `${state.rpcName}: ${state.rpcHealthLabel}`
+        : 'RPC health requires the local API.',
+      state: rpcState,
+    },
+    ...planGuardrails,
+    ...guardrails.filter((item) => item.id !== 'rpc' && item.id !== 'resume'),
+    {
+      id: 'resume',
+      title: 'Recovery inventory',
+      detail: recoveryDetail,
+      state: recoveryState,
+    },
+  ];
+}
+
+function renderGuardrails() {
+  const items = bootGuardrails();
+  const warnings = items.filter((item) => item.state !== 'pass');
+  const passes = items.filter((item) => item.state === 'pass');
+  const visible = [...warnings, ...passes].slice(0, 4);
+  const omitted = Math.max(0, items.length - visible.length);
+  $('#preflightSummary').textContent = warnings.length
+    ? `${warnings.length} warning${warnings.length === 1 ? '' : 's'}`
+    : 'Clear';
+  $('#guardrailList').innerHTML = [
+    ...visible.map((item) => {
+    const icon = item.state === 'pass' ? 'fa-check' : item.state === 'warn' ? 'fa-triangle-exclamation' : 'fa-ban';
+    const label = item.state === 'pass' ? 'Pass' : item.state === 'warn' ? 'Warn' : 'Blocked';
+    return `
+      <article class="guardrail-row ${item.state}">
+        <span>
+          <h3><i class="fa-solid ${icon}"></i> ${escapeHtml(item.title)}</h3>
+          <p>${escapeHtml(item.detail)}</p>
+        </span>
+        <span class="risk-badge ${item.state === 'warn' ? 'warn' : item.state === 'danger' ? 'danger' : ''}">${label}</span>
+      </article>
+    `;
+    }),
+    omitted
+      ? `<article class="guardrail-row muted-row"><span><h3>${omitted} checks quiet</h3><p>Passing checks are collapsed.</p></span></article>`
+      : '',
+  ].join('');
+}
+
+function demoRunHasCompletedReadiness(run = state.lastDemoLaunchRun) {
+  if (!run || typeof run !== 'object') return false;
+  const tokenMint = String(run.token?.tokenMint || run.token?.mint || '').trim();
+  const results = Array.isArray(run.liquidity?.results) ? run.liquidity.results : [];
+  const resultCount = Number(results.length);
+  const readiness = run.readiness || {};
+  const completion = readiness.completion || {};
+  const sweepPhase = Array.isArray(readiness.phases)
+    ? readiness.phases.find((phase) => phase.id === 'sweep')
+    : null;
+  const config = demoRunLaunchConfig(run);
+  const topology = config?.poolTopology || {};
+  const plannedAirdropRows = Array.isArray(topology?.airdrop?.recipients)
+    ? topology.airdrop.recipients
+    : [];
+  const plannedAirdropCount = topology?.airdrop?.enabled
+    ? Math.max(
+      Math.max(0, Math.floor(Number(topology.airdrop.recipientCount || 0))),
+      plannedAirdropRows.length,
+    )
+    : 0;
+  const airdrop = run.transfer?.airdrop || {};
+  const airdropTransferred = Array.isArray(airdrop.transferred) ? airdrop.transferred : [];
+  const airdropFailed = Array.isArray(airdrop.failed) ? airdrop.failed : [];
+  const deliveredAirdropWallets = new Set(
+    airdropTransferred.map((row) => String(row?.wallet || '').trim()).filter(Boolean),
+  );
+  const airdropTransferTxCount = airdropTransferred
+    .filter((row) => String(row?.txId || row?.signature || '').trim()).length;
+  const demoAirdropComplete = plannedAirdropCount <= 0 || Boolean(
+    airdropFailed.length === 0
+    && airdropTransferred.length >= plannedAirdropCount
+    && deliveredAirdropWallets.size >= plannedAirdropCount
+    && airdropTransferTxCount >= plannedAirdropCount
+  );
+  const positionRows = results.flatMap((pool) => [
+    ...(Array.isArray(pool?.mainPositions) ? pool.mainPositions : []),
+    ...(Array.isArray(pool?.ladderPositions) ? pool.ladderPositions : []),
+    ...(Array.isArray(pool?.supportPositions) ? pool.supportPositions : []),
+    ...(pool?.bootstrap ? [pool.bootstrap] : []),
+  ]);
+  const lockedFeeKeyRows = positionRows.filter((position) => position?.locked === true);
+  const demoLiquidityComplete = Boolean(
+    resultCount > 0
+    && positionRows.length > 0
+    && lockedFeeKeyRows.length === positionRows.length
+    && lockedFeeKeyRows.every((position) => String(position?.feeKeyNftMint || position?.feeKeyMint || '').trim()),
+  );
+  const feeKeyRecipientRows = positionRows.filter((position) => String(position?.recipient || '').trim());
+  const demoFeeKeyRecipientsComplete = feeKeyRecipientRows.every((position) => {
+    const recipient = String(position?.recipient || '').trim();
+    const transferredTo = String(position?.transferredTo || '').trim();
+    const transferTx = String(position?.transferTx || position?.txIds?.transfer || '').trim();
+    return Boolean(recipient && transferredTo === recipient && transferTx);
+  });
+  return Boolean(
+    tokenMint
+    && demoLiquidityComplete
+    && demoFeeKeyRecipientsComplete
+    && demoAirdropComplete
+    && transferHasWalletEmptyFinalSweepEvidence(run.transfer)
+    && readiness.completed === true
+    && readiness.completionStatus === 'complete'
+    && completion.terminalSweepEvidence === true
+    && readiness.nextEndpoint == null
+    && (!sweepPhase || sweepPhase.state === 'complete')
+  );
+}
+
+function stableFundingFingerprintValue(value) {
+  if (Array.isArray(value)) return value.map(stableFundingFingerprintValue);
+  if (value && typeof value === 'object') {
+    return Object.keys(value).sort().reduce((record, key) => {
+      const stable = stableFundingFingerprintValue(value[key]);
+      if (stable !== undefined) record[key] = stable;
+      return record;
+    }, {});
+  }
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' || typeof value === 'boolean' || value === null) return value;
+  if (value === undefined) return undefined;
+  return String(value);
+}
+
+function fundingEstimateAllocationsForTopology(topology = {}) {
+  const pools = Array.isArray(topology.pools) ? topology.pools : [];
+  return pools.map((pool) => {
+    const quoteDecimalsOverride = Number.isFinite(Number(pool.quoteDecimalsOverride ?? pool.quoteDecimals))
+      ? Math.max(0, Math.floor(Number(pool.quoteDecimalsOverride ?? pool.quoteDecimals)))
+      : undefined;
+    const quoteUsdOverride = Number.isFinite(Number(pool.quoteUsdOverride ?? pool.quotePriceUsd)) && Number(pool.quoteUsdOverride ?? pool.quotePriceUsd) > 0
+      ? Number(pool.quoteUsdOverride ?? pool.quotePriceUsd)
+      : undefined;
+    return {
+      quoteToken: pool.quoteToken,
+      quoteMint: pool.quoteMint || undefined,
+      supplyPercent: pool.supplyPercent,
+      ammConfigIndex: pool.ammConfigIndex,
+      quoteUsdOverride,
+      quoteDecimalsOverride,
+      quoteSymbolOverride: pool.quoteSymbol,
+      distribution: pool.distribution,
+      bootstrap: pool.bootstrap,
+      ladder: pool.ladder,
+      support: pool.support,
+    };
+  });
+}
+
+function fundingEstimateTokenSupply(value) {
+  const cleaned = String(value ?? '').replace(/[^\d]/g, '');
+  return cleaned || '1000000000';
+}
+
+function launchPlanLogoFingerprint(logo = null) {
+  if (!logo || typeof logo !== 'object') return null;
+  return {
+    name: logo.name || null,
+    mimeType: logo.mimeType || logo.type || null,
+    sizeBytes: Number.isFinite(Number(logo.sizeBytes ?? logo.size))
+      ? Number(logo.sizeBytes ?? logo.size)
+      : null,
+  };
+}
+
+function launchPlanConfigFingerprint(config = currentLaunchConfig()) {
+  const token = config?.token || {};
+  const topology = config?.poolTopology || {};
+  return JSON.stringify(stableFundingFingerprintValue({
+    token: {
+      name: token.name || null,
+      symbol: token.symbol || null,
+      supply: fundingEstimateTokenSupply(token.supply),
+      description: token.description || null,
+      decimals: token.decimals ?? 9,
+      logo: launchPlanLogoFingerprint(token.logo),
+    },
+    launchSol: Number.isFinite(Number(config?.launchSol)) ? Number(config.launchSol) : null,
+    mode: config?.mode || null,
+    vanity: config?.vanity || null,
+    poolTopology: topology,
+    funding: {
+      launchSol: Number.isFinite(Number(config?.funding?.launchSol ?? config?.launchSol))
+        ? Number(config.funding?.launchSol ?? config.launchSol)
+        : null,
+      targetMarketCapUsd: Number.isFinite(Number(config?.funding?.targetMarketCapUsd ?? topology.targetMarketCapUsd))
+        ? Number(config?.funding?.targetMarketCapUsd ?? topology.targetMarketCapUsd)
+        : null,
+    },
+    avatarCollection: config?.avatarCollection || null,
+  }));
+}
+
+function launchPlanWalletFingerprint(walletPublicKey) {
+  return String(walletPublicKey || '').trim() || null;
+}
+
+function stampLaunchPlanConfigFingerprint(plan, config = currentLaunchConfig(), walletPublicKey = selectedLaunchWalletPublicKey()) {
+  if (!plan || typeof plan !== 'object') return plan;
+  return {
+    ...plan,
+    v2LaunchConfigFingerprint: launchPlanConfigFingerprint(config),
+    v2LaunchWalletFingerprint: launchPlanWalletFingerprint(walletPublicKey),
+  };
+}
+
+function launchPlanOperationSequenceStatus(operations = []) {
+  const operationIds = (Array.isArray(operations) ? operations : [])
+    .map((operation) => String(operation?.id || '').trim())
+    .filter(Boolean);
+  const missingOperationIds = V2_REQUIRED_LAUNCH_PLAN_OPERATION_IDS
+    .filter((id) => !operationIds.includes(id));
+  let cursor = -1;
+  const ordered = V2_REQUIRED_LAUNCH_PLAN_OPERATION_IDS.every((id) => {
+    const index = operationIds.indexOf(id);
+    if (index <= cursor) return false;
+    cursor = index;
+    return true;
+  });
+  return {
+    operationIds,
+    missingOperationIds,
+    ordered,
+    ready: missingOperationIds.length === 0 && ordered,
+  };
+}
+
+function localApiLaunchPlanStatus(plan = state.launchPlan, config = currentLaunchConfig()) {
+  const expectedFingerprint = launchPlanConfigFingerprint(config);
+  const actualFingerprint = String(plan?.v2LaunchConfigFingerprint || '').trim();
+  const expectedWalletFingerprint = launchPlanWalletFingerprint(selectedLaunchWalletPublicKey());
+  const actualWalletFingerprint = launchPlanWalletFingerprint(plan?.v2LaunchWalletFingerprint);
+  const isLocalApiPlan = state.apiStatus === 'connected' && plan?.source === 'local-api';
+  const operations = Array.isArray(plan?.operations) ? plan.operations : [];
+  const sequence = launchPlanOperationSequenceStatus(operations);
+  const decodedOperationEvidence = Boolean(operations.length && operations.every((operation) => (
+    operation?.kind === 'local-wallet-operation'
+    && operation?.source === 'v2-launch-plan'
+    && operation?.signer === 'trebuchet-managed-launch-wallet'
+    && operation?.simulation?.decoded === true
+  )));
+  const operationSequenceEvidence = Boolean(decodedOperationEvidence && sequence.ready);
+  const matchesConfig = Boolean(isLocalApiPlan && actualFingerprint && actualFingerprint === expectedFingerprint);
+  const matchesWallet = Boolean(
+    isLocalApiPlan
+    && expectedWalletFingerprint
+    && actualWalletFingerprint
+    && actualWalletFingerprint === expectedWalletFingerprint
+  );
+  const ready = Boolean(matchesConfig && matchesWallet && operationSequenceEvidence);
+  return {
+    isLocalApiPlan,
+    expectedFingerprint,
+    actualFingerprint,
+    expectedWalletFingerprint,
+    actualWalletFingerprint,
+    matchesConfig,
+    matchesWallet,
+    decodedOperationEvidence,
+    operationSequenceEvidence,
+    operationIds: sequence.operationIds,
+    missingOperationIds: sequence.missingOperationIds,
+    operationSequenceOrdered: sequence.ordered,
+    operationCount: operations.length,
+    ready,
+    stale: Boolean(isLocalApiPlan && (!matchesConfig || !matchesWallet)),
+    incomplete: Boolean(matchesConfig && matchesWallet && !operationSequenceEvidence),
+  };
+}
+
+function localApiLaunchPlanStaleReason(planStatus = localApiLaunchPlanStatus()) {
+  const reasons = [];
+  if (!planStatus.matchesConfig) reasons.push('current token/pool model');
+  if (!planStatus.matchesWallet) reasons.push('selected launch wallet');
+  return reasons.join(' or ') || 'current token/pool model or selected launch wallet';
+}
+
+function localApiLaunchPlanIncompleteReason(planStatus = localApiLaunchPlanStatus()) {
+  if (!planStatus.decodedOperationEvidence) return 'its local-wallet operation rows are not fully decoded';
+  if (Array.isArray(planStatus.missingOperationIds) && planStatus.missingOperationIds.length) {
+    return `it is missing required operation ${planStatus.missingOperationIds[0]}${planStatus.missingOperationIds.length === 1 ? '' : ` and ${planStatus.missingOperationIds.length - 1} more`}`;
+  }
+  if (planStatus.operationSequenceOrdered === false) return 'its operations are not in the required Classic launch order';
+  return 'it is missing the complete ordered run envelope';
+}
+
+function classicFundingEstimateRequest(config = currentLaunchConfig()) {
+  const topology = config?.poolTopology || {};
+  const token = config?.token || {};
+  const preallocation = topology.preallocation || {};
+  const airdrop = topology.airdrop || {};
+  return {
+    allocations: stableFundingFingerprintValue(fundingEstimateAllocationsForTopology(topology)),
+    targetMarketCapUsd: Number(topology.targetMarketCapUsd || 0),
+    publishLaunchReport: topology.report?.publish !== false,
+    token: {
+      supply: fundingEstimateTokenSupply(token.supply),
+      decimals: 9,
+    },
+    preallocation: {
+      enabled: preallocation.enabled === true || Number(preallocation.supplyPercent || 0) > 0,
+      supplyPercent: Number(preallocation.supplyPercent || 0),
+      source: preallocation.source || null,
+    },
+    airdrop: {
+      enabled: airdrop.enabled === true,
+      recipientCount: Number(airdrop.recipientCount || 0),
+      supplyPercent: Number(airdrop.supplyPercent || 0),
+      executionCostSol: Number(airdrop.executionCostSol || 0),
+    },
+  };
+}
+
+function classicFundingEstimateFingerprint(config = currentLaunchConfig()) {
+  return JSON.stringify(stableFundingFingerprintValue(classicFundingEstimateRequest(config)));
+}
+
+function classicFundingEstimateStatus(config = currentLaunchConfig(), estimate = state.classicFundingEstimate) {
+  const hasEstimate = Number(estimate?.totalSol || 0) > 0;
+  const expectedFingerprint = classicFundingEstimateFingerprint(config);
+  const actualFingerprint = String(estimate?.v2FundingFingerprint || '').trim();
+  const matchesConfig = Boolean(hasEstimate && actualFingerprint && actualFingerprint === expectedFingerprint);
+  return {
+    estimate,
+    hasEstimate,
+    matchesConfig,
+    stale: Boolean(hasEstimate && !matchesConfig),
+    expectedFingerprint,
+    actualFingerprint,
+  };
+}
+
+function stampClassicFundingEstimate(estimate, config = currentLaunchConfig()) {
+  if (!estimate || typeof estimate !== 'object') return estimate;
+  return {
+    ...estimate,
+    v2FundingFingerprint: classicFundingEstimateFingerprint(config),
+    v2FundingInputs: classicFundingEstimateRequest(config),
+  };
+}
+
+function currentClassicFundingEstimateForConfig(config = currentLaunchConfig()) {
+  return classicFundingEstimateStatus(config).matchesConfig ? state.classicFundingEstimate : null;
+}
+
+function proofLaunchConfigSnapshotState(proof = currentLaunchProof()) {
+  const launchConfig = proof?.launchConfig && typeof proof.launchConfig === 'object'
+    ? proof.launchConfig
+    : null;
+  const missing = [];
+  const mismatches = [];
+  const textMatches = (left, right) => {
+    const a = String(left ?? '').trim();
+    const b = String(right ?? '').trim();
+    return !a || !b || a === b;
+  };
+  const numbersMatch = (left, right) => {
+    if (left == null || left === '' || right == null || right === '') return true;
+    const a = Number(left);
+    const b = Number(right);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return String(left ?? '').trim() === String(right ?? '').trim();
+    return Math.abs(a - b) < 1e-9;
+  };
+  const requiredTextMatches = (left, right) => {
+    const a = String(left ?? '').trim();
+    const b = String(right ?? '').trim();
+    return Boolean(a && b && a === b);
+  };
+  const requiredNumbersMatch = (left, right) => (
+    left != null && left !== ''
+    && right != null && right !== ''
+    && numbersMatch(left, right)
+  );
+  const textMatchesWhenSnapshotPresent = (left, right) => String(left ?? '').trim()
+    ? requiredTextMatches(left, right)
+    : true;
+  const numbersMatchWhenSnapshotPresent = (left, right) => left != null && left !== ''
+    ? requiredNumbersMatch(left, right)
+    : true;
+  const poolRowsMatch = (snapshotPool = {}, journalPool = {}) => (
+    requiredTextMatches(snapshotPool.quoteToken || snapshotPool.quoteSymbol, journalPool.quoteToken || journalPool.quoteSymbol || journalPool.quote)
+    && textMatchesWhenSnapshotPresent(snapshotPool.quoteMint, journalPool.quoteMint)
+    && requiredNumbersMatch(snapshotPool.supplyPercent, journalPool.supplyPercent)
+    && numbersMatchWhenSnapshotPresent(snapshotPool.ammConfigIndex, journalPool.ammConfigIndex)
+  );
+  if (!launchConfig) {
+    return { state: 'missing', complete: false, missing: ['snapshot'] };
+  }
+  if (
+    String(launchConfig.schema || '').trim() !== 'trebuchet-v2-launch-config'
+    || String(launchConfig.source || '').trim() !== 'trebuchet-v2'
+  ) {
+    missing.push('v2 snapshot marker');
+  }
+  const token = launchConfig.token && typeof launchConfig.token === 'object'
+    ? launchConfig.token
+    : null;
+  const topology = launchConfig.poolTopology && typeof launchConfig.poolTopology === 'object'
+    ? launchConfig.poolTopology
+    : null;
+  if (!token) {
+    missing.push('token');
+  } else {
+    if (!String(token.name || token.symbol || '').trim()) missing.push('token identity');
+    if (!String(token.supply ?? '').trim()) missing.push('token supply');
+  }
+  if (!topology) {
+    missing.push('pool topology');
+  } else if (!Array.isArray(topology.pools) || topology.pools.length === 0) {
+    missing.push('planned pools');
+  }
+  if (token && proof?.token && typeof proof.token === 'object') {
+    if (!requiredTextMatches(token.name, proof.token.name)) mismatches.push('token name');
+    if (!requiredTextMatches(token.symbol, proof.token.symbol)) mismatches.push('token symbol');
+    if (!requiredNumbersMatch(token.supply, proof.token.totalSupply ?? proof.token.supply)) mismatches.push('token supply');
+    if (!requiredNumbersMatch(token.decimals, proof.token.decimals)) mismatches.push('token decimals');
+  }
+  const snapshotPools = topology && Array.isArray(topology.pools) ? topology.pools : [];
+  const journalPools = Array.isArray(proof?.poolPlan?.allocations) ? proof.poolPlan.allocations : [];
+  if (snapshotPools.length > 0 && journalPools.length > 0) {
+    if (snapshotPools.length !== journalPools.length) {
+      mismatches.push('planned pool count');
+    } else {
+      snapshotPools.forEach((pool, index) => {
+        if (!poolRowsMatch(pool, journalPools[index])) {
+          mismatches.push(`planned pool ${index + 1}`);
+        }
+      });
+    }
+  }
+  return {
+    state: missing.length ? 'incomplete' : mismatches.length ? 'mismatch' : 'complete',
+    complete: missing.length === 0 && mismatches.length === 0,
+    missing,
+    mismatches,
+  };
+}
+
+function utf8ByteLength(value) {
+  const text = String(value ?? '');
+  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(text).length;
+  try {
+    return unescape(encodeURIComponent(text)).length;
+  } catch (_) {
+    return text.length;
+  }
+}
+
+function tokenConfigStatus(config = currentLaunchConfig()) {
+  const token = config?.token || {};
+  const name = String(token.name || '').trim();
+  const symbol = String(token.symbol || '').trim();
+  const supplyRaw = String(token.supply ?? '').trim().replace(/,/g, '');
+  const description = String(token.description || '').trim();
+  const logo = token.logo && typeof token.logo === 'object' ? token.logo : null;
+  const issues = [];
+  if (!name) {
+    issues.push('Token name is required.');
+  } else if (utf8ByteLength(name) > CLASSIC_TOKEN_NAME_MAX_BYTES) {
+    issues.push(`Token name must be ${CLASSIC_TOKEN_NAME_MAX_BYTES} UTF-8 bytes or fewer.`);
+  }
+  if (!symbol) {
+    issues.push('Token symbol is required.');
+  } else if (utf8ByteLength(symbol) > CLASSIC_TOKEN_SYMBOL_MAX_BYTES) {
+    issues.push(`Token symbol must be ${CLASSIC_TOKEN_SYMBOL_MAX_BYTES} UTF-8 bytes or fewer.`);
+  }
+  if (utf8ByteLength(description) > CLASSIC_TOKEN_DESCRIPTION_MAX_BYTES) {
+    issues.push(`Token description must be ${CLASSIC_TOKEN_DESCRIPTION_MAX_BYTES} UTF-8 bytes or fewer.`);
+  }
+  if (!/^[1-9]\d*$/.test(supplyRaw)) {
+    issues.push('Total supply must be a positive whole number.');
+  } else {
+    try {
+      if (BigInt(supplyRaw) > CLASSIC_MAX_WHOLE_TOKEN_SUPPLY) {
+        issues.push('Total supply must not exceed 10,000,000,000.');
+      }
+    } catch (_) {
+      issues.push('Total supply must be a positive whole number.');
+    }
+  }
+  if (state.tokenLogoError) {
+    issues.push(`Token logo failed validation: ${state.tokenLogoError}`);
+  } else if (logo) {
+    const mime = String(logo.type || logo.mime || logo.mimeType || '').toLowerCase();
+    const sizeBytes = Number(logo.sizeBytes ?? logo.size);
+    const width = Number(logo.width);
+    const height = Number(logo.height);
+    if (mime && !['image/png', 'image/jpeg'].includes(mime)) {
+      issues.push('Token logo must be a PNG or JPG image.');
+    }
+    if (Number.isFinite(sizeBytes) && (sizeBytes <= 0 || sizeBytes > CLASSIC_LOGO_MAX_BYTES)) {
+      issues.push('Token logo must be 100KB or smaller.');
+    }
+    if (Number.isFinite(width) && Number.isFinite(height)) {
+      if (width > CLASSIC_LOGO_MAX_DIMENSION || height > CLASSIC_LOGO_MAX_DIMENSION) {
+        issues.push(`Token logo must be at most ${CLASSIC_LOGO_MAX_DIMENSION}x${CLASSIC_LOGO_MAX_DIMENSION}px.`);
+      }
+      if (width < CLASSIC_LOGO_MIN_DIMENSION || height < CLASSIC_LOGO_MIN_DIMENSION) {
+        issues.push(`Token logo must be at least ${CLASSIC_LOGO_MIN_DIMENSION}x${CLASSIC_LOGO_MIN_DIMENSION}px.`);
+      }
+    }
+  }
+  return {
+    ready: issues.length === 0,
+    issues,
+    name,
+    symbol,
+    supply: supplyRaw,
+    hasLogo: Boolean(logo),
+  };
+}
+
+function buildClassicRetirementGate(proof = currentLaunchProof(), audit = null, config = currentLaunchConfig()) {
+  config = proofConfigForFingerprint(proof, config);
+  const expectedAuditFingerprint = launchProofFingerprint(proof, config);
+  audit = reportParityAuditMatchesProof(audit, proof, config)
+    ? audit
+    : buildV2ReportParityAudit(proof, config);
+  const comparison = currentClassicComparisonForProof(proof, config);
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const plannedPools = buildV2ReportPoolPlan(config, results, proof);
+  const plannedPoolCount = Math.max(1, plannedPools.length || 0);
+  const plannedPositionCount = plannedPools.reduce((sum, pool) => sum + Number(pool.plannedPositionCount || 0), 0);
+  const recordedPoolIds = launchProofPoolIds(proof);
+  const poolCount = Number(proof?.liquidity?.poolCount || results.length || 0);
+  const positionCount = proofPositions(results);
+  const liquidityEvidence = comparisonLiquidityEvidenceState(proof, {
+    plannedPoolCount,
+    plannedPositionCount,
+  });
+  const recordedPositionCount = liquidityEvidence.positionCount;
+  const lockedPositionCount = liquidityEvidence.lockedPositionCount;
+  const feeKeyCount = liquidityEvidence.feeKeyCount;
+  const txEvidence = v2LiquidityTransactionEvidenceCounts(results);
+  const feeKeyRecipientTarget = txEvidence.feeKeyRecipientRows.length;
+  const report = currentReportPublish(proof, config);
+  const localDossier = currentLocalDossier(proof, config);
+  const staleReport = staleReportPublishForProof(proof, config);
+  const reportUri = report?.htmlUri || report?.jsonUri || null;
+  const reportArtifactRecord = report || localDossier || null;
+  const reportArtifact = reportUri || localDossier;
+  const finalSweepComplete = transferHasWalletEmptyFinalSweepEvidence(proof?.transfer);
+  const reportArtifactSweepBound = Boolean(
+    finalSweepComplete
+    && reportArtifactRecord
+    && reportArtifactMatchesTerminalSweep(reportArtifactRecord, proof)
+  );
+  const isDemoProof = proof?.source === 'demo-run' || proof?.demo === true || proof?.stage === 'demo_completed';
+  const comparisonIsV2Artifact = comparison?.artifactSource === 'trebuchet-v2';
+  const comparisonMatchesProof = classicComparisonMatchesProof(comparison, proof, config);
+  const comparisonEvidence = classicComparisonRequiredEvidence(comparison, proof, config);
+  const proofLaunchConfigSnapshot = proofLaunchConfigSnapshotState(proof);
+  const proofJournalEvidence = Boolean(proof?.journalId);
+  const localJournalEvidenceState = proofJournalEvidenceState(proof);
+  const matchingLocalJournal = localJournalEvidenceState.journal;
+  const proofTerminalJournalEvidence = proofHasTerminalLaunchJournal(proof);
+  const proofWalletEvidence = Boolean(proof?.walletPublicKey);
+  const liveTokenAuthorityFields = ['mintAuthorityRenounced', 'freezeAuthorityDisabled', 'metadataUpdateAuthorityRevoked', 'metadataImmutable'];
+  const liveTokenAuthorityPassCount = liveTokenAuthorityFields.filter((field) => proof?.token?.[field] === true).length;
+  const liveTokenAuthorityComplete = liveTokenAuthorityPassCount === liveTokenAuthorityFields.length;
+  const livePoolIdentityComplete = Boolean(
+    plannedPoolCount > 0
+    && recordedPoolIds.length === plannedPoolCount
+    && poolCount === plannedPoolCount
+    && txEvidence.poolCreateTxCount >= plannedPoolCount
+    && !liquidityEvidence.missing.includes('pool count')
+  );
+  const livePositionProofComplete = Boolean(
+    plannedPositionCount > 0
+    && recordedPositionCount >= plannedPositionCount
+    && txEvidence.openTxCount >= recordedPositionCount
+    && !liquidityEvidence.missing.some((item) => ['position count', 'position records'].includes(item))
+  );
+  const liveLockProofComplete = Boolean(
+    recordedPositionCount > 0
+    && lockedPositionCount >= recordedPositionCount
+    && txEvidence.lockTxCount >= recordedPositionCount
+    && !liquidityEvidence.missing.includes('lock count')
+    && feeKeyCount >= lockedPositionCount
+    && !liquidityEvidence.missing.includes('fee key count')
+    && txEvidence.feeKeyRecipientTransferred >= feeKeyRecipientTarget
+  );
+  const liveLiquidityProofComplete = Boolean(livePoolIdentityComplete && livePositionProofComplete && liveLockProofComplete);
+  const hasCompletedLiveProof = Boolean(
+    proof
+    && !isDemoProof
+    && proofLaunchConfigSnapshot.complete
+    && proofJournalEvidence
+    && proofTerminalJournalEvidence
+    && proofWalletEvidence
+    && proof?.token?.mint
+    && liveTokenAuthorityComplete
+    && liveLiquidityProofComplete
+    && finalSweepComplete,
+  );
+  const demoRunComplete = demoRunHasCompletedReadiness();
+  const replacementCriteria = buildV2ReplacementCriteriaAudit({
+    proof,
+    audit,
+    hasCompletedLiveProof,
+    demoRunComplete,
+    reportArtifact,
+    reportArtifactRecord,
+    reportArtifactSweepBound,
+    comparison,
+    comparisonMatchesProof,
+    comparisonEvidence,
+    comparisonIsV2Artifact,
+    config,
+  });
+  const missingReplacementCriteria = replacementCriteria.filter((item) => item.pass !== true);
+  const requirements = [
+    {
+      id: 'live-proof',
+      pass: hasCompletedLiveProof,
+      detail: hasCompletedLiveProof
+        ? `Live v2 proof has ${poolCount} pool${poolCount === 1 ? '' : 's'} and ${positionCount} position${positionCount === 1 ? '' : 's'}.`
+        : isDemoProof
+          ? 'Demo proof proves wiring only; run a real v2 launch before retiring Classic.'
+          : proof && proofLaunchConfigSnapshot.state === 'missing'
+            ? 'Completed proof is missing its frozen launch-config snapshot; load proof-bound config before retiring Classic.'
+            : proof && proofLaunchConfigSnapshot.state === 'mismatch'
+              ? `Completed proof has a mismatched frozen launch-config snapshot (${proofLaunchConfigSnapshot.mismatches.join(', ')}); load the journal-bound token and pool configuration before retiring Classic.`
+            : proof && !proofLaunchConfigSnapshot.complete
+              ? `Completed proof has an incomplete frozen launch-config snapshot (${proofLaunchConfigSnapshot.missing.join(', ')}); load proof-bound token and pool configuration before retiring Classic.`
+            : proof && !proofJournalEvidence
+              ? 'Completed proof is missing its launch journal id; load journal-backed proof before retiring Classic.'
+            : proof && !matchingLocalJournal
+              ? `Completed proof journal ${proof.journalId} is not loaded from the local launch-journal store; refresh local recovery state before retiring Classic.`
+            : proof && localJournalEvidenceState.mismatches.length
+              ? `Loaded launch journal does not match proof (${localJournalEvidenceState.mismatches.join(', ')}); refresh local recovery state before retiring Classic.`
+            : proof && localJournalEvidenceState.missing.length
+              ? `Loaded launch journal is missing proof backing (${localJournalEvidenceState.missing.join(', ')}); refresh local recovery state before retiring Classic.`
+            : proof && !proofTerminalJournalEvidence
+              ? `Launch journal is not terminal (${proof?.status || 'unknown'} / ${proof?.stage || 'unknown'}); refresh proof after final sweep before retiring Classic.`
+            : proof && !proofWalletEvidence
+              ? 'Completed proof is missing its launch wallet; load wallet-bound proof before retiring Classic.'
+          : proof?.token?.mint && !liveTokenAuthorityComplete
+                ? `Token authority proof is ${liveTokenAuthorityPassCount}/${liveTokenAuthorityFields.length}; complete authority evidence before retiring Classic.`
+          : proof && (!livePoolIdentityComplete && (recordedPoolIds.length !== plannedPoolCount || poolCount !== plannedPoolCount || liquidityEvidence.missing.includes('pool count')))
+            ? `Pool identity proof is ${recordedPoolIds.length}/${plannedPoolCount}; load exact recorded pool IDs before retiring Classic.`
+          : proof && txEvidence.poolCreateTxCount < plannedPoolCount
+            ? `Pool-create transaction proof is ${txEvidence.poolCreateTxCount}/${plannedPoolCount}; refresh journal-backed liquidity proof before retiring Classic.`
+          : proof && !livePositionProofComplete && (recordedPositionCount < plannedPositionCount || liquidityEvidence.missing.some((item) => ['position count', 'position records'].includes(item)))
+            ? `Position proof is ${recordedPositionCount}/${plannedPositionCount}; load exact position records before retiring Classic.`
+          : proof && txEvidence.openTxCount < recordedPositionCount
+            ? `Position-open transaction proof is ${txEvidence.openTxCount}/${recordedPositionCount}; refresh journal-backed liquidity proof before retiring Classic.`
+          : proof && !liveLockProofComplete && (lockedPositionCount < recordedPositionCount || liquidityEvidence.missing.includes('lock count'))
+            ? `Burn & Earn lock proof is ${lockedPositionCount}/${recordedPositionCount}; complete lock evidence before retiring Classic.`
+          : proof && txEvidence.lockTxCount < recordedPositionCount
+            ? `Burn & Earn lock transaction proof is ${txEvidence.lockTxCount}/${recordedPositionCount}; refresh journal-backed liquidity proof before retiring Classic.`
+          : proof && !liveLockProofComplete && (feeKeyCount < lockedPositionCount || liquidityEvidence.missing.includes('fee key count'))
+            ? `Fee Key NFT proof is ${feeKeyCount}/${lockedPositionCount}; complete Fee Key mint evidence before retiring Classic.`
+          : proof && txEvidence.feeKeyRecipientTransferred < feeKeyRecipientTarget
+            ? `Fee Key recipient transfer proof is ${txEvidence.feeKeyRecipientTransferred}/${feeKeyRecipientTarget}; complete recipient delivery evidence before retiring Classic.`
+          : proof?.transfer && !finalSweepComplete
+            ? 'Final sweep record is not terminal; verify wallet-empty, error-free sweep evidence before retiring Classic.'
+            : 'Run a real v2 launch through token, liquidity, and final sweep.',
+    },
+    {
+      id: 'report-proof',
+      pass: Boolean(reportArtifact && reportArtifactSweepBound),
+      detail: reportUri
+        ? reportArtifactSweepBound
+          ? `Permanent report proof is attached: ${shortAddress(reportUri)}.`
+          : 'Permanent report proof is missing the terminal sweep evidence hash; republish after final sweep before replacing Classic.'
+        : localDossier
+          ? reportArtifactSweepBound
+            ? `Local dossier proof is attached: ${localDossier.filename}.`
+            : 'Local dossier proof is missing the terminal sweep evidence hash; download a fresh dossier after final sweep before replacing Classic.'
+        : staleReport
+          ? reportPublishMatchesProof(staleReport, proof, config) && !reportArtifactMatchesTerminalSweep(staleReport, proof)
+            ? localDossierHasEvidence(staleReport)
+              ? 'Local dossier proof is missing the terminal sweep evidence hash; download a fresh dossier after final sweep before replacing Classic.'
+              : 'Permanent report proof is missing the terminal sweep evidence hash; republish after final sweep before replacing Classic.'
+            : 'Report artifact belongs to another v2 proof; regenerate before replacing Classic.'
+          : 'Publish or attach a proof-bound v2 launch report before replacing Classic.',
+    },
+    {
+      id: 'classic-comparison',
+      pass: comparison?.status === 'pass' && !comparisonIsV2Artifact && comparisonMatchesProof && comparisonEvidence.pass,
+      detail: comparison?.status === 'pass' && !comparisonIsV2Artifact && comparisonMatchesProof && comparisonEvidence.pass
+        ? `Classic artifact comparison passed ${comparison.passCount || 0}/${comparison.fieldCount || 0} fields.`
+        : comparisonIsV2Artifact
+          ? 'Loaded artifact is v2-generated; compare against a completed Classic artifact.'
+          : comparison && !comparisonMatchesProof
+            ? 'Classic artifact comparison belongs to another v2 proof; rerun it for the current launch.'
+          : comparison?.status === 'pass' && !comparisonEvidence.pass
+            ? comparisonEvidence.detail
+          : comparison
+            ? `Classic artifact comparison is ${comparison.status}: ${comparison.mismatchCount || 0} mismatched, ${comparison.missingCount || 0} missing.`
+            : 'Paste and compare a completed classic artifact against the completed v2 proof.',
+    },
+    {
+      id: 'audit',
+      pass: audit?.status === 'pass',
+      detail: audit?.status === 'pass'
+        ? 'The generated v2 proof audit is fully passing.'
+        : `Proof audit is ${audit?.status || 'missing'} with ${audit?.missingCount || 0} missing and ${audit?.warnCount || 0} warning checks.`,
+    },
+    {
+      id: 'replacement-criteria',
+      pass: missingReplacementCriteria.length === 0,
+      detail: missingReplacementCriteria.length === 0
+        ? `${replacementCriteria.length}/${replacementCriteria.length} replacement criteria have proof.`
+        : `${missingReplacementCriteria.length} replacement criteria still need proof: ${missingReplacementCriteria.map((item) => item.label || item.id).slice(0, 3).join(', ')}${missingReplacementCriteria.length > 3 ? ', ...' : ''}.`,
+    },
+  ];
+  const missing = requirements.filter((item) => !item.pass);
+  const passCount = requirements.length - missing.length;
+  return {
+    id: 'classic-retirement',
+    source: 'trebuchet-v2-classic-retirement-gate',
+    proofFingerprint: expectedAuditFingerprint,
+    auditFingerprint: audit?.proofFingerprint || null,
+    title: missing.length ? 'Classic retirement gate' : 'Classic can be retired',
+    state: missing.length ? 'danger' : 'pass',
+    badge: missing.length ? 'Blocked' : 'Ready',
+    detail: missing.length ? missing[0].detail : 'Live v2 proof, proof-bound report artifact, and classic comparison are all attached.',
+    passCount,
+    itemCount: requirements.length,
+    requirements,
+    replacementCriteria,
+    criteriaPassCount: replacementCriteria.filter((item) => item.pass).length,
+    criteriaItemCount: replacementCriteria.length,
+  };
+}
+
+function loadedRecoveryJournalEvidence() {
+  const journals = Array.isArray(state.recovery?.journals) ? state.recovery.journals : [];
+  const rows = journals.filter((journal) => {
+    if (!journal || !journal.id) return false;
+    const status = String(journal.status || '').toLowerCase();
+    if (['completed', 'archived'].includes(status)) return false;
+    return journalHasRecoveryPlanningEvidence(journal);
+  });
+  const failed = rows.filter((journal) => {
+    const status = String(journal.status || '').toLowerCase();
+    const stage = String(journal.stage || '').toLowerCase();
+    return status === 'failed' || stage.includes('failed') || stage.includes('partial');
+  }).length;
+  return {
+    count: rows.length,
+    failed,
+  };
+}
+
+function journalHasRecoveryPlanningEvidence(journal = {}) {
+  if (!journal || isTerminalJournal(journal)) return false;
+  const priorResults = typeof journalPriorResults === 'function'
+    ? journalPriorResults(journal)
+    : (
+      Array.isArray(journal?.lp?.results) && journal.lp.results.length
+        ? journal.lp.results
+        : (Array.isArray(journal?.lp?.partialResults) ? journal.lp.partialResults : [])
+    );
+  const checkpointMatcher = typeof journalIsResumeCheckpointResult === 'function'
+    ? journalIsResumeCheckpointResult
+    : recoveryResultHasDurableCheckpointRow;
+  if (priorResults.some(checkpointMatcher)) return true;
+  const poolPlan = journal.poolPlan && typeof journal.poolPlan === 'object' ? journal.poolPlan : null;
+  const allocations = Array.isArray(poolPlan?.allocations) ? poolPlan.allocations : [];
+  const tokenMint = typeof journalTokenMint === 'function'
+    ? journalTokenMint(journal)
+    : String(journal?.token?.mint || journal?.token?.tokenMint || journal?.poolPlan?.tokenMint || '').trim();
+  if (allocations.length > 0 && (poolPlan?.tokenMint || tokenMint)) return true;
+  const unsafeEvents = typeof journalUnsafePoolEvents === 'function'
+    ? journalUnsafePoolEvents(journal, priorResults)
+    : (Array.isArray(journal?.events)
+      ? journal.events.filter((event) => event?.stage === 'pool_create_done')
+      : []);
+  if (unsafeEvents.some((event) => String(event?.poolId || '').trim())) {
+    return true;
+  }
+  const failedPhase = journal?.lp?.failedPhase || journal?.errorDetails?.failedPhase || '';
+  return Boolean(failedPhase && (allocations.length > 0 || priorResults.length > 0));
+}
+
+function recoveryResultHasResumeEvidence(result = state.lastRecoveryResult) {
+  if (!result || typeof result !== 'object' || result.success !== true) return false;
+  const rows = Array.isArray(result.results)
+    ? result.results
+    : Array.isArray(result.partialResults) ? result.partialResults : [];
+  if (rows.some(recoveryResultHasDurableCheckpointRow)) return true;
+  const journal = result.journal && typeof result.journal === 'object' ? result.journal : null;
+  if (String(journal?.id || journal?.journalId || '').trim()) return true;
+  const recovered = result.recovered && typeof result.recovered === 'object' ? result.recovered : null;
+  if (String(recovered?.journalId || recovered?.journal?.id || '').trim()) return true;
+  return false;
+}
+
+function recoveryResultPositionRows(row = {}) {
+  return [
+    ...(Array.isArray(row?.mainPositions) ? row.mainPositions : []),
+    ...(Array.isArray(row?.ladderPositions) ? row.ladderPositions : []),
+    ...(Array.isArray(row?.supportPositions) ? row.supportPositions : []),
+    ...(row?.bootstrap && typeof row.bootstrap === 'object' ? [row.bootstrap] : []),
+  ];
+}
+
+function recoveryResultHasOpenedPositionEvidence(row = {}) {
+  return recoveryResultPositionRows(row).some((position) => Boolean(
+    position?.nftMint
+    || position?.positionNftMint
+    || position?.txIds?.open
+    || position?.openTx
+  ));
+}
+
+function recoveryResultHasDurableCheckpointRow(row = {}) {
+  const poolId = String(row?.poolId || row?.id || '').trim();
+  return Boolean(
+    poolId
+    && (
+      row.phase1Complete === true
+      || recoveryResultHasOpenedPositionEvidence(row)
+    )
+  );
+}
+
+function buildV2ReplacementCriteriaAudit({
+  proof = currentLaunchProof(),
+  audit = null,
+  hasCompletedLiveProof = false,
+  demoRunComplete = false,
+  reportArtifact = null,
+  reportArtifactRecord = null,
+  reportArtifactSweepBound = false,
+  comparison = null,
+  comparisonMatchesProof = false,
+  comparisonEvidence = null,
+  comparisonIsV2Artifact = false,
+  config = proofConfigForFingerprint(proof, currentLaunchConfig()),
+} = {}) {
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const plannedPools = buildV2ReportPoolPlan(config, results, proof);
+  const selectedWalletPublicKey = selectedLaunchWalletPublicKey();
+  const selectedWallet = selectedManagedWallet();
+  const walletSecretLocked = state.secretPin?.locked === true || selectedWallet?.secretPinLocked === true;
+  const proofWalletEvidence = Boolean(proof?.walletPublicKey && hasCompletedLiveProof);
+  const walletRuntimeEvidence = Boolean(
+    state.apiStatus === 'connected'
+    && selectedWalletPublicKey
+    && selectedWallet
+    && selectedWallet.hasSecretKey === true
+    && !walletSecretLocked
+    && !selectedWallet.decryptionFailed
+  );
+  const walletEvidence = Boolean(proofWalletEvidence || walletRuntimeEvidence);
+  const persistedVanityCandidates = state.vanityCandidates.filter((candidate) => (
+    state.apiStatus === 'connected'
+    && candidate?.persisted === true
+    && candidate?.decryptionFailed !== true
+    && candidate?.hasSecretKey !== false
+  ));
+  const selectedVanityCandidate = persistedVanityCandidates.find((candidate) => (
+    candidate.publicKey === state.selectedVanityPublicKey
+  )) || null;
+  const nativeVanityAvailable = state.apiStatus === 'connected' && state.vanityAvailable;
+  const vanityEvidence = Boolean(
+    selectedVanityCandidate
+    || persistedVanityCandidates.length
+    || nativeVanityAvailable
+  );
+  const chartRendererEvidence = Boolean(typeof renderV2TokenomicsDonutSvg === 'function' && typeof liquidityDepthRows === 'function');
+  const viewportSmokeProof = validatedLocalViewportSmokeProof();
+  const viewportSmokeStatus = state.viewportSmoke || proof?.viewportSmoke || proof?.reportParity?.viewportSmoke || null;
+  const viewportSmokeApiConnected = state.apiStatus === 'connected';
+  const viewportSmokeEvidence = viewportSmokeApiConnected && Boolean(viewportSmokeProof);
+  const viewportSmokeNames = Array.isArray(viewportSmokeProof?.viewports)
+    ? viewportSmokeProof.viewports.filter((row) => row?.passed).map((row) => row.name).filter(Boolean)
+    : [];
+  const viewportSmokeDetail = viewportSmokeProof
+    ? viewportSmokeApiConnected
+      ? `Viewport smoke passed${viewportSmokeNames.length ? ` for ${viewportSmokeNames.join(', ')}` : ''}${viewportSmokeProof.generatedAt ? ` at ${viewportSmokeProof.generatedAt}` : ''}.`
+      : 'Connect the local app to verify viewport smoke proof against current v2 assets.'
+    : viewportSmokeStatus?.detail || 'Run `npm run test:v2:viewport` to generate desktop/mobile viewport-smoke proof.';
+  const topologyIssues = typeof customQuoteSafetySummary === 'function'
+    ? customQuoteSafetySummary(config?.poolTopology || {})
+    : { blockers: [], warnings: [] };
+  const poolBlockerCount = Array.isArray(topologyIssues?.blockers) ? topologyIssues.blockers.length : 0;
+  const poolWarningCount = Array.isArray(topologyIssues?.warnings) ? topologyIssues.warnings.length : 0;
+  const localApiLaunchPlan = localApiLaunchPlanStatus(state.launchPlan, config);
+  const localApiLaunchPlanEvidence = localApiLaunchPlan.ready;
+  const chartModelEvidence = Boolean(hasCompletedLiveProof || localApiLaunchPlanEvidence);
+  const tokenConfig = tokenConfigStatus(hasCompletedLiveProof ? proofConfigForFingerprint(proof, config) : config);
+  const tokenConfigEvidence = Boolean(
+    tokenConfig.ready
+    && (hasCompletedLiveProof || localApiLaunchPlanEvidence)
+  );
+  const poolConfigEvidence = Boolean(
+    plannedPools.length
+    && poolBlockerCount === 0
+    && (hasCompletedLiveProof || localApiLaunchPlanEvidence)
+  );
+  const funding = typeof fundingMeterSnapshot === 'function'
+    ? fundingMeterSnapshot(config)
+    : { missingSol: 0, hasWalletBalance: false };
+  const fundingEstimateStatus = classicFundingEstimateStatus(config);
+  const fundingEstimateEvidence = fundingEstimateStatus.matchesConfig;
+  const fundingBalanceEvidence = state.apiStatus === 'connected' && funding.hasWalletBalance === true && funding.walletBalanceFresh === true;
+  const fundingSolEvidence = Number(funding.missingSol || 0) <= 0.001;
+  const quoteRoutes = typeof quoteAcquireRoutes === 'function' ? quoteAcquireRoutes() : [];
+  const quoteStatus = typeof quoteAcquireStatus === 'function'
+    ? quoteAcquireStatus(config)
+    : { ready: !quoteRoutes.length, stale: false };
+  const quoteAcquireEvidence = quoteStatus.ready;
+  const manualItems = typeof quoteManualPrefundItems === 'function' ? quoteManualPrefundItems() : [];
+  const manualSummary = typeof manualPrefundSummary === 'function'
+    ? manualPrefundSummary(manualItems)
+    : { className: manualItems.length ? 'warn' : '' };
+  const manualPrefundEvidence = !manualItems.length || manualSummary.className === '';
+  const fundingEvidence = Boolean(
+    hasCompletedLiveProof
+    || (fundingEstimateEvidence
+      && fundingBalanceEvidence
+      && fundingSolEvidence
+      && quoteAcquireEvidence
+      && manualPrefundEvidence)
+  );
+  const currentHeldReserveAudit = buildV2ReportHeldReserveAudit(config, currentClassicFundingEstimateForConfig(config));
+  const reportHeldReserveAudit = reportArtifactRecord?.heldReserveAudit && typeof reportArtifactRecord.heldReserveAudit === 'object'
+    ? reportArtifactRecord.heldReserveAudit
+    : null;
+  const effectiveHeldReserveAudit = reportHeldReserveAudit || currentHeldReserveAudit;
+  const heldReserveConfigured = Number(
+    effectiveHeldReserveAudit?.heldReservePercent ?? currentHeldReserveAudit?.heldReservePercent ?? 0,
+  ) > 0;
+  const heldReserveEvidence = !heldReserveConfigured
+    || (hasCompletedLiveProof
+      ? Boolean(reportArtifactSweepBound && reportHeldReserveAudit?.state === 'pass')
+      : currentHeldReserveAudit?.state === 'pass');
+  const proofJournalEvidence = Boolean(proof?.journalId);
+  const localJournalEvidenceState = proofJournalEvidenceState(proof);
+  const matchingLocalJournal = localJournalEvidenceState.journal;
+  const proofTerminalJournalEvidence = proofHasTerminalLaunchJournal(proof);
+  const proofFinalSweepEvidence = transferHasWalletEmptyFinalSweepEvidence(proof?.transfer);
+  const proofBackedPreterminalJournalEvidence = Boolean(
+    proofJournalEvidence
+    && matchingLocalJournal
+    && !isTerminalJournal(matchingLocalJournal)
+    && journalHasRecoveryPlanningEvidence(matchingLocalJournal)
+  );
+  const localRecoveryJournal = loadedRecoveryJournalEvidence();
+  const localJournalEvidence = localRecoveryJournal.count > 0;
+  const recoveryResultJournalEvidence = recoveryResultHasResumeEvidence();
+  const resumeEvidence = hasCompletedLiveProof
+    ? proofJournalEvidence && proofTerminalJournalEvidence
+    : proof && proofFinalSweepEvidence
+      ? Boolean(proofJournalEvidence && matchingLocalJournal && localJournalEvidenceState.backed && proofTerminalJournalEvidence)
+      : Boolean(
+        proofBackedPreterminalJournalEvidence
+        || localJournalEvidence
+        || recoveryResultJournalEvidence
+      );
+  const sweepReportEvidence = Boolean(
+    reportArtifact
+    && reportArtifactSweepBound
+    && transferHasWalletEmptyFinalSweepEvidence(proof?.transfer)
+  );
+  const staleReportArtifact = staleReportPublishForProof(proof, config);
+  const staleReportMissingSweepHash = Boolean(
+    staleReportArtifact
+    && reportPublishMatchesProof(staleReportArtifact, proof, config)
+    && !reportArtifactMatchesTerminalSweep(staleReportArtifact, proof)
+  );
+  const requiredComparisonEvidence = comparisonEvidence || classicComparisonRequiredEvidence(comparison, proof, config);
+  const classicComparisonEvidence = Boolean(
+    comparison?.status === 'pass'
+    && comparisonMatchesProof
+    && requiredComparisonEvidence.pass
+    && !comparisonIsV2Artifact
+  );
+
+  return [
+    {
+      id: 'demo-end-to-end',
+      label: 'Full demo launch',
+      pass: Boolean(demoRunComplete || hasCompletedLiveProof),
+      evidence: demoRunComplete
+        ? `Demo run ${shortAddress(state.lastDemoLaunchRun?.token?.tokenMint || state.lastDemoLaunchRun?.token?.mint)} completed with terminal readiness proof.`
+        : hasCompletedLiveProof
+          ? 'Completed live v2 proof is stronger than the demo path.'
+          : state.lastDemoLaunchRun
+            ? 'Demo run exists, but terminal readiness or final sweep evidence is incomplete.'
+          : 'Run the v2 demo launch contract before replacing Classic.',
+      detail: 'Covers token creation, LP creation, Fee Key recipient transfer, airdrop delivery, and final sweep routing.',
+    },
+    {
+      id: 'wallet-lifecycle',
+      label: 'Wallet generation and recovery',
+      pass: walletEvidence,
+      evidence: walletEvidence
+        ? proofWalletEvidence
+          ? `Launch wallet ${shortAddress(proof.walletPublicKey)} is attached to completed proof.`
+          : `Selected launch wallet ${shortAddress(selectedWalletPublicKey)} has an available local signing secret.`
+        : selectedWalletPublicKey
+          ? !selectedWallet
+            ? 'Selected launch address is not in Trebuchet managed-wallet storage.'
+            : walletSecretLocked
+              ? 'Selected launch wallet is PIN locked; unlock before v2 can replace Classic signing.'
+            : selectedWallet.decryptionFailed || selectedWallet.hasSecretKey !== true
+                ? 'Selected managed wallet is missing a usable signing secret.'
+                : state.apiStatus !== 'connected'
+                  ? 'Connect the local app to verify this managed wallet signing secret.'
+                : 'Select a Trebuchet-managed wallet with an available signing secret.'
+        : 'Generate, import, or load a Trebuchet-managed wallet.',
+      detail: 'Replaces Classic temporary-wallet generation, funding address, QR, and Recovery PIN flows.',
+    },
+    {
+      id: 'vanity-options',
+      label: 'Vanity CA options',
+      pass: vanityEvidence,
+      evidence: selectedVanityCandidate
+        ? `Selected persisted Vanity CA ${shortAddress(selectedVanityCandidate.publicKey)}.`
+        : persistedVanityCandidates.length
+          ? `${persistedVanityCandidates.length} persisted Vanity CA option${persistedVanityCandidates.length === 1 ? '' : 's'} available.`
+          : state.selectedVanityPublicKey
+            ? `Selected Vanity CA ${shortAddress(state.selectedVanityPublicKey)} is preview-only or missing its saved secret; grind or select a persisted candidate from the local app.`
+            : nativeVanityAvailable
+            ? 'Native grinder is available.'
+            : state.apiStatus === 'connected'
+              ? 'Native grinder is not available in this local app.'
+              : 'Connect the local app to verify the native grinder; file preview only shows the UI contract.',
+      detail: 'Preserves Classic grinding with split start/end targets and selectable saved candidates.',
+    },
+    {
+      id: 'token-config-parity',
+      label: 'Token configuration parity',
+      pass: tokenConfigEvidence,
+      evidence: tokenConfig.ready
+        ? hasCompletedLiveProof
+          ? `Completed live proof minted ${shortAddress(proof?.token?.mint)} from the frozen token config.`
+          : localApiLaunchPlanEvidence
+            ? `Token ${tokenConfig.name} / ${tokenConfig.symbol} / ${tokenConfig.supply} is staged in the current local launch plan${tokenConfig.hasLogo ? ' with validated logo handoff' : ''}.`
+            : state.apiStatus === 'connected'
+              ? localApiLaunchPlan.stale
+                ? `Token fields are valid, but the staged launch plan is stale for the ${localApiLaunchPlanStaleReason(localApiLaunchPlan)}; stage it again through the local API.`
+                : localApiLaunchPlan.incomplete
+                  ? `Token fields are valid, but the staged launch plan is incomplete: ${localApiLaunchPlanIncompleteReason(localApiLaunchPlan)}. Stage it again through the local API.`
+                : 'Token fields are valid; stage the launch plan through the local API before replacing Classic token creation.'
+              : 'Token fields are valid; connect the local app and stage the launch plan before replacing Classic token creation.'
+        : tokenConfig.issues[0] || 'Token fields are not ready for Classic-compatible execution.',
+      detail: 'Replaces Classic token name, symbol, supply, description, logo, and create-token payload validation.',
+    },
+    {
+      id: 'charts-and-viewport',
+      label: 'Charts and viewport smoke',
+      pass: Boolean(chartRendererEvidence && viewportSmokeEvidence && chartModelEvidence),
+      evidence: chartRendererEvidence && viewportSmokeEvidence && chartModelEvidence
+        ? `Chart renderers are wired against the executable launch model. ${viewportSmokeDetail}`
+        : chartRendererEvidence && viewportSmokeEvidence
+          ? state.apiStatus === 'connected'
+            ? localApiLaunchPlan.stale
+              ? `Chart renderers and viewport smoke are ready, but the staged launch plan is stale for the ${localApiLaunchPlanStaleReason(localApiLaunchPlan)}; stage it again through the local API.`
+              : localApiLaunchPlan.incomplete
+                ? `Chart renderers and viewport smoke are ready, but the staged launch plan is incomplete: ${localApiLaunchPlanIncompleteReason(localApiLaunchPlan)}. Stage it again through the local API.`
+                : 'Chart renderers and viewport smoke are ready; stage the launch plan through the local API so charts are bound to the executable token/pool model.'
+            : 'Chart renderers and viewport smoke are ready; connect the local app and stage the launch plan so charts are bound to the executable token/pool model.'
+        : chartRendererEvidence
+          ? `Chart renderers are wired; ${viewportSmokeDetail}`
+          : 'Tokenomics and liquidity chart renderers are missing.',
+      detail: 'Tokenomics, liquidity depth, funding, and run progress render from the staged v2 launch model.',
+    },
+    {
+      id: 'pool-config-parity',
+      label: 'Pool configuration parity',
+      pass: poolConfigEvidence,
+      evidence: plannedPools.length
+        ? poolBlockerCount
+          ? `${poolBlockerCount} blocking pool/topology issue${poolBlockerCount === 1 ? '' : 's'} must be resolved before parity.`
+          : !hasCompletedLiveProof && !localApiLaunchPlanEvidence
+            ? state.apiStatus === 'connected'
+              ? localApiLaunchPlan.stale
+                ? `Staged launch plan is stale for the ${localApiLaunchPlanStaleReason(localApiLaunchPlan)}; stage it again through the local API.`
+                : localApiLaunchPlan.incomplete
+                  ? `Staged launch plan is current, but incomplete: ${localApiLaunchPlanIncompleteReason(localApiLaunchPlan)}. Stage it again through the local API.`
+                : 'Stage the launch plan through the local API before replacing Classic pool configuration.'
+              : 'Connect the local app and stage a Classic-shaped launch plan before replacing Classic pool configuration.'
+          : `${plannedPools.length} planned pool${plannedPools.length === 1 ? '' : 's'} available for proof comparison${poolWarningCount ? ` with ${poolWarningCount} warning${poolWarningCount === 1 ? '' : 's'}` : ''}.`
+        : 'No planned pool rows are available for Classic comparison.',
+      detail: 'Covers simple SOL, quote pools, slices, ladder bands, support positions, fee tiers, and Fee Key recipients.',
+    },
+    {
+      id: 'funding-and-quote',
+      label: 'Funding and quote readiness',
+      pass: fundingEvidence,
+      evidence: hasCompletedLiveProof
+        ? 'Completed live proof shows the launch advanced through funded execution.'
+        : !fundingEstimateEvidence
+          ? fundingEstimateStatus.stale
+            ? 'Classic funding estimate is stale for the current launch model; rerun the estimate before replacing Classic.'
+          : 'Run the Classic funding estimate before replacing Classic.'
+          : !fundingBalanceEvidence
+            ? funding.walletBalanceStale
+              ? 'Selected Trebuchet launch-wallet balance is stale; wait for the local app refresh or click Check balance.'
+              : 'Verify the selected Trebuchet launch-wallet balance from the local app.'
+            : !fundingSolEvidence
+              ? `Launch wallet is short ${Number(funding.missingSol || 0).toFixed(3)} SOL.`
+              : quoteStatus.stale
+                ? 'Quote acquire job is stale for the selected wallet or current launch model; run it again.'
+              : !quoteAcquireEvidence
+                ? `${quoteRoutes.length} quote acquire route${quoteRoutes.length === 1 ? '' : 's'} still need successful completion.`
+                : !manualPrefundEvidence
+                  ? `Manual quote prefund is ${manualSummary.label}.`
+                  : 'Classic funding estimate, wallet SOL, quote acquire, and manual prefund checks are ready.',
+      detail: 'Replaces Classic funding estimate, quote acquire, wallet-balance, and manual quote prefund readiness.',
+    },
+    {
+      id: 'held-reserve-backing',
+      label: 'Held reserve backing',
+      pass: heldReserveEvidence,
+      evidence: !heldReserveConfigured
+        ? 'No held reserve is configured.'
+        : hasCompletedLiveProof
+          ? reportArtifactSweepBound
+            ? reportHeldReserveAudit
+              ? reportHeldReserveAudit.state === 'pass'
+                ? reportHeldReserveAudit.detail || 'Final report/dossier includes a passing held-reserve support audit.'
+                : reportHeldReserveAudit.detail || 'Final report/dossier held-reserve audit is not passing.'
+              : 'Final report/dossier is missing the held-reserve audit; regenerate it with report data v14 or newer.'
+            : 'Attach a terminal-sweep-bound report or local dossier before trusting held-reserve backing proof.'
+          : currentHeldReserveAudit?.detail || 'Run the Classic funding estimate so Trebuchet can verify held-reserve support backing.',
+      detail: 'Blocks unsafe preallocation or airdrop reserves unless support backing is visible in readiness and the final report proof.',
+    },
+    {
+      id: 'run-and-resume',
+      label: 'Run and resume safety',
+      pass: resumeEvidence,
+      evidence: hasCompletedLiveProof
+        ? `Completed live proof includes guarded execution journal ${shortAddress(proof.journalId)}.`
+        : proof && !proofJournalEvidence
+          ? 'Completed launch proof is missing its launch journal id.'
+          : proof?.journalId && !matchingLocalJournal && proofFinalSweepEvidence
+          ? 'Final sweep proof is attached, but the matching launch journal is not loaded locally.'
+          : proofFinalSweepEvidence && localJournalEvidenceState.mismatches.length
+            ? `Final sweep proof is attached, but the local launch journal does not match it: ${localJournalEvidenceState.mismatches.join(', ')}.`
+          : proofFinalSweepEvidence && localJournalEvidenceState.missing.length
+            ? `Final sweep proof is attached, but the local launch journal is missing proof backing: ${localJournalEvidenceState.missing.join(', ')}.`
+          : proofFinalSweepEvidence && !proofTerminalJournalEvidence
+          ? 'Final sweep proof is attached, but the launch journal has not reached transfer_completed.'
+          : proofJournalEvidence && matchingLocalJournal && isTerminalJournal(matchingLocalJournal)
+          ? 'Matching launch journal is terminal, but the proof is missing terminal final-sweep evidence.'
+          : proofJournalEvidence && matchingLocalJournal && !journalHasRecoveryPlanningEvidence(matchingLocalJournal)
+          ? `Journal ${shortAddress(proof.journalId)} is loaded, but it lacks pool-plan or checkpoint evidence needed to prove resume safety.`
+          : proofJournalEvidence && matchingLocalJournal
+          ? `Journal ${shortAddress(proof.journalId)} is loaded for the launch proof.`
+          : proofJournalEvidence
+            ? `Launch proof has journal ${shortAddress(proof.journalId)}, but the matching local journal is not loaded.`
+            : localJournalEvidence
+              ? `${localRecoveryJournal.count} active or failed launch journal${localRecoveryJournal.count === 1 ? '' : 's'} with pool-plan or checkpoint evidence loaded for recovery planning${localRecoveryJournal.failed ? ` (${localRecoveryJournal.failed} failed/partial)` : ''}.`
+            : recoveryResultJournalEvidence
+              ? 'A successful journal resume/recovery result is attached in this session.'
+              : Number(state.recovery?.journalCount || 0) > 0
+                ? 'Local launch history is loaded, but no active or failed journal exercises resume safety yet.'
+              : state.apiStatus === 'connected'
+                ? 'Local API is connected, but no launch journal or proof has exercised resume safety yet.'
+                : 'Connect the local API and load a journal-backed proof.',
+      detail: 'Keeps Classic journal recovery, resume-only-missing-work, and unsafe manual blockers visible.',
+    },
+    {
+      id: 'sweep-report-proof',
+      label: 'Sweep and report proof',
+      pass: sweepReportEvidence,
+      evidence: sweepReportEvidence
+        ? 'Proof-bound report artifact and terminal final-sweep evidence are both attached.'
+        : staleReportMissingSweepHash
+          ? 'Report artifact is attached, but it is missing the terminal sweep evidence hash; regenerate it after final sweep.'
+        : reportArtifact
+          ? transferHasWalletEmptyFinalSweepEvidence(proof?.transfer)
+            ? 'Report artifact is attached, but it is missing the terminal sweep evidence hash; regenerate it after final sweep.'
+            : 'Report artifact is attached; terminal final-sweep evidence is still required.'
+          : 'Publish or download a proof-bound report and complete the final sweep.',
+      detail: 'Matches Classic report download/publish and transfer/sweep replacement criteria.',
+    },
+    {
+      id: 'classic-artifact-comparison',
+      label: 'Classic artifact comparison',
+      pass: classicComparisonEvidence,
+      evidence: classicComparisonEvidence
+        ? `Classic comparison passed ${comparison.passCount || 0}/${comparison.fieldCount || 0} fields.`
+        : comparisonIsV2Artifact
+          ? 'Loaded artifact is v2-generated; use a completed Classic artifact.'
+          : comparison?.status === 'pass' && !requiredComparisonEvidence.pass
+            ? requiredComparisonEvidence.detail
+          : comparison
+            ? `Comparison is ${comparison.status}; rerun against the current completed proof.`
+            : 'Compare a completed Classic artifact against the completed v2 proof.',
+      detail: 'Prevents retiring Classic on v2 self-artifacts, stale comparisons, or partial proof matches.',
+    },
+    {
+      id: 'proof-audit',
+      label: 'Proof audit checklist',
+      pass: audit?.status === 'pass',
+      evidence: audit?.status === 'pass'
+        ? `${audit.passCount || 0}/${audit.itemCount || 0} proof audit checks passing.`
+        : `${audit?.missingCount || 0} missing and ${audit?.warnCount || 0} warning proof audit checks remain.`,
+      detail: 'Ensures token, liquidity, lock/Fee Key, airdrop, recovery, report, sweep, and Classic comparison rows are all represented.',
+    },
+  ];
+}
+
+function validatedLocalViewportSmokeProof() {
+  const proof = state.viewportSmoke;
+  if (!proof || proof.passed !== true || proof.state !== 'valid') return null;
+  if (proof.artifactVersion !== 1 || proof.kind !== 'trebuchet-v2-viewport-smoke') return null;
+  const assetHashes = proof.assetHashes && typeof proof.assetHashes === 'object'
+    ? proof.assetHashes
+    : {};
+  const hasRequiredHashes = V2_VIEWPORT_SMOKE_REQUIRED_ASSETS.every((file) => (
+    typeof assetHashes[file] === 'string' && assetHashes[file].length >= 32
+  ));
+  const viewports = Array.isArray(proof.viewports) ? proof.viewports : [];
+  const requiredViewportsPassed = ['desktop', 'mobile'].every((name) => (
+    viewports.some((row) => {
+      const checks = row?.checks && typeof row.checks === 'object' ? row.checks : {};
+      return row?.name === name
+        && row?.passed === true
+        && V2_VIEWPORT_SMOKE_REQUIRED_CHECKS.every((check) => checks[check] === true);
+    })
+  ));
+  return hasRequiredHashes && requiredViewportsPassed ? proof : null;
+}
+
+function replacementCriteriaById(criteria = []) {
+  return new Map((Array.isArray(criteria) ? criteria : [])
+    .filter((item) => item?.id)
+    .map((item) => [item.id, item]));
+}
+
+function parityFeatureFromCriterion(feature, criterion, {
+  passBadge = 'Evidence',
+  warnBadge = 'Needs proof',
+} = {}) {
+  if (!criterion) {
+    return {
+      ...feature,
+      state: feature.preview || feature.real ? 'warn' : 'danger',
+      badge: feature.preview || feature.real ? warnBadge : 'Gap',
+      detail: feature.preview || feature.real
+        ? 'Replacement evidence is not available for this feature yet.'
+        : feature.detail,
+    };
+  }
+  return {
+    ...feature,
+    state: criterion.pass ? 'pass' : 'warn',
+    badge: criterion.pass ? passBadge : warnBadge,
+    detail: criterion.evidence || criterion.detail || feature.detail,
+    criterionId: criterion.id,
+  };
+}
+
+function renderReplacementCriteriaStrip(criteria = []) {
+  const rows = Array.isArray(criteria) ? criteria : [];
+  if (!rows.length) return '';
+  return `
+    <div class="criteria-strip" aria-label="Replacement criteria">
+      ${rows.map((item) => {
+        const pass = item.pass === true;
+        const icon = pass ? 'fa-check' : 'fa-circle-exclamation';
+        const title = item.detail || item.evidence || item.label || item.id;
+        return `
+          <span class="criteria-chip ${pass ? 'pass' : 'warn'}" title="${escapeHtml(title)}">
+            <i class="fa-solid ${icon}" aria-hidden="true"></i>
+            <strong>${escapeHtml(item.label || item.id)}</strong>
+            <small>${pass ? 'Pass' : 'Needs proof'}</small>
+          </span>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderClassicRetirementProofRail(retirementGate = {}) {
+  const requirements = Array.isArray(retirementGate.requirements) ? retirementGate.requirements : [];
+  if (!requirements.length) return '';
+  const labelById = {
+    'live-proof': 'Live launch',
+    'report-proof': 'Report',
+    'classic-comparison': 'Classic artifact',
+    audit: 'Audit',
+    'replacement-criteria': 'Criteria',
+  };
+  return `
+    <div class="field-proof-rail ${retirementGate.state === 'pass' ? 'pass' : 'danger'}" aria-label="Classic retirement proof path">
+      <div class="field-proof-head">
+        <span>Field parity</span>
+        <strong>${Number(retirementGate.passCount || 0)}/${Number(retirementGate.itemCount || requirements.length)}</strong>
+      </div>
+      <div class="field-proof-steps">
+        ${requirements.map((item, index) => {
+          const pass = item.pass === true;
+          const stateClass = pass ? 'pass' : 'wait';
+          const icon = pass ? 'fa-check' : 'fa-circle';
+          const label = labelById[item.id] || item.title || item.id || `Step ${index + 1}`;
+          const detail = item.detail || label;
+          return `
+            <span class="field-proof-step ${stateClass}" title="${escapeHtml(detail)}">
+              <i class="fa-solid ${icon}" aria-hidden="true"></i>
+              <strong>${escapeHtml(label)}</strong>
+              <small>${pass ? 'Proof' : 'Wait'}</small>
+            </span>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderParityPanel() {
+  const proof = currentLaunchProof();
+  const config = proofConfigForFingerprint(proof, currentLaunchConfig());
+  const reportAudit = buildV2ReportParityAudit(proof, config);
+  const retirementGate = buildClassicRetirementGate(proof, reportAudit, config);
+  const criteriaById = replacementCriteriaById(retirementGate.replacementCriteria);
+  const liveProofPassed = retirementGate.requirements
+    .find((item) => item.id === 'live-proof')?.pass === true;
+  const rows = parityFeatures.map((feature) => {
+    if (feature.id === 'wallet') {
+      return parityFeatureFromCriterion(feature, criteriaById.get('wallet-lifecycle'));
+    }
+    if (feature.id === 'recovery') {
+      return parityFeatureFromCriterion(feature, criteriaById.get('run-and-resume'), {
+        passBadge: 'Journal',
+      });
+    }
+    if (feature.id === 'charts') {
+      return parityFeatureFromCriterion(feature, criteriaById.get('charts-and-viewport'), {
+        passBadge: 'Smoke',
+      });
+    }
+    if (feature.id === 'grinder') {
+      return parityFeatureFromCriterion(feature, criteriaById.get('vanity-options'), {
+        passBadge: 'Options',
+      });
+    }
+    if (feature.id === 'token') {
+      return parityFeatureFromCriterion(feature, criteriaById.get('token-config-parity'), {
+        passBadge: 'Model',
+      });
+    }
+    if (feature.id === 'funding') {
+      const fundingCriterion = criteriaById.get('funding-and-quote');
+      const heldReserveCriterion = criteriaById.get('held-reserve-backing');
+      return parityFeatureFromCriterion(feature, fundingCriterion?.pass && heldReserveCriterion && !heldReserveCriterion.pass
+        ? heldReserveCriterion
+        : fundingCriterion, {
+        passBadge: 'Ready',
+      });
+    }
+    if (feature.id === 'pool-model') {
+      return parityFeatureFromCriterion(feature, criteriaById.get('pool-config-parity'));
+    }
+    if (feature.id === 'execution') {
+      const demoExecutionReady = state.apiStatus === 'connected' && state.demoActive;
+      const realBridgeReady = state.apiStatus === 'connected'
+        && !state.demoActive
+        && state.executionReadiness?.status === 'ready'
+        && state.executionReadiness?.nextEndpoint;
+      return {
+        ...feature,
+        state: liveProofPassed ? 'pass' : 'warn',
+        badge: liveProofPassed ? 'Live proof' : state.lastRealExecution ? 'In progress' : state.lastDemoLaunchRun ? 'Demo only' : demoExecutionReady ? 'Demo ready' : realBridgeReady ? 'Ready' : 'Bridge',
+        detail: liveProofPassed
+          ? 'A non-demo launch proof has token, liquidity, and final sweep evidence.'
+          : state.lastRealExecution
+            ? `${state.lastRealExecution.action || 'Classic operation'} completed; keep running until token, liquidity, and final sweep proof are all present.`
+            : state.lastDemoLaunchRun
+              ? `Demo run completed for ${shortAddress(state.lastDemoLaunchRun.token?.tokenMint)}; live parity still needs a real proof.`
+              : demoExecutionReady
+                ? 'v2 can run the complete demo token, LP, and sweep path; real launch routing remains guarded.'
+                : realBridgeReady
+                  ? `Next real classic operation is ${state.executionReadiness.nextEndpoint}.`
+                  : 'v2 stages decoded local run envelopes and dispatches real work only after readiness confirmation.',
+      };
+    }
+    if (feature.id === 'sweep-report') {
+      return parityFeatureFromCriterion(feature, criteriaById.get('sweep-report-proof'));
+    }
+    return {
+      ...feature,
+      state: feature.preview || feature.real ? 'warn' : 'danger',
+      badge: feature.preview || feature.real ? 'Needs proof' : 'Gap',
+      detail: feature.preview || feature.real
+        ? 'Replacement evidence is not available for this feature yet.'
+        : feature.detail,
+    };
+  });
+  const visibleRows = rows.filter((item) => ['wallet', 'grinder', 'token', 'pool-model', 'funding', 'execution', 'recovery'].includes(item.id));
+  const missingCount = rows.filter((item) => item.state === 'danger').length;
+  const previewCount = rows.filter((item) => item.state === 'warn').length;
+  const retirementIcon = retirementGate.state === 'pass' ? 'fa-check' : 'fa-ban';
+
+  $('#parityPanel').innerHTML = `
+    <div class="parity-summary">
+      <strong>${retirementGate.state === 'pass' ? 'Classic retirement ready' : 'Classic retirement blocked'}</strong>
+      <span>${missingCount} missing / ${previewCount} needs proof / ${escapeHtml(retirementGate.detail)}</span>
+    </div>
+    <article class="parity-row parity-gate ${retirementGate.state}">
+      <i class="fa-solid ${retirementIcon}" aria-hidden="true"></i>
+      <span>
+        <h3>${escapeHtml(retirementGate.title)}</h3>
+        <p>${retirementGate.passCount}/${retirementGate.itemCount} retirement checks passing - ${escapeHtml(retirementGate.detail)}</p>
+      </span>
+      <span class="risk-badge ${retirementGate.state === 'danger' ? 'danger' : ''}">${escapeHtml(retirementGate.badge)}</span>
+    </article>
+    ${renderClassicRetirementProofRail(retirementGate)}
+    ${renderReplacementCriteriaStrip(retirementGate.replacementCriteria)}
+  ${visibleRows.map((item) => {
+    const icon = item.state === 'pass' ? 'fa-check' : item.state === 'warn' ? 'fa-triangle-exclamation' : 'fa-screwdriver-wrench';
+    const badgeClass = item.state === 'danger' ? 'danger' : item.state === 'warn' ? 'warn' : '';
+    return `
+      <article class="parity-row ${item.state}">
+        <i class="fa-solid ${icon}" aria-hidden="true"></i>
+        <span>
+          <h3>${escapeHtml(item.title)}</h3>
+          <p>${escapeHtml(item.detail)}</p>
+        </span>
+        <span class="risk-badge ${badgeClass}">${escapeHtml(item.badge)}</span>
+      </article>
+    `;
+  }).join('')}`;
+}
+
+function renderWallet() {
+  const current = account();
+  const pinMeta = secretPinMeta();
+  $('#walletLabel').textContent = state.connected ? `${current.name} ${current.address}` : 'Unlock Trebuchet wallet';
+  $('.wallet-led').classList.toggle('is-on', state.connected);
+  const walletRows = walletAccounts();
+  const selectedPublicKey = selectedLaunchWalletPublicKey();
+  const selectedRow = selectedPublicKey
+    ? walletRows.find((item) => item.publicKey === selectedPublicKey || item.id === selectedPublicKey)
+    : null
+    || walletRows[0]
+    || null;
+  const rawWallet = selectedManagedWallet();
+  const qrCode = rawWallet?.qrCode || (
+    state.walletQr.publicKey === selectedPublicKey ? state.walletQr.qrCode : null
+  );
+  const qrLoading = state.walletQr.publicKey === selectedPublicKey && state.walletQr.loading;
+  const qrError = state.walletQr.publicKey === selectedPublicKey ? state.walletQr.error : null;
+  const revealed = state.revealedWallet?.publicKey === selectedPublicKey ? state.revealedWallet : null;
+  const secretKeyB58 = revealed?.secretKeyB58 || '';
+  const secretKeyJson = Array.isArray(revealed?.secretKey) ? JSON.stringify(revealed.secretKey) : '';
+  const mnemonic = revealed?.mnemonic || '';
+  const revealBusy = state.revealingWalletPublicKey === selectedPublicKey;
+  const discardBusy = state.discardingWalletPublicKey === selectedPublicKey;
+  const revealError = state.revealError && !revealed ? state.revealError : null;
+  const secretBlocked = state.secretPin.locked || selectedRow?.secretPinLocked;
+  const routeCount = quoteAcquireRoutes().length;
+  const manualCount = quoteAcquireManualCount();
+  const fundingEstimateStatus = classicFundingEstimateStatus(currentLaunchConfig());
+  const estimatedSol = fundingEstimateStatus.matchesConfig ? Number(state.classicFundingEstimate?.totalSol || 0) : 0;
+  const recoveryAssets = [
+    ...state.recovery.pendingWallets.map((wallet) => ({
+      type: 'Recovery wallet',
+      name: shortAddress(wallet.publicKey),
+      detail: wallet.decryptionFailed
+        ? 'Secret material unavailable on this machine'
+        : 'Recoverable launch wallet metadata from local API',
+      state: 'Recovery',
+    })),
+    ...state.recovery.journals.slice(0, 4).map((journal) => ({
+      type: 'Launch journal',
+      name: journal.token?.symbol || shortAddress(journal.walletPublicKey),
+      detail: `${humanizeStage(journal.stage)} / updated ${formatDate(journal.updatedAt || journal.createdAt)}`,
+      state: journal.status || 'Journal',
+    })),
+  ];
+  const assetRows = state.apiStatus === 'connected'
+    ? [...recoveryAssets, ...assets]
+    : assets;
+
+  $('#accountList').innerHTML = walletRows.map((item) => `
+    <article class="account-row ${item.id === state.accountId ? 'is-active' : ''}">
+      <span class="ident" style="border-color:${item.color}; color:${item.color}">${escapeHtml(item.name.slice(0, 1))}</span>
+      <span class="account-copy">
+        <h3>${escapeHtml(item.name)}</h3>
+        <p>${escapeHtml(item.role)} / ${escapeHtml(item.address)}</p>
+      </span>
+      <span class="balance">
+        <strong>${Number(item.balance || 0).toFixed(2)} SOL</strong>
+        <span>${item.id === state.accountId ? 'Active' : 'Wallet'}</span>
+      </span>
+      <button class="pill-button" type="button" data-action="select-account" data-account="${escapeHtml(item.id)}">Select</button>
+    </article>
+  `).join('') || '<div class="empty-state">Create or import a Trebuchet-managed wallet.</div>';
+
+  $('#walletDetailPanel').innerHTML = selectedPublicKey && selectedRow ? `
+    <div class="wallet-detail-grid">
+      <div class="wallet-qr-box ${qrCode ? 'has-qr' : ''}">
+        ${qrCode
+          ? `<img src="${escapeHtml(qrCode)}" alt="Funding QR code for ${escapeHtml(shortAddress(selectedPublicKey))}">`
+          : `<span><i class="fa-solid ${qrLoading ? 'fa-spinner fa-spin' : 'fa-qrcode'}"></i></span>`}
+      </div>
+      <div class="wallet-funding-box">
+        <span class="eyebrow">Funding address</span>
+        <h3>${escapeHtml(selectedRow.name)}</h3>
+        <code>${escapeHtml(selectedPublicKey)}</code>
+        <div class="operator-toolbar compact">
+          <button class="pill-button" type="button" data-action="copy-wallet-address">
+            <i class="fa-solid fa-copy"></i><span>Copy</span>
+          </button>
+          <button class="pill-button" type="button" data-action="load-wallet-qr" ${qrLoading ? 'disabled' : ''}>
+            <i class="fa-solid fa-qrcode"></i><span>${qrCode ? 'Refresh QR' : 'Load QR'}</span>
+          </button>
+          <button class="pill-button" type="button" data-action="${secretBlocked ? 'unlock-secret-pin' : 'reveal-wallet-secret'}" ${revealBusy || state.secretPin.busy ? 'disabled' : ''}>
+            <i class="fa-solid fa-key"></i><span>${revealBusy ? 'Revealing' : secretBlocked ? 'Unlock PIN' : revealed ? 'Reveal again' : 'Reveal'}</span>
+          </button>
+          <button class="pill-button danger" type="button" data-action="discard-wallet" ${discardBusy || state.fullRunRunning || state.realExecutionRunning ? 'disabled' : ''}>
+            <i class="fa-solid fa-trash"></i><span>${discardBusy ? 'Discarding' : 'Discard'}</span>
+          </button>
+        </div>
+        ${qrError ? `<p class="wallet-detail-error">${escapeHtml(qrError)}</p>` : ''}
+        ${renderFundingWalletHint()}
+      </div>
+    </div>
+    <div class="wallet-funding-stats">
+      <span><small>Estimated SOL</small><strong>${estimatedSol ? estimatedSol.toFixed(3) : 'Estimate'}</strong></span>
+      <span><small>Acquire routes</small><strong>${routeCount}</strong></span>
+      <span><small>Manual quote</small><strong>${manualCount}</strong></span>
+      <span><small>Secret</small><strong>${secretBlocked ? 'PIN locked' : selectedRow.hasSecretKey ? 'Available' : 'Missing'}</strong></span>
+    </div>
+    ${renderSolflarePanel()}
+    <div class="secret-pin-callout ${escapeHtml(pinMeta.className)}">
+      <span>
+        <small>Recovery PIN</small>
+        <strong>${escapeHtml(pinMeta.label)}</strong>
+        <em>${escapeHtml(pinMeta.detail)}</em>
+      </span>
+      <button class="pill-button" type="button" data-action="${escapeHtml(pinMeta.primaryAction)}" ${pinMeta.disabled || state.secretPin.busy ? 'disabled' : ''}>
+        ${escapeHtml(state.secretPin.busy || pinMeta.primaryLabel)}
+      </button>
+    </div>
+    <div class="wallet-recovery-box ${revealed ? 'is-revealed' : ''}">
+      <div>
+        <span class="eyebrow">Recovery secret</span>
+        <h3>${revealed ? 'Visible until hidden' : 'Hidden by default'}</h3>
+        <p>${revealed ? 'Back it up only when recovering manually.' : secretBlocked ? 'Unlock the Recovery PIN to reveal this wallet.' : 'Reveal pulls the secret through the guarded pending-wallet endpoint.'}</p>
+      </div>
+      ${revealed ? `
+        <div class="secret-stack">
+          ${mnemonic ? `
+            <div class="secret-value">
+              <span>Mnemonic</span>
+              <code>${escapeHtml(mnemonic)}</code>
+              <button class="pill-button" type="button" data-action="copy-wallet-secret" data-secret-type="mnemonic">
+                <i class="fa-solid fa-copy"></i><span>Copy</span>
+              </button>
+            </div>
+          ` : ''}
+          ${secretKeyB58 ? `
+            <div class="secret-value">
+              <span>Base58 secret</span>
+              <code>${escapeHtml(secretKeyB58)}</code>
+              <button class="pill-button" type="button" data-action="copy-wallet-secret" data-secret-type="secretKeyB58">
+                <i class="fa-solid fa-copy"></i><span>Copy</span>
+              </button>
+            </div>
+          ` : ''}
+          ${secretKeyJson ? `
+            <div class="secret-value">
+              <span>JSON secret</span>
+              <code>${escapeHtml(secretKeyJson)}</code>
+              <button class="pill-button" type="button" data-action="copy-wallet-secret" data-secret-type="secretKeyJson">
+                <i class="fa-solid fa-copy"></i><span>Copy</span>
+              </button>
+            </div>
+          ` : ''}
+          <button class="secondary-button compact" type="button" data-action="hide-wallet-secret">
+            <i class="fa-solid fa-eye-slash"></i><span>Hide</span>
+          </button>
+        </div>
+      ` : `
+        <div class="operator-toolbar compact">
+          <button class="pill-button" type="button" data-action="${secretBlocked ? 'unlock-secret-pin' : 'reveal-wallet-secret'}" ${revealBusy || state.secretPin.busy ? 'disabled' : ''}>
+            <i class="fa-solid fa-lock-open"></i><span>${revealBusy ? 'Revealing' : secretBlocked ? 'Unlock PIN' : 'Reveal secret'}</span>
+          </button>
+        </div>
+        ${revealError ? `<p class="wallet-detail-error">${escapeHtml(revealError)}</p>` : ''}
+      `}
+    </div>
+  ` : '<div class="empty-state">Generate or import a Trebuchet-managed wallet to see funding and recovery controls.</div>';
+
+  $('#assetTable').innerHTML = assetRows.length
+    ? assetRows.map((item) => `
+    <article class="asset-row">
+      <span>
+        <h3>${escapeHtml(item.name)}</h3>
+        <p>${escapeHtml(item.type)} / ${escapeHtml(item.detail)}</p>
+      </span>
+      <span class="risk-badge ${stateClass(item.state)}">${escapeHtml(item.state)}</span>
+      <button class="pill-button" type="button" data-action="noop" data-message="${escapeHtml(item.name)} selected">Inspect</button>
+    </article>
+  `).join('')
+    : '<div class="empty-state">No local wallet or launch assets found.</div>';
+}
+
+function renderDiscovery() {
+  const selected = selectedDiscovery();
+  const ecosystem = selectedEcosystem();
+  $('#discoverySourceBanner').innerHTML = `
+    <span class="risk-badge warn">${escapeHtml(discoveryDataNotice.label)}</span>
+    <span>${escapeHtml(discoveryDataNotice.detail)}</span>
+  `;
+  $('#standardsStrip').innerHTML = standards.map((item) => `
+    <span class="standard-chip">
+      <strong>${escapeHtml(item.title)}</strong>
+      <span>${escapeHtml(item.detail)}</span>
+    </span>
+  `).join('');
+
+  $('#discoveryTable').innerHTML = discoveryTokens.map((token) => `
+    <button class="discovery-row ${token.id === state.selectedDiscoveryId ? 'is-active' : ''}" type="button" data-action="select-discovery" data-token="${escapeHtml(token.id)}">
+      <span class="token-mark" style="border-color:${token.color}; color:${token.color}; background:color-mix(in srgb, ${token.color} 12%, var(--panel))">${escapeHtml(token.symbol.slice(0, 2))}</span>
+      <span class="discovery-copy">
+        <h3>${escapeHtml(token.name)} <span class="muted">${escapeHtml(token.symbol)}</span></h3>
+        <span class="metric-line">
+          <span>${escapeHtml(token.metrics.liquidity)}</span>
+          <span>${escapeHtml(token.metrics.holders)}</span>
+          <span>${escapeHtml(avatarEcosystems[token.id].collection.supply.toLocaleString())} avatars</span>
+          <span>${escapeHtml(avatarEcosystems[token.id].swarm.activeAvatars.toLocaleString())} active AI</span>
+        </span>
+      </span>
+      <span class="score-block">
+        <strong>${token.score}</strong>
+        <span class="meter"><span style="width:${token.score}%"></span></span>
+      </span>
+      <span class="source-block">
+        <span class="risk-badge ${token.status === 'Watch' ? 'warn' : ''}">${escapeHtml(token.status)}</span>
+        <span class="risk-badge warn">${escapeHtml(token.dataSource || discoveryDataNotice.label)}</span>
+        <span>${escapeHtml(token.confidence)} confidence</span>
+      </span>
+    </button>
+  `).join('');
+
+  $('#selectedDiscoveryTitle').textContent = selected.symbol;
+  $('#evidencePanel').innerHTML = `
+    <div class="evidence-head">
+      <span class="token-mark" style="border-color:${selected.color}; color:${selected.color}; background:color-mix(in srgb, ${selected.color} 12%, var(--panel))">${escapeHtml(selected.symbol.slice(0, 2))}</span>
+      <span>
+        <h3>${escapeHtml(selected.name)}</h3>
+        <p>${escapeHtml(selected.summary)}</p>
+      </span>
+    </div>
+    <div class="evidence-row"><span>Score</span><strong>${selected.score} / 100</strong></div>
+    <div class="evidence-row"><span>Status</span><strong>${escapeHtml(selected.status)}</strong></div>
+    <div class="evidence-row"><span>Confidence</span><strong>${escapeHtml(selected.confidence)}</strong></div>
+    <div class="evidence-row"><span>Data status</span><strong>${escapeHtml(selected.dataSource || discoveryDataNotice.label)}</strong></div>
+    <div class="evidence-row"><span>Source</span><strong>${escapeHtml(selected.source)}</strong></div>
+    <div class="evidence-row"><span>Avatar collection</span><strong>${escapeHtml(ecosystem.collection.name)} / ${escapeHtml(ecosystem.collection.symbol)}</strong></div>
+    <div class="evidence-row"><span>Collection progress</span><strong>${ecosystem.collection.minted.toLocaleString()} / ${ecosystem.collection.supply.toLocaleString()} minted</strong></div>
+    <div class="evidence-row"><span>Runtime gate</span><strong>${escapeHtml(ecosystem.collection.gate)}</strong></div>
+    <div class="evidence-row"><span>Assignment</span><strong>${escapeHtml(ecosystem.collection.assignment)}</strong></div>
+    <div class="evidence-row"><span>AI room</span><strong>${escapeHtml(ecosystem.swarm.room)} / ${ecosystem.swarm.activeAvatars.toLocaleString()} active avatars</strong></div>
+    ${selected.evidence.map(([label, value]) => `
+      <div class="evidence-row">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(value)}</strong>
+      </div>
+    `).join('')}
+  `;
+
+  $('#selectedChatTitle').textContent = ecosystem.swarm.room;
+  $('#chatPanel').innerHTML = `
+    <div class="trigger-row">
+      ${ecosystem.swarm.triggers.map((trigger) => `<span>${escapeHtml(trigger)}</span>`).join('')}
+    </div>
+    <div class="chat-feed">
+      ${ecosystem.swarm.events.map((event) => `
+        <article class="chat-event">
+          <div class="chat-route">
+            <span>${escapeHtml(event.from)}</span>
+            <i class="fa-solid fa-arrow-right"></i>
+            <span>${escapeHtml(event.to)}</span>
+          </div>
+          <p>${escapeHtml(event.line)}</p>
+          <div class="chat-amount">
+            <i class="fa-solid fa-coins"></i>
+            <span>${escapeHtml(event.amount)}</span>
+          </div>
+        </article>
+      `).join('')}
+    </div>
+    <div class="avatar-strip compact">
+      ${ecosystem.avatars.map((avatar) => `
+        <article class="avatar-card">
+          <span class="avatar-mark" style="border-color:${avatar.color}; color:${avatar.color}; background:color-mix(in srgb, ${avatar.color} 12%, var(--panel))">${escapeHtml(avatarInitials(avatar.name))}</span>
+          <span>
+            <h3>${escapeHtml(avatar.name)}</h3>
+            <p>${escapeHtml(avatar.role)}</p>
+          </span>
+        </article>
+      `).join('')}
+    </div>
+  `;
+}
+
+function approvalTransaction() {
+  if (state.activeApprovalId) {
+    const tx = state.transactions.find((item) => item.id === state.activeApprovalId);
+    if (tx) return tx;
+  }
+  return state.transactions.find((tx) => tx.state === 'pending') || null;
+}
+
+function approvalHtml() {
+  const current = account();
+  const tx = approvalTransaction();
+  if (!tx) {
+    return `
+      <div class="approval-head">
+        <span>
+          <span class="eyebrow">Trebuchet wallet</span>
+          <h2>${state.connected ? 'Unlocked' : 'Locked'}</h2>
+        </span>
+        <span class="badge">${escapeHtml(state.network)}</span>
+      </div>
+      <div class="approval-body">
+        <div class="kv-row"><span>Origin</span><strong>makesometokens.com</strong></div>
+        <div class="kv-row"><span>Wallet</span><strong>${state.connected ? escapeHtml(current.name) : 'Locked'}</strong></div>
+        <div class="kv-row"><span>Policy</span><strong>Fund, simulate, arm</strong></div>
+        <p>No run is armed. Review the run plan after funding the launch wallet.</p>
+      </div>
+      <div class="approval-actions">
+        <button class="secondary-button" type="button" data-action="close-approval">Close</button>
+        <button class="primary-button" type="button" data-action="toggle-wallet">${state.connected ? 'Lock' : 'Unlock'}</button>
+      </div>
+    `;
+  }
+  const rows = signatureRows();
+  const pendingRows = rows.filter((item) => item.state === 'pending');
+  const totalCost = rows.reduce((sum, item) => sum + Number(item.cost || 0), 0);
+
+  return `
+    <div class="approval-head">
+      <span>
+        <span class="eyebrow">Arm local run</span>
+        <h2>${escapeHtml(state.launchPlan?.token?.symbol || $('#tokenSymbol').value || 'Token')} launch envelope</h2>
+      </span>
+      <span class="risk-badge ${riskClass(tx.risk)}">${pendingRows.length} ops</span>
+    </div>
+    <div class="approval-body">
+      <div class="kv-row"><span>Origin</span><strong>makesometokens.com</strong></div>
+      <div class="kv-row"><span>Signing wallet</span><strong>${escapeHtml(current.name)}</strong></div>
+      <div class="kv-row"><span>Network</span><strong>${escapeHtml(state.network)}</strong></div>
+      <div class="kv-row"><span>Estimated envelope</span><strong>${fmtSol(totalCost)}</strong></div>
+      <div class="kv-row"><span>Local signer</span><strong>Encrypted Trebuchet key</strong></div>
+      <div class="kv-row"><span>Simulation</span><strong>Decoded</strong></div>
+      <div class="kv-row"><span>Plan source</span><strong>${escapeHtml(tx.source || 'static-preview')}</strong></div>
+      ${pendingRows.slice(0, 4).map((item) => `<p><i class="fa-solid fa-check"></i> ${escapeHtml(item.label)}</p>`).join('')}
+      ${pendingRows.length > 4 ? `<p><i class="fa-solid fa-ellipsis"></i> ${pendingRows.length - 4} more local operation${pendingRows.length - 4 === 1 ? '' : 's'}</p>` : ''}
+    </div>
+    <div class="approval-actions">
+      <button class="secondary-button" type="button" data-action="close-approval">Cancel</button>
+      <button class="primary-button" type="button" data-action="run-launch">Start local run</button>
+    </div>
+  `;
+}
+
+function renderExtension() {
+  const html = approvalHtml();
+  const approvalInline = document.getElementById('approvalInline');
+  const approvalFloating = $('#approvalFloating');
+  const policyList = document.getElementById('policyList');
+  if (approvalInline) approvalInline.innerHTML = html;
+  if (approvalFloating) {
+    approvalFloating.innerHTML = html;
+    approvalFloating.classList.toggle('is-open', state.approvalOpen && state.activeView === 'launch');
+  }
+  if (policyList) {
+    policyList.innerHTML = signingPolicies.map((policy) => {
+      const icon = policy.state === 'pass' ? 'fa-check' : policy.state === 'warn' ? 'fa-triangle-exclamation' : 'fa-ban';
+      return `
+        <article class="policy-row ${policy.state}">
+          <span>
+            <h3><i class="fa-solid ${icon}"></i> ${escapeHtml(policy.title)}</h3>
+            <p>${escapeHtml(policy.detail)}</p>
+          </span>
+          <span class="risk-badge ${policy.state === 'danger' ? 'danger' : ''}">${policy.state === 'danger' ? 'Blocked' : 'Allowed'}</span>
+        </article>
+      `;
+    }).join('');
+  }
+}
+
+function renderReleasePanel() {
+  const badge = updateResultLabel();
+  const result = state.updateCheck.lastResult || {};
+  const releaseUrl = result.releaseUrl || state.releaseUrl;
+  const trust = releaseTrustSummary(result.releaseTrust || state.releaseTrust);
+  return `
+    <article class="release-panel ${escapeHtml(badge.className)}">
+      <span>
+        <span class="eyebrow">Release state</span>
+        <h3>Trebuchet ${state.appVersion ? `v${escapeHtml(state.appVersion)}` : 'local build'}</h3>
+        <p>${escapeHtml(updateResultDetail())}</p>
+        <p class="release-trust-line"><strong>${escapeHtml(trust.label)}</strong> - ${escapeHtml(trust.detail)}</p>
+      </span>
+      <span class="release-meta">
+        <small>${state.updateCheck.lastCheckedAt ? escapeHtml(formatDate(state.updateCheck.lastCheckedAt)) : 'not checked'}</small>
+        <strong>${escapeHtml(result.latest ? `latest v${result.latest}` : result.current ? `current v${result.current}` : state.prefs.checkForUpdatesOnStartup ? 'auto-check on' : 'auto-check off')}</strong>
+      </span>
+      <span class="secret-pin-actions">
+        <span class="risk-badge ${escapeHtml(trust.className)}">${escapeHtml(trust.label)}</span>
+        <span class="risk-badge ${escapeHtml(badge.className)}">${escapeHtml(badge.label)}</span>
+        <button class="pill-button" type="button" data-action="check-updates" ${state.apiStatus === 'connected' && !state.updateCheck.checking ? '' : 'disabled'}>
+          ${state.updateCheck.checking ? 'Checking' : 'Check'}
+        </button>
+        <button class="pill-button" type="button" data-action="toggle-update-autocheck" ${state.apiStatus === 'connected' ? '' : 'disabled'}>
+          ${state.prefs.checkForUpdatesOnStartup ? 'Auto on' : 'Auto off'}
+        </button>
+        <button class="pill-button" type="button" data-action="open-release-page" data-url="${escapeHtml(releaseUrl)}">
+          Releases
+        </button>
+      </span>
+    </article>`;
+}
+
+function applyRpcConfig(config = {}) {
+  state.rpcActiveUrl = config.active || state.rpcActiveUrl;
+  state.rpcSaved = Array.isArray(config.saved) ? config.saved : state.rpcSaved;
+  const active = state.rpcSaved.find((item) => item?.url === state.rpcActiveUrl);
+  state.rpcName = active?.name || (state.rpcActiveUrl ? safeRpcUrl(state.rpcActiveUrl) : state.rpcName);
+  $('#networkLabel').textContent = state.demoActive ? 'Demo' : state.rpcName;
+}
+
+function renderRpcSettingsPanel() {
+  const activeUrl = state.rpcActiveUrl || '';
+  const saved = Array.isArray(state.rpcSaved) ? state.rpcSaved : [];
+  const isPublic = isPublicRpcUrl(activeUrl);
+  const healthClass = state.rpcHealth === 'error' || isPublic
+    ? 'danger'
+    : state.rpcHealth === 'slow' || state.rpcHealth === 'unknown'
+      ? 'warn'
+      : '';
+  const test = state.rpcTestResult;
+  const testClass = test
+    ? test.ok ? '' : 'danger'
+    : '';
+  const testText = state.rpcBusy === 'test'
+    ? 'Testing RPC...'
+    : test
+      ? test.ok
+        ? `OK - Solana ${test.version || 'version'} / ${test.latencyMs ?? '?'}ms`
+        : `Failed - ${test.error || 'RPC test failed'}`
+      : 'Test a new endpoint before saving it.';
+  return `
+    <article class="rpc-settings-panel ${escapeHtml(healthClass)}">
+      <div class="rpc-settings-head">
+        <span>
+          <span class="eyebrow">RPC management</span>
+          <h3>${escapeHtml(state.rpcName || 'Unknown RPC')}</h3>
+          <p>${escapeHtml(activeUrl ? safeRpcUrl(activeUrl) : 'Connect through the local app to manage launch RPC endpoints.')}</p>
+        </span>
+        <span class="risk-badge ${escapeHtml(healthClass)}">${escapeHtml(isPublic ? 'Public RPC' : state.rpcHealthLabel)}</span>
+      </div>
+      ${isPublic ? '<div class="rpc-warning">Public Solana RPCs are launch hazards. Save a dedicated endpoint before creating pools.</div>' : ''}
+      <div class="rpc-saved-list">
+        ${saved.length ? saved.map((entry) => {
+          const selected = entry.url === activeUrl;
+          return `
+            <article class="${selected ? 'is-active' : ''}">
+              <span>
+                <strong>${escapeHtml(entry.name || 'Unnamed RPC')}</strong>
+                <small>${escapeHtml(safeRpcUrl(entry.url))}</small>
+              </span>
+              <span class="rpc-row-actions">
+                <button class="pill-button" type="button" data-action="select-rpc" data-url="${escapeHtml(entry.url)}" ${selected || state.rpcBusy ? 'disabled' : ''}>Use</button>
+                <button class="pill-button danger" type="button" data-action="remove-rpc" data-url="${escapeHtml(entry.url)}" ${saved.length <= 1 || state.rpcBusy ? 'disabled' : ''}>Remove</button>
+              </span>
+            </article>
+          `;
+        }).join('') : '<div class="empty-state compact">No saved RPC endpoints loaded.</div>'}
+      </div>
+      <div class="rpc-add-grid">
+        <label>
+          <small>Name</small>
+          <input data-rpc-field="name" type="text" autocomplete="off" placeholder="Helius mainnet">
+        </label>
+        <label>
+          <small>URL</small>
+          <input data-rpc-field="url" type="url" autocomplete="off" placeholder="https://...">
+        </label>
+      </div>
+      <div class="operator-toolbar compact">
+        <button class="pill-button" type="button" data-action="test-rpc" ${state.apiStatus === 'connected' && !state.rpcBusy ? '' : 'disabled'}>${state.rpcBusy === 'test' ? 'Testing' : 'Test'}</button>
+        <button class="pill-button" type="button" data-action="add-rpc" ${state.apiStatus === 'connected' && !state.rpcBusy ? '' : 'disabled'}>${state.rpcBusy === 'add' ? 'Saving' : 'Save and use'}</button>
+      </div>
+      <p class="rpc-test-result ${escapeHtml(testClass)}">${escapeHtml(testText)}</p>
+    </article>
+  `;
+}
+
+function renderSettings() {
+  const pinMeta = secretPinMeta();
+  const modeRows = [
+    {
+      title: 'Recovery PIN',
+      detail: pinMeta.detail,
+      state: pinMeta.label,
+    },
+    {
+      title: 'Local API',
+      detail: state.apiDetail,
+      state: state.apiStatus === 'connected' ? 'Current' : 'Preview',
+    },
+    {
+      title: 'RPC endpoint',
+      detail: state.apiStatus === 'connected'
+        ? `${state.rpcName} / ${state.rpcHealthLabel}`
+        : 'Connect through the local app to read RPC health.',
+      state: state.rpcHealth === 'error' ? 'Warn' : 'Current',
+    },
+    {
+      title: 'Report publishing',
+      detail: state.prefs.publishLaunchReport
+        ? 'Launch reports are enabled in local preferences.'
+        : 'Launch report publishing is disabled in local preferences.',
+      state: state.prefs.publishLaunchReport ? 'On' : 'Off',
+    },
+    ...localModes,
+  ];
+
+  $('#settingsList').innerHTML = `
+    <article class="secret-pin-panel ${escapeHtml(pinMeta.className)}">
+      <span>
+        <span class="eyebrow">Recovery PIN</span>
+        <h3>${escapeHtml(pinMeta.label)}</h3>
+        <p>${escapeHtml(pinMeta.detail)}</p>
+      </span>
+      <span class="secret-pin-meta">
+        <small>${escapeHtml(state.secretPin.kdf || 'no-kdf')}</small>
+        <strong>${state.secretPin.deviceSecretProtected ? 'Device protected' : 'Local fallback'}</strong>
+      </span>
+      <span class="secret-pin-actions">
+        <button class="pill-button" type="button" data-action="${escapeHtml(pinMeta.primaryAction)}" ${pinMeta.disabled || state.secretPin.busy ? 'disabled' : ''}>
+          ${escapeHtml(state.secretPin.busy || pinMeta.primaryLabel)}
+        </button>
+        <button class="pill-button" type="button" data-action="refresh-secret-pin" ${state.apiStatus !== 'connected' || state.secretPin.busy ? 'disabled' : ''}>
+          Refresh
+        </button>
+        <button class="pill-button" type="button" data-action="change-secret-pin" ${state.apiStatus !== 'connected' || !state.secretPin.configured || state.secretPin.busy ? 'disabled' : ''}>
+          Change
+        </button>
+        <button class="pill-button danger" type="button" data-action="reset-secret-pin" ${state.apiStatus !== 'connected' || !state.secretPin.configured || state.secretPin.busy ? 'disabled' : ''}>
+          Reset
+        </button>
+      </span>
+    </article>
+    ${renderReleasePanel()}
+    ${renderRpcSettingsPanel()}
+    ${settings.map((setting) => `
+    <article class="setting-row">
+      <span>
+        <h3>${escapeHtml(setting.title)}</h3>
+        <p>${escapeHtml(setting.detail)}</p>
+      </span>
+      <button class="toggle ${setting.enabled ? 'is-on' : ''}" type="button" data-action="toggle-setting" data-setting="${escapeHtml(setting.id)}" aria-label="${escapeHtml(setting.title)}">
+        <span></span>
+      </button>
+    </article>
+  `).join('')}`;
+
+  $('#modeStack').innerHTML = modeRows.map((mode) => `
+    <article class="mode-row-card">
+      <span>
+        <h3>${escapeHtml(mode.title)}</h3>
+        <p>${escapeHtml(mode.detail)}</p>
+      </span>
+      <span class="risk-badge ${stateClass(mode.state) || (mode.state === 'Research' ? 'warn' : '')}">${escapeHtml(mode.state)}</span>
+    </article>
+  `).join('');
+}
+
+function recoveryGuideModel({
+  wallets = [],
+  selectedPublicKey = null,
+  selectedPending = false,
+  recoverableCount = 0,
+  secretLocked = false,
+  lastSweep = null,
+  busy = false,
+} = {}) {
+  const selectedWallet = wallets.find((wallet) => wallet.publicKey === selectedPublicKey) || null;
+  const firstRecoverable = wallets.find((wallet) => !wallet.decryptionFailed) || null;
+  if (state.apiStatus !== 'connected') {
+    return {
+      state: 'warn',
+      badge: 'Local app',
+      title: 'Open Trebuchet locally',
+      detail: 'Recovery inventory, secret reveal, and abandoned-wallet sweep need the authenticated local app.',
+      items: ['Open the OS X app, then return to History.', 'Do not discard local recovery files manually.'],
+      actions: [],
+    };
+  }
+  if (lastSweep?.error) {
+    return {
+      state: 'danger',
+      badge: 'Retry',
+      title: 'Sweep failed',
+      detail: 'The recovery wallet was not cleared. Retry after checking PIN, destination, and RPC health.',
+      items: recoverySweepNextSteps(lastSweep),
+      actions: lastSweep.publicKey && !busy
+        ? [{ label: 'Retry sweep', action: 'sweep-recovery-wallet', wallet: lastSweep.publicKey, danger: true }]
+        : [],
+    };
+  }
+  if (lastSweep?.partial || lastSweep?.stillPending) {
+    return {
+      state: 'warn',
+      badge: 'Partial',
+      title: 'Recovery still active',
+      detail: 'Trebuchet kept the local recovery entry so you can retry instead of losing track of assets.',
+      items: recoverySweepNextSteps(lastSweep),
+      actions: lastSweep.publicKey && !busy
+        ? [
+          { label: 'Retry sweep', action: 'sweep-recovery-wallet', wallet: lastSweep.publicKey, danger: true },
+          { label: 'Select wallet', action: 'select-recovery-wallet', wallet: lastSweep.publicKey },
+        ]
+        : [],
+    };
+  }
+  if (secretLocked && recoverableCount > 0) {
+    return {
+      state: 'warn',
+      badge: 'PIN',
+      title: 'Unlock before recovery',
+      detail: `${recoverableCount} recoverable launch wallet${recoverableCount === 1 ? '' : 's'} need the Recovery PIN before reveal or sweep.`,
+      items: ['Unlock the Recovery PIN.', 'Select the wallet that matches the failed launch journal.', 'Sweep assets only after verifying the destination wallet.'],
+      actions: [{ label: 'Unlock PIN', action: 'unlock-secret-pin' }],
+    };
+  }
+  if (selectedWallet && selectedPending) {
+    return {
+      state: '',
+      badge: 'Selected',
+      title: 'Recover selected wallet',
+      detail: 'Inspect, reveal for manual recovery, sweep stranded assets, or reuse this launch wallet for the next run.',
+      items: ['Copy the address and compare it with the failed launch journal.', 'Use for launch selects it as the Trebuchet-managed signer.', 'Reveal only if manual recovery is needed.', 'Sweep moves assets and clears the entry only after empty-wallet verification.'],
+      actions: [
+        { label: 'Use for launch', action: 'use-recovery-wallet-for-launch', wallet: selectedWallet.publicKey },
+        { label: 'Reveal secret', action: selectedWallet.secretPinLocked ? 'unlock-secret-pin' : 'reveal-recovery-wallet', wallet: selectedWallet.publicKey },
+        { label: 'Sweep wallet', action: selectedWallet.secretPinLocked ? 'unlock-secret-pin' : 'sweep-recovery-wallet', wallet: selectedWallet.publicKey, danger: true },
+      ],
+    };
+  }
+  if (firstRecoverable) {
+    return {
+      state: 'warn',
+      badge: 'Select',
+      title: 'Choose a recovery wallet',
+      detail: `${wallets.length} pending launch wallet${wallets.length === 1 ? '' : 's'} are available. Select one to align it with a journal or manual cleanup path.`,
+      items: ['Start with the wallet shown in the failed journal.', 'Use QR/copy for inspection before sweeping.', 'Discard only after assets are empty or backed up.'],
+      actions: [{ label: 'Select first wallet', action: 'select-recovery-wallet', wallet: firstRecoverable.publicKey }],
+    };
+  }
+  if (lastSweep && !lastSweep.error) {
+    return {
+      state: '',
+      badge: 'Clean',
+      title: 'Recovery cleanup recorded',
+      detail: 'The last sweep cleared its local recovery entry.',
+      items: recoverySweepNextSteps(lastSweep),
+      actions: [],
+    };
+  }
+  if (state.recovery.failedJournalCount > 0 || state.recovery.activeJournalCount > 0) {
+    return {
+      state: 'warn',
+      badge: 'Journal',
+      title: 'Review launch journals',
+      detail: 'No pending wallet is selected, but recovery journals still need review.',
+      items: ['Use the timeline resume plan below.', 'Unsafe partial pool states stay manual to avoid duplicate on-chain work.'],
+      actions: [],
+    };
+  }
+  return {
+    state: '',
+    badge: 'Clear',
+    title: 'No recovery action needed',
+    detail: 'No abandoned launch wallets are waiting for recovery or cleanup.',
+    items: ['Keep reports and proof bundles with the launch notes.'],
+    actions: [],
+  };
+}
+
+function renderRecoveryGuide(model) {
+  const actions = model.actions.map((action) => `
+    <button class="pill-button ${action.danger ? 'danger' : ''}" type="button" data-action="${escapeHtml(action.action)}" ${action.wallet ? `data-wallet="${escapeHtml(action.wallet)}"` : ''}>
+      ${escapeHtml(action.label)}
+    </button>
+  `).join('');
+  return `
+    <div class="recovery-guide ${escapeHtml(model.state)}">
+      <div class="recovery-guide-head">
+        <span>
+          <span class="eyebrow">Recovery guide</span>
+          <strong>${escapeHtml(model.title)}</strong>
+          <em>${escapeHtml(model.detail)}</em>
+        </span>
+        <span class="risk-badge ${escapeHtml(model.state)}">${escapeHtml(model.badge)}</span>
+      </div>
+      <ul>${model.items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+      ${actions ? `<div class="operator-toolbar compact">${actions}</div>` : ''}
+    </div>
+  `;
+}
+
+function recoveryWizardActionButton(action) {
+  const attrs = [
+    `data-action="${escapeHtml(action.action)}"`,
+    action.wallet ? `data-wallet="${escapeHtml(action.wallet)}"` : '',
+    action.journalId ? `data-journal-id="${escapeHtml(action.journalId)}"` : '',
+    action.step ? `data-step="${escapeHtml(action.step)}"` : '',
+  ].filter(Boolean).join(' ');
+  return `
+    <button class="pill-button ${action.danger ? 'danger' : ''}" type="button" ${attrs} ${action.disabled ? 'disabled' : ''}>
+      ${action.icon ? `<i class="fa-solid ${escapeHtml(action.icon)}"></i>` : ''}
+      <span>${escapeHtml(action.label)}</span>
+    </button>
+  `;
+}
+
+function recoveryWizardModel({
+  wallets = [],
+  selectedPublicKey = null,
+  selectedPending = false,
+  recoverableCount = 0,
+  secretLocked = false,
+  lastSweep = null,
+  busy = false,
+} = {}) {
+  const journals = state.apiStatus === 'connected' ? state.recovery.journals : [];
+  const activeJournals = journals.filter((journal) => !isTerminalJournal(journal));
+  const journalModels = activeJournals.map((journal) => ({
+    journal,
+    plan: journalResumePlan(journal),
+    matchingWallet: wallets.find((wallet) => wallet.publicKey === journal.walletPublicKey) || null,
+  }));
+  const manualModels = journalModels.filter((item) => item.plan.manualRecoveryRequired);
+  const resumableModels = journalModels.filter((item) => canResumeJournal(item.journal));
+  const selectedWallet = wallets.find((wallet) => wallet.publicKey === selectedPublicKey) || null;
+  const selectedJournalModel = journalModels.find((item) => item.journal.walletPublicKey === selectedPublicKey)
+    || manualModels[0]
+    || resumableModels[0]
+    || journalModels[0]
+    || null;
+  const firstRecoverable = wallets.find((wallet) => !wallet.decryptionFailed) || null;
+  const hasDecryptionFailures = wallets.some((wallet) => wallet.decryptionFailed);
+
+  const inventoryState = state.apiStatus !== 'connected'
+    ? 'warn'
+    : manualModels.length
+      ? 'danger'
+      : (activeJournals.length || wallets.length || lastSweep?.partial || lastSweep?.error)
+        ? 'warn'
+        : 'pass';
+  const unlockState = state.apiStatus !== 'connected'
+    ? 'warn'
+    : recoverableCount === 0 && !hasDecryptionFailures
+      ? 'pass'
+      : hasDecryptionFailures
+        ? 'danger'
+        : !state.secretPin.configured
+          ? 'danger'
+          : secretLocked
+            ? 'warn'
+            : 'pass';
+  const pathState = state.apiStatus !== 'connected'
+    ? 'warn'
+    : manualModels.length
+      ? 'danger'
+      : resumableModels.length || selectedPending || wallets.length
+        ? 'warn'
+        : 'pass';
+  const verifyState = lastSweep?.error
+    ? 'danger'
+    : lastSweep?.partial || lastSweep?.stillPending
+      ? 'warn'
+      : activeJournals.length || wallets.length
+        ? 'warn'
+        : 'pass';
+
+  const inventoryActions = [];
+  if (selectedJournalModel?.matchingWallet) {
+    inventoryActions.push({
+      label: 'Select matching wallet',
+      action: 'select-recovery-wallet',
+      wallet: selectedJournalModel.matchingWallet.publicKey,
+      icon: 'fa-wallet',
+    });
+  }
+  if (selectedJournalModel?.journal?.id && canResumeJournal(selectedJournalModel.journal)) {
+    inventoryActions.push({
+      label: 'Resume journal',
+      action: 'resume-journal',
+      journalId: selectedJournalModel.journal.id,
+      icon: 'fa-rotate-right',
+    });
+  }
+
+  const unlockActions = [];
+  if (state.apiStatus !== 'connected') {
+    unlockActions.push({ label: 'Open local app', action: 'noop', icon: 'fa-desktop' });
+  } else if (!state.secretPin.configured) {
+    unlockActions.push({ label: 'Set Recovery PIN', action: 'setup-secret-pin', icon: 'fa-key' });
+  } else if (secretLocked && recoverableCount > 0) {
+    unlockActions.push({ label: 'Unlock PIN', action: 'unlock-secret-pin', icon: 'fa-lock-open' });
+  } else if (selectedWallet && selectedPending) {
+    unlockActions.push({
+      label: 'Reveal selected wallet',
+      action: selectedWallet.secretPinLocked ? 'unlock-secret-pin' : 'reveal-recovery-wallet',
+      wallet: selectedWallet.publicKey,
+      icon: 'fa-eye',
+    });
+  }
+
+  const pathActions = [];
+  if (manualModels[0]?.matchingWallet) {
+    pathActions.push({
+      label: 'Reveal for manual recovery',
+      action: manualModels[0].matchingWallet.secretPinLocked || secretLocked ? 'unlock-secret-pin' : 'reveal-recovery-wallet',
+      wallet: manualModels[0].matchingWallet.publicKey,
+      danger: true,
+      icon: 'fa-key',
+    });
+  } else if (resumableModels[0]?.journal?.id) {
+    pathActions.push({
+      label: 'Resume missing work',
+      action: 'resume-journal',
+      journalId: resumableModels[0].journal.id,
+      icon: 'fa-rotate-right',
+    });
+  } else if (selectedWallet && selectedPending) {
+    pathActions.push(
+      { label: 'Use for launch', action: 'use-recovery-wallet-for-launch', wallet: selectedWallet.publicKey, icon: 'fa-check' },
+      {
+        label: 'Sweep wallet',
+        action: selectedWallet.secretPinLocked || secretLocked ? 'unlock-secret-pin' : 'sweep-recovery-wallet',
+        wallet: selectedWallet.publicKey,
+        danger: true,
+        icon: 'fa-broom',
+      },
+    );
+  } else if (firstRecoverable) {
+    pathActions.push({
+      label: 'Select wallet',
+      action: 'select-recovery-wallet',
+      wallet: firstRecoverable.publicKey,
+      icon: 'fa-wallet',
+    });
+  }
+
+  const verifyActions = [];
+  if ((lastSweep?.error || lastSweep?.partial || lastSweep?.stillPending) && lastSweep.publicKey && !busy) {
+    verifyActions.push({
+      label: 'Retry sweep',
+      action: 'sweep-recovery-wallet',
+      wallet: lastSweep.publicKey,
+      danger: true,
+      icon: 'fa-rotate-right',
+    });
+  }
+  if (selectedJournalModel?.journal?.id && canDismissJournal(selectedJournalModel.journal)) {
+    verifyActions.push({
+      label: 'Dismiss journal',
+      action: 'dismiss-journal',
+      journalId: selectedJournalModel.journal.id,
+      danger: true,
+      icon: 'fa-box-archive',
+    });
+  }
+
+  const screens = [
+    {
+      id: 'inventory',
+      label: 'Find',
+      title: inventoryState === 'pass' ? 'No active recovery inventory' : 'Find failed launch state',
+      detail: state.apiStatus !== 'connected'
+        ? 'History needs the local API to load journals and pending wallets.'
+        : `${activeJournals.length} active journal${activeJournals.length === 1 ? '' : 's'} / ${wallets.length} pending wallet${wallets.length === 1 ? '' : 's'}.`,
+      state: inventoryState,
+      stats: [
+        ['Journals', activeJournals.length],
+        ['Pending wallets', wallets.length],
+        ['Manual blockers', manualModels.length],
+      ],
+      items: state.apiStatus !== 'connected'
+        ? ['Open through the local Trebuchet app.', 'Keep recovery files in place until inventory loads.']
+        : [
+          selectedJournalModel ? `${selectedJournalModel.plan.title}: ${selectedJournalModel.plan.detail}` : 'No failed launch journal selected.',
+          manualModels.length ? 'Manual recovery blockers are shown before automatic resume actions.' : 'Automatic resume is allowed only when prior checkpoints are safe.',
+        ],
+      actions: inventoryActions,
+    },
+    {
+      id: 'unlock',
+      label: 'Unlock',
+      title: unlockState === 'pass' ? 'Secrets available or not needed' : 'Unlock recovery material',
+      detail: recoverableCount
+        ? `${recoverableCount} launch wallet secret${recoverableCount === 1 ? '' : 's'} can be revealed or swept after PIN checks.`
+        : hasDecryptionFailures
+          ? 'Some local wallet metadata exists but cannot be decrypted on this machine.'
+          : 'No pending wallet secrets are waiting.',
+      state: unlockState,
+      stats: [
+        ['PIN', state.secretPin.configured ? secretLocked ? 'Locked' : 'Ready' : 'Unset'],
+        ['Recoverable', recoverableCount],
+        ['Secret errors', wallets.filter((wallet) => wallet.decryptionFailed).length],
+      ],
+      items: [
+        state.secretPin.configured ? 'Recovery PIN gates reveal, sweep, and manual recovery actions.' : 'Set a Recovery PIN before storing new launch secrets.',
+        hasDecryptionFailures ? 'Use an external backup for wallets this machine cannot decrypt.' : 'Reveal secrets only for manual recovery; prefer resume or sweep when available.',
+      ],
+      actions: unlockActions,
+    },
+    {
+      id: 'path',
+      label: 'Act',
+      title: manualModels.length ? 'Manual recovery required' : resumableModels.length ? 'Resume only missing work' : selectedPending ? 'Recover selected wallet' : 'Choose recovery path',
+      detail: manualModels.length
+        ? manualModels[0].plan.detail
+        : resumableModels.length
+          ? resumableModels[0].plan.detail
+          : selectedPending
+            ? 'Use, reveal, or sweep the selected pending launch wallet.'
+            : 'Select a pending wallet or journal before acting.',
+      state: pathState,
+      stats: [
+        ['Resumable', resumableModels.length],
+        ['Manual', manualModels.length],
+        ['Selected', selectedPending ? 'Yes' : 'No'],
+      ],
+      items: manualModels[0]?.plan.items || resumableModels[0]?.plan.items || [
+        'Resume skips recorded on-chain work when journal checkpoints prove it is safe.',
+        'Sweep stranded assets only after verifying the destination wallet.',
+      ],
+      actions: pathActions,
+    },
+    {
+      id: 'verify',
+      label: 'Verify',
+      title: verifyState === 'pass' ? 'Recovery cleanup verified' : 'Verify cleanup state',
+      detail: lastSweep
+        ? lastSweep.error
+          ? 'The last sweep failed and the wallet remains tracked.'
+          : lastSweep.partial || lastSweep.stillPending
+            ? 'The last sweep left assets or warnings; keep the recovery entry.'
+            : 'The last sweep cleared its local recovery entry.'
+        : activeJournals.length || wallets.length
+          ? 'Recovery inventory still needs review before dismissal.'
+          : 'No abandoned wallet or active launch journal remains.',
+      state: verifyState,
+      stats: [
+        ['Last sweep', lastSweep ? lastSweep.error ? 'Failed' : lastSweep.partial || lastSweep.stillPending ? 'Partial' : 'Clean' : 'None'],
+        ['Open journals', activeJournals.length],
+        ['Wallet entries', wallets.length],
+      ],
+      items: lastSweep ? recoverySweepNextSteps(lastSweep) : [
+        'Confirm destination balances externally after any sweep.',
+        'Dismiss journals only after reports, proof, and assets are accounted for.',
+      ],
+      actions: verifyActions,
+    },
+  ];
+
+  const active = screens.find((screen) => screen.id === state.recoveryWizardStep)
+    || screens.find((screen) => screen.state === 'danger')
+    || screens.find((screen) => screen.state === 'warn')
+    || screens[0];
+
+  return {
+    screens,
+    active,
+    headline: state.apiStatus !== 'connected'
+      ? 'Recovery needs local app'
+      : manualModels.length
+      ? 'Recovery requires manual review'
+      : resumableModels.length
+        ? 'Safe resume path available'
+        : activeJournals.length || wallets.length
+          ? 'Recovery inventory needs review'
+          : 'Recovery clear',
+  };
+}
+
+function renderRecoveryWizard(model) {
+  if (!model?.screens?.length) return '';
+  const activeIndex = model.screens.findIndex((screen) => screen.id === model.active.id);
+  const active = model.active;
+  const actions = active.actions.map(recoveryWizardActionButton).join('');
+  return `
+    <section class="recovery-wizard-panel ${escapeHtml(active.state)}" aria-label="Recovery wizard">
+      <div class="recovery-wizard-head">
+        <span>
+          <span class="eyebrow">Recovery wizard</span>
+          <strong>${escapeHtml(model.headline)}</strong>
+          <em>${escapeHtml(active.detail)}</em>
+        </span>
+        <span class="risk-badge ${escapeHtml(active.state === 'pass' ? '' : active.state)}">${escapeHtml(active.state === 'danger' ? 'Manual' : active.state === 'warn' ? 'Review' : 'Clear')}</span>
+      </div>
+      <div class="recovery-wizard-steps" role="tablist" aria-label="Recovery screens">
+        ${model.screens.map((screen, index) => `
+          <button class="recovery-wizard-step ${screen.id === active.id ? 'is-active' : ''} ${escapeHtml(screen.state)}" type="button" data-action="select-recovery-step" data-step="${escapeHtml(screen.id)}">
+            <small>${index + 1}</small>
+            <strong>${escapeHtml(screen.label)}</strong>
+          </button>
+        `).join('')}
+      </div>
+      <div class="recovery-wizard-screen">
+        <div>
+          <span class="eyebrow">Screen ${activeIndex + 1} of ${model.screens.length}</span>
+          <h3>${escapeHtml(active.title)}</h3>
+          <p>${escapeHtml(active.detail)}</p>
+        </div>
+        <div class="recovery-wizard-stats">
+          ${active.stats.map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join('')}
+        </div>
+        <ul>${active.items.slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+        <div class="recovery-wizard-actions">
+          <button class="pill-button" type="button" data-action="recovery-wizard-prev" ${activeIndex <= 0 ? 'disabled' : ''}>
+            <i class="fa-solid fa-arrow-left"></i><span>Back</span>
+          </button>
+          <button class="pill-button" type="button" data-action="recovery-wizard-next" ${activeIndex >= model.screens.length - 1 ? 'disabled' : ''}>
+            <span>Next</span><i class="fa-solid fa-arrow-right"></i>
+          </button>
+          ${actions}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderSecretPinResetAudit(reset) {
+  if (!reset) return '';
+  const removed = reset.removed || {};
+  const wallets = Number(removed.pendingWallets || 0);
+  const vanityCAs = Number(removed.vanityCAs || 0);
+  return `
+    <div class="recovery-reset-audit warn">
+      <div class="recovery-sweep-head">
+        <span>
+          <span class="eyebrow">Recovery PIN reset audit</span>
+          <strong>${escapeHtml(reportTimestamp(reset.at || new Date()))}</strong>
+        </span>
+        <span class="risk-badge warn">Discarded</span>
+      </div>
+      <p>PIN-encrypted local secrets were removed. This does not move on-chain assets; recover anything still funded only from an external backup.</p>
+      <div class="recovery-sweep-grid">
+        <span><small>Launch wallets</small><strong>${wallets}</strong></span>
+        <span><small>Vanity CAs</small><strong>${vanityCAs}</strong></span>
+        <span><small>PIN</small><strong>${escapeHtml(reset.status?.configured ? 'Reset' : 'Unset')}</strong></span>
+      </div>
+      <ul class="recovery-sweep-steps">
+        <li>Do not discard journals that still point at a funded wallet unless you have the secret backed up elsewhere.</li>
+        <li>Generate or import a new Trebuchet wallet before the next launch.</li>
+      </ul>
+    </div>
+  `;
+}
+
+function renderRecoveryWalletWorkspace() {
+  const wallets = state.apiStatus === 'connected' ? state.recovery.pendingWallets : [];
+  const selectedPublicKey = selectedLaunchWalletPublicKey();
+  const secretLocked = state.secretPin.locked;
+  const busy = Boolean(state.fullRunRunning || state.realExecutionRunning);
+  const recoverableCount = wallets.filter((wallet) => !wallet.decryptionFailed).length;
+  const selectedPending = wallets.some((wallet) => wallet.publicKey === selectedPublicKey);
+  const lastSweep = state.lastRecoverySweep;
+  const guide = recoveryGuideModel({
+    wallets,
+    selectedPublicKey,
+    selectedPending,
+    recoverableCount,
+    secretLocked,
+    lastSweep,
+    busy,
+  });
+
+  $('#recoveryWalletWorkspace').innerHTML = `
+    <div class="recovery-wallet-head">
+      <span>
+        <span class="eyebrow">Pending launch wallets</span>
+        <h3>${wallets.length ? `${wallets.length} local recovery entr${wallets.length === 1 ? 'y' : 'ies'}` : 'No pending launch wallets'}</h3>
+        <p>${state.apiStatus === 'connected'
+          ? 'Select a wallet to inspect funding QR, reveal the secret, sweep assets, or discard the local recovery entry after manual cleanup.'
+          : 'Open through the local Trebuchet app to inspect recoverable launch wallets.'}</p>
+      </span>
+      <span class="recovery-wallet-stats">
+        <span><small>Recoverable</small><strong>${recoverableCount}</strong></span>
+        <span><small>Selected</small><strong>${selectedPending ? 'Yes' : 'No'}</strong></span>
+        <span><small>PIN</small><strong>${state.secretPin.configured ? secretLocked ? 'Locked' : 'Ready' : 'Unset'}</strong></span>
+      </span>
+    </div>
+    ${renderRecoveryGuide(guide)}
+    ${wallets.length ? `
+      <div class="recovery-wallet-list">
+        ${wallets.map((wallet) => {
+          const walletState = recoveryWalletState(wallet);
+          const isSelected = wallet.publicKey === selectedPublicKey;
+          const revealAction = secretLocked || wallet.secretPinLocked ? 'unlock-secret-pin' : 'reveal-recovery-wallet';
+          const revealLabel = secretLocked || wallet.secretPinLocked ? 'Unlock PIN' : 'Reveal';
+          const discardBusy = state.discardingWalletPublicKey === wallet.publicKey;
+          const sweepBusy = state.sweepingWalletPublicKey === wallet.publicKey;
+          const sweepAction = secretLocked || wallet.secretPinLocked ? 'unlock-secret-pin' : 'sweep-recovery-wallet';
+          const sweepLabel = secretLocked || wallet.secretPinLocked ? 'Unlock PIN' : sweepBusy ? 'Sweeping' : 'Sweep';
+          return `
+            <article class="recovery-wallet-row ${isSelected ? 'is-selected' : ''}">
+              <span class="ident" aria-hidden="true">${escapeHtml(shortAddress(wallet.publicKey).slice(0, 2))}</span>
+              <span class="recovery-wallet-copy">
+                <span class="eyebrow">${escapeHtml(formatDate(wallet.createdAt))}</span>
+                <h3>${escapeHtml(shortAddress(wallet.publicKey))}</h3>
+                <p>${escapeHtml(walletState.detail)}</p>
+                <code>${escapeHtml(wallet.publicKey)}</code>
+              </span>
+              <span class="timeline-actions">
+                <span class="risk-badge ${escapeHtml(walletState.className)}">${escapeHtml(walletState.label)}</span>
+                <button class="pill-button" type="button" data-action="select-recovery-wallet" data-wallet="${escapeHtml(wallet.publicKey)}">${isSelected ? 'Selected' : 'Select'}</button>
+                <button class="pill-button" type="button" data-action="copy-recovery-wallet" data-wallet="${escapeHtml(wallet.publicKey)}">
+                  <i class="fa-solid fa-copy"></i><span>Copy</span>
+                </button>
+                <button class="pill-button" type="button" data-action="${escapeHtml(revealAction)}" data-wallet="${escapeHtml(wallet.publicKey)}" ${wallet.decryptionFailed ? 'disabled' : ''}>
+                  <i class="fa-solid fa-key"></i><span>${escapeHtml(revealLabel)}</span>
+                </button>
+                <button class="pill-button danger" type="button" data-action="${escapeHtml(sweepAction)}" data-wallet="${escapeHtml(wallet.publicKey)}" ${wallet.decryptionFailed || busy || sweepBusy ? 'disabled' : ''}>
+                  <i class="fa-solid fa-broom"></i><span>${escapeHtml(sweepLabel)}</span>
+                </button>
+                <button class="pill-button danger" type="button" data-action="discard-recovery-wallet" data-wallet="${escapeHtml(wallet.publicKey)}" ${busy || discardBusy ? 'disabled' : ''}>
+                  <i class="fa-solid fa-trash"></i><span>${discardBusy ? 'Discarding' : 'Discard'}</span>
+                </button>
+              </span>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    ` : '<div class="empty-state">No abandoned launch wallets are waiting for recovery or cleanup.</div>'}
+    ${renderSecretPinResetAudit(state.lastSecretPinReset)}
+    ${renderRecoverySweepResult(lastSweep)}
+  `;
+}
+
+function renderHistoryExecutionAudit() {
+  const entries = Array.isArray(state.executionLedger) ? state.executionLedger : [];
+  if (!entries.length) {
+    return `
+      <section class="history-audit-panel">
+        <div class="history-audit-head">
+          <span>
+            <span class="eyebrow">Guarded execution audit</span>
+            <strong>Classic proof trail</strong>
+            <em>Run a guarded operation to record retries, duration, and observed wallet SOL deltas.</em>
+          </span>
+          <span class="history-audit-actions">
+            <span class="risk-badge">Clear</span>
+          </span>
+        </div>
+        <div class="history-audit-stats">
+          <span><small>Complete</small><strong>0</strong></span>
+          <span><small>Running</small><strong>0</strong></span>
+          <span><small>Retries</small><strong>0</strong></span>
+          <span><small>Observed SOL</small><strong>Waiting</strong></span>
+        </div>
+        <div class="history-audit-list">
+          <article class="idle">
+            <i class="fa-solid fa-shield-halved"></i>
+            <span>
+              <strong>No guarded v2 operations recorded in this session.</strong>
+              <small>Local wallet execution evidence will appear here after the first run.</small>
+            </span>
+          </article>
+        </div>
+      </section>
+    `;
+  }
+  const attention = entries.filter((entry) => ['error', 'warn'].includes(entry.status)).length;
+  const complete = entries.filter((entry) => entry.status === 'complete').length;
+  const running = entries.filter((entry) => entry.status === 'running').length;
+  const retries = entries.filter((entry) => Number(entry.attempt || 1) > 1).length;
+  const observedSpend = observedExecutionSpendSummary(entries);
+  const estimatedCost = entries.reduce((sum, entry) => {
+    const value = Number(entry.estimatedCostSol || 0);
+    return Number.isFinite(value) && value > 0 ? sum + value : sum;
+  }, 0);
+  const latest = entries[0];
+  return `
+    <section class="history-audit-panel ${attention ? 'warn' : ''}">
+      <div class="history-audit-head">
+        <span>
+          <span class="eyebrow">Guarded execution audit</span>
+          <strong>${escapeHtml(latest?.label || 'Classic operations')}</strong>
+          <em>${escapeHtml(latest?.detail || 'Recent v2 local-wallet operations.')}</em>
+        </span>
+        <span class="history-audit-actions">
+          <span class="risk-badge ${attention ? 'warn' : ''}">${attention ? `${attention} attention` : 'Clear'}</span>
+          <button class="pill-button" type="button" data-action="clear-execution-audit">Clear</button>
+        </span>
+      </div>
+      <div class="history-audit-stats">
+        <span><small>Complete</small><strong>${complete}</strong></span>
+        <span><small>Running</small><strong>${running}</strong></span>
+        <span><small>Retries</small><strong>${retries}</strong></span>
+        <span><small>${observedSpend.measuredCount ? 'Observed SOL' : 'Est. cost'}</small><strong>${observedSpend.measuredCount ? fmtSol(observedSpend.outflowSol) : estimatedCost ? fmtSol(estimatedCost) : 'Variable'}</strong></span>
+      </div>
+      <div class="history-audit-list">
+        ${entries.slice(0, 5).map((entry) => `
+          <article class="${escapeHtml(entry.status || '')}">
+            <i class="fa-solid ${executionLedgerIcon(entry.status)}"></i>
+            <span>
+              <strong>${escapeHtml(entry.label || 'Classic operation')}</strong>
+              <small>${escapeHtml([entry.phase || 'run', executionLedgerAttemptLabel(entry), formatLedgerCost(entry), formatLedgerDuration(entry)].filter(Boolean).join(' / '))}</small>
+            </span>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function currentRecoveryWizardModel() {
+  const wallets = state.apiStatus === 'connected' ? state.recovery.pendingWallets : [];
+  const selectedPublicKey = selectedLaunchWalletPublicKey();
+  return recoveryWizardModel({
+    wallets,
+    selectedPublicKey,
+    selectedPending: wallets.some((wallet) => wallet.publicKey === selectedPublicKey),
+    recoverableCount: wallets.filter((wallet) => !wallet.decryptionFailed).length,
+    secretLocked: state.secretPin.locked,
+    lastSweep: state.lastRecoverySweep,
+    busy: Boolean(state.fullRunRunning || state.realExecutionRunning),
+  });
+}
+
+function renderHistory() {
+  const journalHistory = state.recovery.journals.map((journal) => ({
+    id: journal.id,
+    kind: 'journal',
+    status: journal.status || 'journal',
+    title: `${journal.status || 'journal'} / ${journal.token?.symbol || shortAddress(journal.walletPublicKey)}`,
+    detail: `${humanizeStage(journal.stage)} for ${shortAddress(journal.walletPublicKey)}`,
+    time: formatDate(journal.updatedAt || journal.createdAt),
+    journal,
+    resumePlan: journalResumePlan(journal),
+  }));
+  const wizard = currentRecoveryWizardModel();
+  $('#recoveryWizard').innerHTML = renderRecoveryWizard(wizard);
+  renderRecoveryWalletWorkspace();
+  $('#historyExecutionAudit').innerHTML = renderHistoryExecutionAudit();
+  const items = state.apiStatus === 'connected'
+    ? [
+      {
+        kind: 'summary',
+        title: state.recovery.journalCount ? 'Local launch journals loaded' : 'Local API connected',
+        detail: state.recovery.journalCount
+          ? `${state.recovery.activeJournalCount} active, ${state.recovery.failedJournalCount} failed, ${state.recovery.pendingWalletCount} pending wallets.`
+          : 'No launch journals found in the local recovery store.',
+        time: 'Now',
+      },
+      ...journalHistory,
+    ]
+    : history;
+
+  $('#timeline').innerHTML = items.map((item) => `
+    <article class="timeline-row ${item.status ? stateClass(item.status) : ''}">
+      <span>
+        <span class="eyebrow">${escapeHtml(item.time)}</span>
+        <h3>${escapeHtml(item.title)}</h3>
+        <p>${escapeHtml(item.detail)}</p>
+      </span>
+      ${item.kind === 'journal' ? `
+        <span class="timeline-actions">
+          <span class="risk-badge ${stateClass(item.status)}">${escapeHtml(item.status)}</span>
+          ${canResumeJournal(item.journal) ? `<button class="pill-button" type="button" data-action="resume-journal" data-journal-id="${escapeHtml(item.id)}" ${state.recoveryActionId === item.id ? 'disabled' : ''}>${state.recoveryActionId === item.id ? 'Resuming' : 'Resume'}</button>` : ''}
+          ${item.resumePlan?.manualRecoveryRequired ? '<span class="risk-badge danger">Manual recovery</span>' : ''}
+          ${state.demoActive && !isTerminalJournal(item.journal) ? '<button class="pill-button" type="button" data-action="noop" data-message="Disable demo mode to resume real journals">Demo on</button>' : ''}
+          ${canDismissJournal(item.journal) ? `<button class="pill-button" type="button" data-action="dismiss-journal" data-journal-id="${escapeHtml(item.id)}" ${state.recoveryActionId === item.id ? 'disabled' : ''}>Dismiss</button>` : ''}
+        </span>
+        <div class="journal-resume-plan ${stateClass(item.resumePlan?.state)}">
+          <span>
+            <span class="risk-badge ${stateClass(item.resumePlan?.state)}">${escapeHtml(item.resumePlan?.badge || 'Plan')}</span>
+            <strong>${escapeHtml(item.resumePlan?.title || 'Resume plan')}</strong>
+          </span>
+          <p>${escapeHtml(item.resumePlan?.detail || '')}</p>
+          <ul>
+            ${(item.resumePlan?.items || []).slice(0, 4).map((row) => `<li>${escapeHtml(row)}</li>`).join('')}
+          </ul>
+        </div>
+      ` : ''}
+    </article>
+  `).join('');
+}
+
+function renderAll() {
+  renderLaunchPreview();
+  renderTokenLogoPreview();
+  renderChartDeck();
+  renderAvatarCollectionPanel();
+  renderVanityCandidates();
+  renderPoolEditorPanel();
+  renderAirdropPanel();
+  renderReportPanel();
+  renderClassicBridge();
+  renderLiveOpsPanel();
+  renderSignaturePanel();
+  renderGlobalStrip();
+  renderStages();
+  renderQueue();
+  renderGuardrails();
+  renderParityPanel();
+  renderWallet();
+  renderDiscovery();
+  renderExtension();
+  renderSettings();
+  renderHistory();
+  renderActivityLogDrawer();
+  drawLaunchCanvas();
+}
+
+function defaultQuoteAcquireState() {
+  return {
+    jobId: null,
+    job: null,
+    running: false,
+    polling: false,
+    error: null,
+    lastUpdatedAt: null,
+    fingerprint: null,
+    notifiedDone: false,
+  };
+}
+
+function resetQuoteAcquireState({ keepRunning = true } = {}) {
+  if (keepRunning && state.quoteAcquire.running) return;
+  state.quoteAcquire = defaultQuoteAcquireState();
+  if (quoteAcquireTimer) {
+    window.clearInterval(quoteAcquireTimer);
+    quoteAcquireTimer = null;
+  }
+}
+
+function resetManualPrefundState() {
+  state.manualPrefund = {
+    walletPublicKey: null,
+    balance: null,
+    polling: false,
+    error: null,
+    lastUpdatedAt: null,
+  };
+}
+
+function resetFundingWalletState() {
+  state.fundingWallet = {
+    walletPublicKey: null,
+    funder: null,
+    amount: null,
+    checking: false,
+    checkedAt: null,
+    exhausted: false,
+    error: null,
+  };
+}
+
+function selectedFundingWalletHint() {
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  if (!walletPublicKey || state.fundingWallet.walletPublicKey !== walletPublicKey) {
+    return {
+      walletPublicKey,
+      funder: null,
+      amount: null,
+      checking: false,
+      checkedAt: null,
+      exhausted: false,
+      error: null,
+    };
+  }
+  return state.fundingWallet;
+}
+
+function renderFundingWalletHint({ compact = false } = {}) {
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  const hint = selectedFundingWalletHint();
+  const isAvailable = state.apiStatus === 'connected' && Boolean(walletPublicKey) && Boolean(state.apiClient?.findFundingWallet);
+  const title = hint.funder
+    ? 'Possible funding wallet'
+    : hint.error
+      ? 'Funding wallet check failed'
+      : hint.exhausted
+        ? 'No clear funder found'
+        : 'Funding wallet detection';
+  const detail = hint.funder
+    ? `${shortAddress(hint.funder)}${hint.amount != null ? ` / ${Number(hint.amount).toFixed(4)} SOL` : ''}`
+    : hint.error
+      ? hint.error
+      : hint.exhausted
+        ? 'Paste the sweep destination manually, or retry after a fresh deposit.'
+        : 'Find the wallet that first funded this launch wallet.';
+  const detectLabel = hint.checking ? 'Checking' : hint.funder || hint.exhausted || hint.error ? 'Recheck' : 'Find funder';
+  return `<div class="funding-wallet-hint ${hint.error ? 'danger' : hint.funder ? '' : 'warn'} ${compact ? 'compact' : ''}">
+    <span>
+      <small>Funding source</small>
+      <strong>${escapeHtml(title)}</strong>
+      <em>${escapeHtml(detail)}</em>
+    </span>
+    <div class="operator-toolbar compact">
+      <button class="pill-button" type="button" data-action="detect-funding-wallet" ${isAvailable && !hint.checking ? '' : 'disabled'}>
+        ${escapeHtml(detectLabel)}
+      </button>
+      ${hint.funder ? `<button class="pill-button" type="button" data-action="use-funding-wallet-sweep">Use as sweep</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderSolflarePanel() {
+  const connected = Boolean(state.solflare.publicKey);
+  const busy = state.solflare.connecting || state.solflare.disconnecting;
+  const className = state.solflare.error ? 'danger' : connected ? 'is-connected' : 'warn';
+  const badgeLabel = state.solflare.connecting
+    ? 'Connecting'
+    : state.solflare.disconnecting
+      ? 'Disconnecting'
+      : connected
+        ? 'Connected'
+        : state.solflare.error
+          ? 'Unavailable'
+          : 'Optional';
+  const detail = connected
+    ? `${shortAddress(state.solflare.publicKey)} can fund the selected Trebuchet wallet or fill the sweep destination.`
+    : state.solflare.error
+      ? state.solflare.error
+      : 'Connect Solflare for funding and destination convenience.';
+
+  return `
+    <div class="solflare-panel ${escapeHtml(className)}">
+      <div class="solflare-head">
+        <span>
+          <small>External funding wallet</small>
+          <strong>Solflare</strong>
+          <em>${escapeHtml(detail)}</em>
+        </span>
+        <span class="risk-badge ${state.solflare.error ? 'danger' : connected ? '' : 'warn'}">${escapeHtml(badgeLabel)}</span>
+      </div>
+      <div class="solflare-grid">
+        <span>
+          <small>Status</small>
+          <strong>${escapeHtml(state.solflare.status || 'Not connected')}</strong>
+          <em>Does not sign launch execution.</em>
+        </span>
+        <div class="operator-toolbar compact">
+          <button class="pill-button" type="button" data-action="connect-solflare" ${busy || connected ? 'disabled' : ''}>
+            <i class="fa-solid fa-link"></i><span>${state.solflare.connecting ? 'Connecting' : 'Connect'}</span>
+          </button>
+          <button class="pill-button" type="button" data-action="disconnect-solflare" ${busy || !connected ? 'disabled' : ''}>
+            <i class="fa-solid fa-link-slash"></i><span>${state.solflare.disconnecting ? 'Disconnecting' : 'Disconnect'}</span>
+          </button>
+          <button class="pill-button" type="button" data-action="use-solflare-destination" ${connected ? '' : 'disabled'}>
+            <i class="fa-solid fa-arrow-right"></i><span>Use as sweep</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function connectSolflareWallet() {
+  if (state.solflare.connecting) return null;
+  state.solflare = {
+    ...state.solflare,
+    connecting: true,
+    disconnecting: false,
+    status: 'Looking...',
+    error: null,
+  };
+  renderAll();
+
+  try {
+    const provider = await waitForSolflareProvider();
+    if (!provider) {
+      state.solflare = {
+        ...state.solflare,
+        publicKey: null,
+        connectedAt: null,
+        status: 'Solflare not found',
+        connecting: false,
+        error: 'Unlock or install Solflare, allow this site, then try again.',
+      };
+      notify('Solflare was not detected');
+      return null;
+    }
+    wireSolflareProviderEvents(provider);
+    const result = await provider.connect();
+    const wallet = setConnectedSolflareWallet(provider, provider.publicKey || result?.publicKey);
+    notify(`Solflare connected: ${shortAddress(wallet.publicKey)}`);
+    return wallet;
+  } catch (error) {
+    state.solflare = {
+      ...state.solflare,
+      publicKey: null,
+      connectedAt: null,
+      status: 'Connection failed',
+      connecting: false,
+      error: error.message || 'Solflare connection rejected',
+    };
+    notify(state.solflare.error);
+    return null;
+  } finally {
+    state.solflare.connecting = false;
+    renderAll();
+  }
+}
+
+async function disconnectSolflareWallet() {
+  if (state.solflare.disconnecting) return;
+  const provider = solflareWalletProvider || getSolflareProvider();
+  state.solflare = {
+    ...state.solflare,
+    disconnecting: true,
+    connecting: false,
+    error: null,
+  };
+  renderAll();
+
+  try {
+    if (provider && typeof provider.disconnect === 'function') {
+      await provider.disconnect();
+    }
+    clearSolflareWallet();
+    notify('Solflare disconnected');
+  } catch (error) {
+    state.solflare = {
+      ...state.solflare,
+      disconnecting: false,
+      status: 'Disconnect failed',
+      error: error.message || 'Solflare disconnect failed',
+    };
+    notify(state.solflare.error);
+  } finally {
+    state.solflare.disconnecting = false;
+    renderAll();
+  }
+}
+
+function applySolflareAsSweepDestination({ silent = false } = {}) {
+  if (!state.solflare.publicKey) {
+    if (!silent) notify('Connect Solflare first');
+    return false;
+  }
+  const input = document.getElementById('sweepDestination');
+  if (!input) {
+    if (!silent) notify('Sweep destination input is unavailable');
+    return false;
+  }
+  input.value = state.solflare.publicKey;
+  invalidateClassicOutputs();
+  refreshClassicPreview({ includePoolEditor: true });
+  state.executionReadiness = null;
+  state.lastReportPublish = null;
+  renderAll();
+  if (!silent) notify('Solflare filled as sweep destination. Verify before launch.');
+  return true;
+}
+
+async function refreshManualPrefundBalance({ quiet = false } = {}) {
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  if (!quoteManualPrefundItems().length) {
+    resetManualPrefundState();
+    return null;
+  }
+  if (!walletPublicKey) {
+    resetManualPrefundState();
+    if (!quiet) notify('Generate or select a Trebuchet wallet first');
+    return null;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.checkDetailedBalance) {
+    if (!quiet) notify('Manual prefund balance check requires the local Trebuchet app');
+    return null;
+  }
+
+  state.manualPrefund = {
+    ...state.manualPrefund,
+    walletPublicKey,
+    polling: true,
+    error: null,
+  };
+  renderClassicBridge();
+
+  try {
+    const balance = await state.apiClient.checkDetailedBalance(walletPublicKey);
+    state.manualPrefund = {
+      walletPublicKey,
+      balance,
+      polling: false,
+      error: null,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+    if (!quiet) notify('Manual prefund balance refreshed');
+    return balance;
+  } catch (error) {
+    state.manualPrefund = {
+      ...state.manualPrefund,
+      walletPublicKey,
+      polling: false,
+      error: error.message || 'Manual prefund balance check failed',
+      lastUpdatedAt: new Date().toISOString(),
+    };
+    if (!quiet) notify(state.manualPrefund.error);
+    return null;
+  } finally {
+    renderClassicBridge();
+  }
+}
+
+function invalidateClassicOutputs() {
+  state.classicFundingEstimate = null;
+  state.executionReadiness = null;
+  clearLaunchProof();
+  state.lastReportPublish = null;
+  state.lastAirdropResult = null;
+  resetQuoteAcquireState();
+  resetManualPrefundState();
+}
+
+function refreshClassicPreview({ includePoolEditor = false } = {}) {
+  renderLaunchPreview();
+  renderTokenLogoPreview();
+  renderChartDeck();
+  renderAvatarCollectionPanel();
+  renderVanityCandidates();
+  if (includePoolEditor) renderPoolEditorPanel();
+  renderAirdropPanel();
+  renderReportPanel();
+  renderClassicBridge();
+  renderParityPanel();
+  renderQueue();
+  drawLaunchCanvas();
+}
+
+function addCustomPool() {
+  state.customPoolCounter += 1;
+  state.customPools.push({
+    id: `custom-pool-${state.customPoolCounter}`,
+    quoteSymbol: 'QUOTE',
+    quoteMint: '',
+    supplyPercent: 5,
+    ammConfigIndex: 5,
+    sliceShares: '100',
+    feeKeyRecipient: '',
+    ladderBands: 0,
+    ladderText: '',
+    supportSol: 0,
+    supportDepth: 12,
+  });
+  invalidateClassicOutputs();
+  renderAll();
+  notify('Custom quote pool added');
+}
+
+function removeCustomPool(poolId) {
+  state.customPools = state.customPools.filter((pool) => pool.id !== poolId);
+  delete state.quoteTokenInfo[poolId];
+  invalidateClassicOutputs();
+  renderAll();
+  notify('Custom quote pool removed');
+}
+
+function normalizeAllSlices() {
+  $('#sliceShares').value = normalizedSliceText($('#sliceShares').value);
+  state.customPools = state.customPools.map((pool) => ({
+    ...pool,
+    sliceShares: normalizedSliceText(pool.sliceShares || '100'),
+  }));
+  invalidateClassicOutputs();
+  renderAll();
+  notify('Slice percentages rounded to 100%');
+}
+
+function setAirdropText(value) {
+  state.airdropCsvText = value;
+  const input = document.getElementById('airdropCsvText');
+  if (input) input.value = value;
+  invalidateClassicOutputs();
+  refreshClassicPreview({ includePoolEditor: true });
+}
+
+function fitAirdropBudget() {
+  const plan = currentClassicModel().airdrop;
+  const input = document.getElementById('airdropSupplyPercent');
+  if (!input) {
+    notify('Airdrop budget input is unavailable');
+    return;
+  }
+  if (!plan.enabled) {
+    notify('Add airdrop recipients first');
+    return;
+  }
+  if (!plan.requiredSupplyPercent) {
+    notify('No explicit CSV token amounts need fitting');
+    return;
+  }
+  input.value = formatPercent(plan.requiredSupplyPercent);
+  invalidateClassicOutputs();
+  refreshClassicPreview({ includePoolEditor: true });
+  notify(`Airdrop budget fitted to ${formatPercent(plan.requiredSupplyPercent)}%`);
+}
+
+function downloadTextFile(filename, contents, mimeType, label) {
+  if (typeof Blob !== 'function' || !URL?.createObjectURL) {
+    notify(`${label || 'Download'} is unavailable in this runtime`);
+    return false;
+  }
+  const blob = new Blob([String(contents || '')], { type: mimeType || 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  return true;
+}
+
+function downloadJsonFile(filename, payload, label) {
+  return downloadTextFile(
+    filename,
+    JSON.stringify(payload, null, 2),
+    'application/json',
+    label,
+  );
+}
+
+function updateLastFullRunCompletionFromProof(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  if (!state.lastFullRun) return;
+  const completion = fullRunCompletionAudit(proof, config);
+  state.lastFullRun = {
+    ...state.lastFullRun,
+    status: completion.complete ? 'complete' : 'needs-proof',
+    completion,
+    proof,
+    completedAt: completion.complete
+      ? state.lastFullRun.completedAt || new Date().toISOString()
+      : null,
+  };
+}
+
+function localDossierEvidenceRecord({
+  proof = currentLaunchProof(),
+  config = currentLaunchConfig(),
+  filename,
+  kind = 'local-dossier-html',
+  dataVersion = null,
+  downloadedAt = new Date().toISOString(),
+} = {}) {
+  config = proofConfigForFingerprint(proof, config);
+  if (!proof || typeof proof !== 'object' || proof.source === 'demo-run') return null;
+  if (!String(filename || '').trim()) return null;
+  if (!proof?.token?.mint || !proofHasReportPublishEvidence(proof, config)) return null;
+  const sweepEvidenceHash = terminalSweepEvidenceHashForProof(proof);
+  return attachProofFingerprint({
+    status: 'downloaded',
+    kind,
+    filename,
+    mint: proof.token.mint,
+    downloadedAt,
+    dataVersion,
+    heldReserveAudit: buildV2ReportHeldReserveAudit(config, currentClassicFundingEstimateForConfig(config)),
+    ...(sweepEvidenceHash ? { sweepEvidenceHash } : {}),
+  }, proof, config);
+}
+
+function proofWithLocalDossierEvidence({
+  proof = currentLaunchProof(),
+  config = currentLaunchConfig(),
+  filename,
+  kind = 'local-dossier-html',
+  dataVersion = null,
+  downloadedAt,
+} = {}) {
+  const record = localDossierEvidenceRecord({
+    proof,
+    config,
+    filename,
+    kind,
+    dataVersion,
+    downloadedAt,
+  });
+  if (!record) return { proof, record: null };
+  return {
+    proof: {
+      ...proof,
+      localDossier: record,
+      launchConfig: exportableLaunchConfigSnapshot(proofConfigForFingerprint(proof, config)),
+    },
+    record,
+  };
+}
+
+function recordLocalDossierEvidence({
+  proof = currentLaunchProof(),
+  config = currentLaunchConfig(),
+  filename,
+  kind = 'local-dossier-html',
+  dataVersion = null,
+  downloadedAt,
+} = {}) {
+  const { proof: proofWithEvidence, record } = proofWithLocalDossierEvidence({
+    proof,
+    config,
+    filename,
+    kind,
+    dataVersion,
+    downloadedAt,
+  });
+  if (!record) return null;
+  state.lastLocalDossier = record;
+  const mergedProof = rememberLaunchProof(proofWithEvidence);
+  updateLastFullRunCompletionFromProof(mergedProof || proof, config);
+  return record;
+}
+
+function downloadReportPreview() {
+  const report = buildReportPreview();
+  const ok = downloadJsonFile(
+    `trebuchet-${String(report.token.symbol || 'token').toLowerCase()}-launch-preview.json`,
+    report,
+    'Report download',
+  );
+  if (!ok) return;
+  notify('Launch report preview downloaded');
+}
+
+function exportableLaunchConfigSnapshot(config = currentLaunchConfig()) {
+  const token = config?.token || {};
+  const logo = token.logo && typeof token.logo === 'object'
+    ? {
+      name: token.logo.name || null,
+      type: token.logo.type || null,
+      size: Number.isFinite(Number(token.logo.size)) ? Number(token.logo.size) : null,
+    }
+    : null;
+  return {
+    schema: 'trebuchet-v2-launch-config',
+    source: 'trebuchet-v2',
+    token: {
+      name: token.name || null,
+      symbol: token.symbol || null,
+      supply: token.supply || null,
+      description: token.description || null,
+      decimals: token.decimals ?? 9,
+      logo,
+    },
+    launchSol: Number.isFinite(Number(config?.launchSol)) ? Number(config.launchSol) : null,
+    mode: config?.mode || null,
+    vanity: config?.vanity || null,
+    poolTopology: config?.poolTopology || null,
+    funding: {
+      launchSol: Number.isFinite(Number(config?.funding?.launchSol ?? config?.launchSol))
+        ? Number(config.funding?.launchSol ?? config.launchSol)
+        : null,
+      targetMarketCapUsd: Number.isFinite(Number(config?.funding?.targetMarketCapUsd ?? config?.poolTopology?.targetMarketCapUsd))
+        ? Number(config?.funding?.targetMarketCapUsd ?? config?.poolTopology?.targetMarketCapUsd)
+        : null,
+    },
+    avatarCollection: config?.avatarCollection || null,
+  };
+}
+
+function v2JsonClone(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+function compactAirdropEvidenceForHtml(airdrop = {}, limit = V2_HTML_PROOF_AIRDROP_SAMPLE_LIMIT) {
+  if (!airdrop || typeof airdrop !== 'object') return airdrop;
+  const compact = { ...airdrop };
+  ['recipients', 'transferred', 'failed'].forEach((key) => {
+    const rows = Array.isArray(airdrop[key]) ? airdrop[key] : [];
+    const storedHash = typeof airdrop[`${key}Hash`] === 'string' ? airdrop[`${key}Hash`].trim() : '';
+    compact[`${key}Hash`] = storedHash || comparisonAirdropListHash(rows);
+    if (rows.length > limit) {
+      compact[key] = [];
+      compact[`${key}Sample`] = rows.slice(0, limit);
+      compact[`${key}TruncatedCount`] = rows.length - limit;
+    } else {
+      compact[key] = rows;
+      delete compact[`${key}Sample`];
+      delete compact[`${key}TruncatedCount`];
+    }
+  });
+  compact.compactRows = true;
+  compact.sampleLimit = limit;
+  return compact;
+}
+
+function compactLaunchConfigForHtml(config = null) {
+  if (!config || typeof config !== 'object') return config;
+  const compact = { ...config };
+  if (config.poolTopology && typeof config.poolTopology === 'object') {
+    compact.poolTopology = { ...config.poolTopology };
+    if (config.poolTopology.airdrop && typeof config.poolTopology.airdrop === 'object') {
+      compact.poolTopology.airdrop = compactAirdropEvidenceForHtml(config.poolTopology.airdrop);
+    }
+  }
+  return compact;
+}
+
+function compactV2ProofPayloadForHtml(payload = {}) {
+  const compact = v2JsonClone(payload);
+  if (!compact || typeof compact !== 'object') return payload;
+  compact.compactForHtml = {
+    airdropSampleLimit: V2_HTML_PROOF_AIRDROP_SAMPLE_LIMIT,
+    fullAirdropRowsHashed: true,
+  };
+  if (compact.proof?.airdrop) {
+    compact.proof.airdrop = compactAirdropEvidenceForHtml(compact.proof.airdrop);
+  }
+  if (compact.proof?.launchConfig) {
+    compact.proof.launchConfig = compactLaunchConfigForHtml(compact.proof.launchConfig);
+  }
+  if (compact.launchConfig) {
+    compact.launchConfig = compactLaunchConfigForHtml(compact.launchConfig);
+  }
+  if (compact.launchData?.airdrop) {
+    compact.launchData.airdrop = compactAirdropEvidenceForHtml(compact.launchData.airdrop);
+  }
+  if (compact.launchData?.poolTopology?.airdrop) {
+    compact.launchData.poolTopology = {
+      ...compact.launchData.poolTopology,
+      airdrop: compactAirdropEvidenceForHtml(compact.launchData.poolTopology.airdrop),
+    };
+  }
+  return compact;
+}
+
+function proofExportParityBundle(proof = currentLaunchProof(), config = currentLaunchConfig(), data = {}) {
+  const proofConfig = proofConfigForFingerprint(proof, config);
+  const expectedFingerprint = launchProofFingerprint(proof, proofConfig);
+  const dataAudit = data?.reportParityAudit && typeof data.reportParityAudit === 'object'
+    ? data.reportParityAudit
+    : null;
+  const dataGate = data?.classicRetirementGate && typeof data.classicRetirementGate === 'object'
+    ? data.classicRetirementGate
+    : null;
+  const dataFieldVerification = data?.fieldVerification && typeof data.fieldVerification === 'object'
+    ? data.fieldVerification
+    : null;
+  const audit = reportParityAuditMatchesProof(dataAudit, proof, proofConfig)
+    ? dataAudit
+    : buildV2ReportParityAudit(proof, proofConfig);
+  const retirementGate = dataGate?.proofFingerprint === expectedFingerprint
+    && classicRetirementGateMatchesProof(dataGate, proof, audit, proofConfig)
+    ? dataGate
+    : buildClassicRetirementGate(proof, audit, proofConfig);
+  const fieldVerification = dataFieldVerification?.proofFingerprint === expectedFingerprint
+    && fieldVerificationMatchesProof(dataFieldVerification, proof, proofConfig, audit, retirementGate)
+    ? dataFieldVerification
+    : buildV2FieldVerification({
+      proof,
+      config: proofConfig,
+      audit,
+      retirementGate,
+    });
+  return {
+    reportParityAudit: audit,
+    classicRetirementGate: retirementGate,
+    fieldVerification,
+  };
+}
+
+function classicReportComparisonForProofExport(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const normalized = normalizeClassicReportComparison(state.classicReportComparison);
+  if (!normalized.result) return null;
+  if (!classicComparisonIsRetirementGrade(normalized.result, proof, config)) return null;
+  return normalized;
+}
+
+function pruneLaunchDataEvidenceArtifactsForExport(data = null, proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  if (!data || typeof data !== 'object') return data;
+  const cleaned = { ...data };
+  const comparison = classicComparisonResultObject(cleaned.classicReportComparison?.result || cleaned.classicReportComparison);
+  if (
+    Object.prototype.hasOwnProperty.call(cleaned, 'classicReportComparison')
+    && !classicComparisonIsRetirementGrade(comparison, proof, config)
+  ) {
+    delete cleaned.classicReportComparison;
+  }
+  if (cleaned.proof && typeof cleaned.proof === 'object') {
+    delete cleaned.proof;
+  }
+  return cleaned;
+}
+
+function buildV2ProofExportPayload({
+  proof = currentLaunchProof(),
+  config = currentLaunchConfig(),
+  launchData = null,
+  compactForHtml = false,
+} = {}) {
+  const proofConfig = proofConfigForFingerprint(proof, config);
+  const proofForPayload = proof && typeof proof === 'object'
+    ? pruneLaunchProofEvidenceArtifactsForExport(proof, proofConfig)
+    : proof;
+  const exportLaunchConfig = exportableLaunchConfigSnapshot(proofConfig);
+  const exportProof = proofForPayload && typeof proofForPayload === 'object'
+    ? { ...proofForPayload, launchConfig: exportLaunchConfig }
+    : proofForPayload;
+  const data = launchData || buildV2LaunchReportData(proofForPayload, proofConfig);
+  const parityBundle = proofExportParityBundle(proofForPayload, proofConfig, data);
+  const exportLaunchData = data && typeof data === 'object'
+    ? { ...pruneLaunchDataEvidenceArtifactsForExport(data, proofForPayload, proofConfig), ...parityBundle }
+    : data;
+  const payload = {
+    schema: 'trebuchet-v2-proof',
+    source: 'trebuchet-v2',
+    dataVersion: data?.dataVersion || V2_REPORT_DATA_VERSION,
+    exportedAt: data?.generatedAt || new Date().toISOString(),
+    proof: exportProof || null,
+    launchConfig: exportLaunchConfig,
+    launchData: exportLaunchData,
+    reportParityAudit: parityBundle.reportParityAudit,
+    classicRetirementGate: parityBundle.classicRetirementGate,
+    fieldVerification: parityBundle.fieldVerification,
+    classicReportComparison: classicReportComparisonForProofExport(proofForPayload, proofConfig),
+  };
+  return compactForHtml ? compactV2ProofPayloadForHtml(payload) : payload;
+}
+
+function htmlScriptJson(value) {
+  return JSON.stringify(value || null)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+function proofPayloadFromImportText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) throw new Error('Proof import is empty');
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Keep going: v2 HTML dossiers embed the same non-secret proof payload.
+  }
+  const match = raw.match(/<script\b(?=[^>]*\bid=["']trebuchet-v2-proof["'])[^>]*>([\s\S]*?)<\/script>/i);
+  if (!match) {
+    throw new Error('Proof import does not contain a Trebuchet JSON proof or v2 HTML dossier payload');
+  }
+  try {
+    return JSON.parse(String(match[1] || '').trim());
+  } catch {
+    throw new Error('Embedded v2 proof payload could not be parsed');
+  }
+}
+
+function importedProofPayloadHasV2Provenance(payload = {}) {
+  if (!payload || typeof payload !== 'object') return false;
+  const source = String(payload.source || '').trim();
+  const schema = String(payload.schema || '').trim();
+  const kind = String(payload.kind || '').trim();
+  const launchData = payload.launchData && typeof payload.launchData === 'object'
+    ? payload.launchData
+    : {};
+  const proof = payload.proof && typeof payload.proof === 'object'
+    ? payload.proof
+    : launchData.proof && typeof launchData.proof === 'object'
+      ? launchData.proof
+      : null;
+  return Boolean(
+    source === 'trebuchet-v2'
+      || schema === 'trebuchet-v2-proof'
+      || kind === 'trebuchet-v2-proof'
+      || String(launchData.source || '').trim() === 'trebuchet-v2'
+      || String(launchData.schema || '').trim() === 'trebuchet-v2-proof'
+      || String(launchData.kind || '').trim() === 'trebuchet-v2-proof'
+      || String(proof?.source || '').trim() === 'trebuchet-v2'
+      || String(proof?.schema || '').trim() === 'trebuchet-v2-proof'
+      || String(proof?.kind || '').trim() === 'trebuchet-v2-proof'
+  );
+}
+
+function importedProofPayloadHasClassicSource(payload = {}, proof = null) {
+  return String(payload?.source || '').trim() === 'classic'
+    || String(payload?.launch?.source || '').trim() === 'classic'
+    || String(payload?.launchData?.source || '').trim() === 'classic'
+    || String(proof?.source || '').trim() === 'classic';
+}
+
+function importedLaunchConfigSnapshotIsV2Export(config = null) {
+  return Boolean(
+    config
+      && typeof config === 'object'
+      && String(config.schema || '').trim() === 'trebuchet-v2-launch-config'
+      && String(config.source || '').trim() === 'trebuchet-v2'
+  );
+}
+
+function downloadV2Proof() {
+  const proof = currentLaunchProof();
+  const config = proofConfigForFingerprint(proof, currentLaunchConfig());
+  const symbolBase = String(proof?.token?.symbol || config.token.symbol || 'token').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const filename = `trebuchet-${symbolBase || 'token'}-proof.json`;
+  const downloadedAt = new Date().toISOString();
+  const { proof: proofForExport } = proofWithLocalDossierEvidence({
+    proof,
+    config,
+    filename,
+    kind: 'local-proof-json',
+    dataVersion: V2_REPORT_DATA_VERSION,
+    downloadedAt,
+  });
+  const launchData = buildV2LaunchReportData(proofForExport, config);
+  const payload = buildV2ProofExportPayload({ proof: proofForExport, config, launchData });
+  const symbol = String(payload.launchData.symbol || config.token.symbol || 'token').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const ok = downloadJsonFile(filename || `trebuchet-${symbol || 'token'}-proof.json`, payload, 'Proof download');
+  if (!ok) return;
+  recordLocalDossierEvidence({
+    proof,
+    config,
+    filename,
+    kind: 'local-proof-json',
+    dataVersion: launchData.dataVersion,
+    downloadedAt,
+  });
+  renderAll();
+  notify('Launch proof downloaded');
+}
+
+function downloadV2DossierHtml() {
+  const proof = currentLaunchProof();
+  const config = proofConfigForFingerprint(proof, currentLaunchConfig());
+  if (proof?.token?.mint) {
+    if (!proofHasReportPublishEvidence(proof, config)) {
+      notify('Complete liquidity proof before downloading the launch dossier');
+      return;
+    }
+    const airdropIssue = airdropCompletionIssue(
+      airdropCompletionStatus(proof, config.poolTopology),
+      'downloading the launch dossier',
+    );
+    if (airdropIssue) {
+      notify(airdropIssue);
+      return;
+    }
+  }
+  const initialLaunchData = buildV2LaunchReportData(proof, config);
+  const symbol = String(initialLaunchData.symbol || config.token.symbol || 'token').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const suffix = proof?.token?.mint ? 'dossier' : 'dossier-preview';
+  const filename = `trebuchet-${symbol || 'token'}-${suffix}.html`;
+  const downloadedAt = new Date().toISOString();
+  const { proof: proofForReport } = proofWithLocalDossierEvidence({
+    proof,
+    config,
+    filename,
+    kind: 'local-dossier-html',
+    dataVersion: V2_REPORT_DATA_VERSION,
+    downloadedAt,
+  });
+  const launchData = buildV2LaunchReportData(proofForReport, config);
+  const html = buildV2LaunchReportHtml({ proof: proofForReport, config, launchData });
+  const ok = downloadTextFile(
+    filename,
+    html,
+    'text/html;charset=utf-8',
+    'Dossier download',
+  );
+  if (!ok) return;
+  recordLocalDossierEvidence({
+    proof,
+    config,
+    filename,
+    kind: 'local-dossier-html',
+    dataVersion: launchData.dataVersion,
+    downloadedAt,
+  });
+  renderAll();
+  notify('Launch dossier downloaded');
+}
+
+function proofFromImportedPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Proof JSON could not be parsed');
+  }
+  if (!importedProofPayloadHasV2Provenance(payload)) {
+    throw new Error('Proof JSON is not a v2 proof export');
+  }
+  if (importedProofPayloadHasClassicSource(payload)) {
+    throw new Error('Proof JSON is a Classic artifact, not a v2 proof export');
+  }
+  const proof = payload.proof || payload.launchData?.proof || null;
+  if (!proof || typeof proof !== 'object') {
+    throw new Error('Proof JSON does not contain a v2 launch proof');
+  }
+  if (importedProofPayloadHasClassicSource(payload, proof)) {
+    throw new Error('Proof JSON is a Classic artifact, not a v2 proof export');
+  }
+  const explicitLaunchConfig = importedExplicitLaunchConfig(payload);
+  if (!importedLaunchConfigSnapshotIsV2Export(explicitLaunchConfig)) {
+    throw new Error('Proof JSON is missing a v2 launch-config snapshot');
+  }
+  const proofForImport = { ...proof };
+  if (proofForImport.reportParity && typeof proofForImport.reportParity === 'object') {
+    proofForImport.reportParity = {
+      ...proofForImport.reportParity,
+      classicArtifactCompared: false,
+      comparedAt: null,
+      comparison: null,
+      classicComparison: null,
+      importedComparisonRequiresArtifact: true,
+    };
+  }
+  proofForImport.launchConfig = exportableLaunchConfigSnapshot(importedProofComparisonConfig(payload));
+  const reportPublish = importedReportPublishEvidence(payload, proofForImport);
+  if (reportPublish) {
+    proofForImport.reportPublish = reportPublish;
+  } else if (proofForImport.reportPublish) {
+    delete proofForImport.reportPublish;
+  }
+  const localDossier = importedLocalDossierEvidence(payload, proofForImport);
+  if (localDossier) {
+    proofForImport.localDossier = localDossier;
+  } else if (proofForImport.localDossier) {
+    delete proofForImport.localDossier;
+  }
+  const normalized = normalizeStoredLaunchProof({ proof: proofForImport, savedAt: Date.now() });
+  if (!normalized) {
+    throw new Error('Proof JSON does not contain a real v2 launch proof');
+  }
+  return normalized.proof;
+}
+
+function importedExplicitLaunchConfig(payload = {}) {
+  const proof = payload?.proof && typeof payload.proof === 'object'
+    ? payload.proof
+    : payload?.launchData?.proof && typeof payload.launchData.proof === 'object'
+      ? payload.launchData.proof
+      : payload?.token?.mint || payload?.liquidity
+        ? payload
+        : null;
+  const proofLaunchConfig = proof?.launchConfig && typeof proof.launchConfig === 'object'
+    ? proof.launchConfig
+    : null;
+  if (proofLaunchConfig) return proofLaunchConfig;
+  if (payload?.launchConfig && typeof payload.launchConfig === 'object') return payload.launchConfig;
+  if (payload?.launchData?.launchConfig && typeof payload.launchData.launchConfig === 'object') {
+    return payload.launchData.launchConfig;
+  }
+  return null;
+}
+
+function importedProofComparisonConfig(payload = {}) {
+  const current = currentLaunchConfig();
+  const launchData = payload?.launchData && typeof payload.launchData === 'object' ? payload.launchData : {};
+  const exportedConfig = importedExplicitLaunchConfig(payload) || {};
+  const token = {
+    ...(current.token || {}),
+    ...(exportedConfig.token || {}),
+  };
+  if (launchData.name) token.name = launchData.name;
+  if (launchData.symbol) token.symbol = launchData.symbol;
+  if (launchData.totalSupply != null) token.supply = launchData.totalSupply;
+  if (launchData.decimals != null) token.decimals = launchData.decimals;
+
+  const exportedPoolTopology = exportedConfig.poolTopology || launchData.poolTopology || {};
+  const exportedSweepDestination = String(exportedPoolTopology.sweepDestination || '').trim();
+  const poolTopology = {
+    ...(current.poolTopology || {}),
+    ...exportedPoolTopology,
+  };
+  if (!exportedSweepDestination && launchData.destinationWallet) {
+    poolTopology.sweepDestination = launchData.destinationWallet;
+  }
+
+  return {
+    ...current,
+    ...exportedConfig,
+    token,
+    poolTopology,
+    avatarCollection: exportedConfig.avatarCollection || launchData.avatarCollection || current.avatarCollection,
+  };
+}
+
+function importedReportPublishEvidence(payload = {}, proof = null) {
+  if (!importedExplicitLaunchConfig(payload)) return null;
+  const candidates = [
+    proof?.reportPublish,
+    payload?.launchData?.reportPublish,
+    payload?.reportPublish,
+  ].filter((candidate, index, list) => candidate && list.indexOf(candidate) === index);
+  if (!candidates.length) return null;
+  const config = importedProofComparisonConfig(payload);
+  for (const candidate of candidates) {
+    const record = { ...candidate };
+    const proofWithCandidate = proof && typeof proof === 'object'
+      ? { ...proof, reportPublish: record }
+      : proof;
+    if (!reportPublishFinalizationIssue(record, proofWithCandidate || proof, config)) {
+      return record;
+    }
+  }
+  return null;
+}
+
+function importedLocalDossierEvidence(payload = {}, proof = null) {
+  if (!importedExplicitLaunchConfig(payload)) return null;
+  const candidates = [
+    proof?.localDossier,
+    payload?.launchData?.localDossier,
+    payload?.localDossier,
+  ].filter((candidate, index, list) => candidate && list.indexOf(candidate) === index);
+  if (!candidates.length) return null;
+  const config = importedProofComparisonConfig(payload);
+  for (const candidate of candidates) {
+    const record = { ...candidate };
+    const proofWithCandidate = proof && typeof proof === 'object'
+      ? { ...proof, localDossier: record }
+      : proof;
+    if (!localDossierFinalizationIssue(record, proofWithCandidate || proof, config)) {
+      return record;
+    }
+  }
+  return null;
+}
+
+function restoreImportedProofComparison(payload, proof) {
+  const comparisonWrapper = payload?.classicReportComparison || payload?.launchData?.classicReportComparison || null;
+  const comparisonFrom = (candidate = null) => {
+    if (!candidate || typeof candidate !== 'object') return null;
+    if (
+      candidate.status
+      || candidate.proofFingerprint
+      || Array.isArray(candidate.rows)
+      || Number(candidate.fieldCount || 0) > 0
+    ) {
+      return candidate;
+    }
+    return null;
+  };
+  const importedComparison =
+    comparisonFrom(comparisonWrapper?.result)
+    || comparisonFrom(comparisonWrapper)
+    || comparisonFrom(payload?.proof?.reportParity?.comparison)
+    || comparisonFrom(payload?.proof?.reportParity?.classicComparison)
+    || comparisonFrom(payload?.launchData?.proof?.reportParity?.comparison)
+    || comparisonFrom(payload?.launchData?.proof?.reportParity?.classicComparison)
+    || null;
+  if (!importedComparison || typeof importedComparison !== 'object') return;
+  const importedInput = String(
+    comparisonWrapper?.input
+    || payload?.classicArtifactInput
+    || payload?.launchData?.classicArtifactInput
+    || '',
+  ).trim();
+  if (!importedInput) {
+    state.classicReportComparison = {
+      input: '',
+      result: null,
+      comparedAt: null,
+      error: 'Imported proof comparison needs the original Classic artifact text; paste or load it to compare locally.',
+    };
+    persistClassicReportComparison();
+    return;
+  }
+  try {
+    const result = compareClassicReportArtifact(importedInput, proof, importedProofComparisonConfig(payload));
+    state.classicReportComparison = {
+      input: importedInput,
+      result,
+      comparedAt: result.comparedAt,
+      error: null,
+    };
+    persistClassicReportComparison();
+    const retirementGradeComparison = classicComparisonIsRetirementGrade(result, proof, importedProofComparisonConfig(payload));
+    if (retirementGradeComparison) {
+      rememberLaunchProof({
+        ...proof,
+        reportParity: {
+          ...(proof.reportParity || {}),
+          classicArtifactCompared: true,
+          comparedAt: result.comparedAt,
+          comparison: result,
+        },
+      });
+    }
+  } catch (error) {
+    state.classicReportComparison = {
+      input: importedInput,
+      result: null,
+      comparedAt: null,
+      error: error.message || 'Imported Classic artifact comparison failed',
+    };
+    persistClassicReportComparison();
+  }
+}
+
+async function loadV2ProofFile(file) {
+  try {
+    const safeFile = validateProofFile(file);
+    if (!safeFile) return;
+    const text = await readFileAsText(safeFile, 'Proof import');
+    const payload = proofPayloadFromImportText(text);
+    const proof = proofFromImportedPayload(payload);
+    const mergedProof = rememberLaunchProof(proof) || proof;
+    const mergedConfig = proofConfigForFingerprint(mergedProof, currentLaunchConfig());
+    state.lastReportPublish = reportPublishIsProofCurrent(mergedProof?.reportPublish, mergedProof, mergedConfig)
+      ? mergedProof.reportPublish
+      : null;
+    state.lastLocalDossier = localDossierIsProofCurrent(mergedProof?.localDossier, mergedProof, mergedConfig)
+      ? mergedProof.localDossier
+      : null;
+    restoreImportedProofComparison(payload, mergedProof);
+    renderAll();
+    notify('Launch proof loaded');
+  } catch (error) {
+    notify(error.message || 'Launch proof import failed');
+  }
+}
+
+function requestV2ProofImport() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,text/html,.json,.html,.htm';
+  input.addEventListener('change', () => {
+    loadV2ProofFile(input.files?.[0] || null).finally(() => {
+      input.value = '';
+    });
+  }, { once: true });
+  input.click();
+}
+
+async function loadClassicArtifactFile(file) {
+  try {
+    const safeFile = validateClassicArtifactFile(file);
+    if (!safeFile) return;
+    const text = await readFileAsText(safeFile, 'Classic artifact');
+    state.classicReportComparison = {
+      input: text,
+      result: null,
+      comparedAt: null,
+      error: null,
+    };
+    persistClassicReportComparison();
+    renderAll();
+    notify('Classic artifact loaded');
+  } catch (error) {
+    state.classicReportComparison = {
+      ...state.classicReportComparison,
+      result: null,
+      comparedAt: null,
+      error: error.message || 'Classic artifact import failed',
+    };
+    persistClassicReportComparison();
+    renderAll();
+    notify(state.classicReportComparison.error);
+  }
+}
+
+function requestClassicArtifactImport() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,text/html,text/plain,.json,.html,.htm,.txt';
+  input.addEventListener('change', () => {
+    loadClassicArtifactFile(input.files?.[0] || null).finally(() => {
+      input.value = '';
+    });
+  }, { once: true });
+  input.click();
+}
+
+function runClassicArtifactComparison() {
+  try {
+    const input = state.classicReportComparison.input || document.querySelector('.classic-artifact-text')?.value || '';
+    const proof = currentLaunchProof();
+    const config = proofConfigForFingerprint(proof, currentLaunchConfig());
+    const result = compareClassicReportArtifact(input, proof, config);
+    state.classicReportComparison = {
+      input,
+      result,
+      comparedAt: result.comparedAt,
+      error: null,
+    };
+    persistClassicReportComparison();
+    if (proof && typeof proof === 'object') {
+      const retirementGradeComparison = classicComparisonIsRetirementGrade(result, proof, config);
+      rememberLaunchProof({
+        ...proof,
+        reportParity: {
+          ...(proof.reportParity || {}),
+          classicArtifactCompared: retirementGradeComparison,
+          comparedAt: result.comparedAt,
+          comparison: result,
+        },
+      });
+    }
+    renderAll();
+    notify(result.status === 'pass' ? 'Classic artifact matches v2 proof' : 'Classic artifact needs review');
+  } catch (error) {
+    state.classicReportComparison = {
+      ...state.classicReportComparison,
+      input: state.classicReportComparison.input || document.querySelector('.classic-artifact-text')?.value || '',
+      result: null,
+      comparedAt: null,
+      error: error.message || 'Classic artifact comparison failed',
+    };
+    persistClassicReportComparison();
+    renderAll();
+    notify(state.classicReportComparison.error);
+  }
+}
+
+function clearClassicArtifactComparison() {
+  state.classicReportComparison = {
+    input: '',
+    result: null,
+    comparedAt: null,
+    error: null,
+  };
+  persistClassicReportComparison();
+  const proof = currentLaunchProof();
+  if (proof?.reportParity) {
+    rememberLaunchProof({
+      ...proof,
+      reportParity: {
+        ...proof.reportParity,
+        classicArtifactCompared: false,
+        comparison: null,
+        classicComparison: null,
+        comparedAt: null,
+      },
+    });
+  }
+  renderAll();
+  notify('Classic artifact comparison cleared');
+}
+
+async function publishV2LaunchReport({ quiet = false, refreshReadiness = true, ledger = true } = {}) {
+  const proof = currentLaunchProof();
+  if (!proof?.token?.mint) {
+    if (!quiet) notify('Create the token before publishing a report');
+    return;
+  }
+  const config = proofConfigForFingerprint(proof, currentLaunchConfig());
+  const recordedPoolIds = launchProofPoolIds(proof);
+  if (!proofHasReportPublishEvidence(proof, config)) {
+    if (!quiet) notify('Complete liquidity proof before publishing a report');
+    return;
+  }
+  if (!proof?.journalId) {
+    const reason = 'Refresh journal-backed launch proof before publishing a report';
+    if (!quiet) notify(reason);
+    return { skipped: true, reason, launchJournalMissing: true };
+  }
+  if (state.prefs.publishLaunchReport === false) {
+    if (!quiet) notify('Report publishing is disabled');
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.publishLaunchReport) {
+    if (!quiet) notify('Report publishing requires the local Trebuchet app');
+    return;
+  }
+
+  const airdropStatus = airdropCompletionStatus(proof, config.poolTopology);
+  if (airdropStatus.retryRequired) {
+    const reason = `Airdrop has ${airdropStatus.failed} failed recipient${airdropStatus.failed === 1 ? '' : 's'}; retry before publishing the launch report.`;
+    if (!quiet) notify(reason);
+    return { skipped: true, reason, airdropIncomplete: true };
+  }
+  if (airdropStatus.pending > 0) {
+    const reason = `${airdropStatus.pending} airdrop recipient${airdropStatus.pending === 1 ? '' : 's'} still pending; run airdrop before publishing the launch report.`;
+    if (!quiet) notify(reason);
+    return { skipped: true, reason, airdropIncomplete: true };
+  }
+  if (!airdropStatus.complete) {
+    const reason = airdropCompletionIssue(airdropStatus) || 'Airdrop proof is incomplete; refresh or rerun airdrop before publishing the launch report.';
+    if (!quiet) notify(reason);
+    return { skipped: true, reason, airdropIncomplete: true };
+  }
+  const proofFingerprint = launchProofFingerprint(proof, config);
+  const launchData = {
+    ...buildV2LaunchReportData(proof, config),
+    proofFingerprint,
+  };
+  const expectedSweepEvidenceHash = terminalSweepEvidenceHashForProof(proof);
+  const reportHtml = buildV2LaunchReportHtml({ proof, config, launchData });
+
+  state.reportPublishing = true;
+  state.lastReportPublish = attachProofFingerprint({ status: 'pending' }, proof, config);
+  const ledgerId = ledger ? startExecutionLedgerEntry({ kind: 'report' }) : null;
+  renderAll();
+  try {
+    const result = await state.apiClient.publishLaunchReport({
+      walletPublicKey: proof.walletPublicKey || selectedLaunchWalletPublicKey(),
+      mint: proof.token.mint,
+      poolIds: recordedPoolIds,
+      reportHtml,
+      launchData,
+      proofFingerprint,
+    });
+    if (result.skipped) {
+      state.lastReportPublish = attachProofFingerprint({ status: 'skipped', reason: result.reason }, proof, config);
+      finishExecutionLedgerEntry(ledgerId, {
+        status: 'warn',
+        detail: result.reason || 'Report publishing skipped by the local app.',
+      });
+      if (!quiet) notify('Launch report publishing skipped');
+    } else if (result.failed) {
+      state.lastReportPublish = attachProofFingerprint({ status: 'failed', error: result.error }, proof, config);
+      finishExecutionLedgerEntry(ledgerId, {
+        status: 'error',
+        error: result.error || 'Report publish failed',
+        detail: result.error || 'Report publish failed.',
+      });
+      if (!quiet) notify(result.error || 'Launch report publish failed');
+    } else {
+      const returnedFingerprint = typeof result.proofFingerprint === 'string' ? result.proofFingerprint : null;
+      const returnedSweepEvidenceHash = typeof result.sweepEvidenceHash === 'string'
+        ? result.sweepEvidenceHash
+        : typeof result.transferEvidenceHash === 'string' ? result.transferEvidenceHash : null;
+      if (result.alreadyPublished === true && returnedFingerprint !== proofFingerprint) {
+        state.lastReportPublish = {
+          status: 'stale',
+          mint: proof.token.mint,
+          jsonUri: result.jsonUri || null,
+          htmlUri: result.htmlUri || null,
+          alreadyPublished: true,
+          publishedAt: result.publishedAt || null,
+          proofFingerprint: returnedFingerprint,
+          ...(returnedSweepEvidenceHash ? { sweepEvidenceHash: returnedSweepEvidenceHash } : {}),
+        };
+        finishExecutionLedgerEntry(ledgerId, {
+          status: 'warn',
+          detail: 'Existing launch report is not bound to the current proof.',
+        });
+        if (!quiet) notify('Existing launch report belongs to another proof');
+        return {
+          ...result,
+          failed: true,
+          staleProof: true,
+          error: 'Existing launch report is not bound to the current proof.',
+        };
+      }
+      if (result.alreadyPublished === true && expectedSweepEvidenceHash && returnedSweepEvidenceHash !== expectedSweepEvidenceHash) {
+        state.lastReportPublish = {
+          status: 'stale',
+          mint: proof.token.mint,
+          jsonUri: result.jsonUri || null,
+          htmlUri: result.htmlUri || null,
+          alreadyPublished: true,
+          publishedAt: result.publishedAt || null,
+          proofFingerprint: returnedFingerprint,
+          ...(returnedSweepEvidenceHash ? { sweepEvidenceHash: returnedSweepEvidenceHash } : {}),
+        };
+        finishExecutionLedgerEntry(ledgerId, {
+          status: 'warn',
+          detail: 'Existing launch report does not include the current terminal sweep evidence.',
+        });
+        if (!quiet) notify('Existing launch report is missing final sweep evidence');
+        return {
+          ...result,
+          failed: true,
+          staleProof: true,
+          error: 'Existing launch report does not include the current terminal sweep evidence.',
+        };
+      }
+      if (!result.jsonUri && !result.htmlUri) {
+        state.lastReportPublish = attachProofFingerprint({
+          status: 'failed',
+          error: 'Launch report publisher returned no permanent URI.',
+        }, proof, config);
+        finishExecutionLedgerEntry(ledgerId, {
+          status: 'error',
+          error: 'Launch report publisher returned no permanent URI.',
+          detail: 'Report publishing did not return a jsonUri or htmlUri, so v2 will not treat it as proof.',
+        });
+        if (!quiet) notify('Launch report publish returned no URI');
+        return {
+          ...result,
+          failed: true,
+          error: 'Launch report publisher returned no permanent URI.',
+        };
+      }
+      state.lastReportPublish = attachProofFingerprint({
+        status: 'done',
+        mint: proof.token.mint,
+        jsonUri: result.jsonUri || null,
+        htmlUri: result.htmlUri || null,
+        alreadyPublished: result.alreadyPublished === true,
+        publishedAt: result.publishedAt || new Date().toISOString(),
+        dataVersion: launchData.dataVersion,
+        heldReserveAudit: launchData.heldReserveAudit,
+        ...(returnedSweepEvidenceHash || expectedSweepEvidenceHash
+          ? { sweepEvidenceHash: returnedSweepEvidenceHash || expectedSweepEvidenceHash }
+          : {}),
+      }, proof, config);
+      finishExecutionLedgerEntry(ledgerId, {
+        status: 'complete',
+        detail: result.alreadyPublished ? 'Existing report proof loaded.' : 'Launch report proof published.',
+      });
+      rememberLaunchProof({
+        ...proof,
+        launchConfig: exportableLaunchConfigSnapshot(proofConfigForFingerprint(proof, config)),
+        reportPublish: state.lastReportPublish,
+      });
+      if (!quiet) notify(result.alreadyPublished ? 'Existing launch report loaded' : 'Launch report published');
+    }
+    if (refreshReadiness) await checkExecutionReadiness();
+    return result;
+  } catch (error) {
+    state.lastReportPublish = attachProofFingerprint({ status: 'failed', error: error.message || 'Publish failed' }, proof, config);
+    finishExecutionLedgerEntry(ledgerId, {
+      status: 'error',
+      error: error.message || 'Publish failed',
+      detail: error.message || 'Report publish failed.',
+    });
+    if (!quiet) notify(error.message || 'Launch report publish failed');
+  } finally {
+    state.reportPublishing = false;
+    renderAll();
+  }
+}
+
+async function runV2Airdrop({ retry = false, skipConfirm = false, quiet = false, refreshReadiness = true, ledger = true } = {}) {
+  const proof = currentLaunchProof();
+  if (!proof?.token?.mint) {
+    if (!quiet) notify('Create the token before running an airdrop');
+    return;
+  }
+  if (state.demoActive) {
+    if (!quiet) notify('Demo launch handles airdrop inside Run demo');
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.runAirdrop || !state.apiClient?.retryAirdrop) {
+    if (!quiet) notify('Airdrop requires the local Trebuchet app');
+    return;
+  }
+  const allRecipients = Array.isArray(proof.airdrop?.recipients) ? proof.airdrop.recipients : [];
+  const failedRecipients = Array.isArray(proof.airdrop?.failed)
+    ? proof.airdrop.failed.map((row) => ({ wallet: row.wallet, tokens: row.tokens }))
+    : [];
+  const recipients = retry ? failedRecipients : allRecipients;
+  if (!recipients.length) {
+    if (!quiet) notify(retry ? 'No failed airdrop recipients to retry' : 'Attach airdrop recipients first');
+    return;
+  }
+  if (!skipConfirm && typeof window.confirm === 'function') {
+    const ok = window.confirm(
+      `${retry ? 'Retry failed airdrop recipients' : 'Run airdrop before final sweep'}?\n\nTrebuchet will sign token transfers from the managed launch wallet.`,
+    );
+    if (!ok) return;
+  }
+
+  state.airdropRunning = retry ? 'retry' : 'run';
+  const ledgerId = ledger ? startExecutionLedgerEntry({
+    kind: retry ? 'airdrop-retry' : 'airdrop',
+    retry,
+    recipientCount: recipients.length,
+  }) : null;
+  renderAll();
+  try {
+    const payload = {
+      walletPublicKey: proof.walletPublicKey || selectedLaunchWalletPublicKey(),
+      tokenMint: proof.airdrop?.tokenMint || proof.token.mint,
+      tokenDecimals: proof.airdrop?.tokenDecimals ?? proof.token.decimals ?? currentLaunchConfig().token.decimals,
+      isToken2022: false,
+      recipients,
+    };
+    const result = retry
+      ? await state.apiClient.retryAirdrop(payload)
+      : await state.apiClient.runAirdrop(payload);
+    state.lastAirdropResult = result;
+    const updatedProof = rememberLaunchProof({
+      ...proof,
+      airdrop: {
+        ...(proof.airdrop || {}),
+        deliveredCount: Array.isArray(result.transferred) ? result.transferred.length : 0,
+        failedCount: Array.isArray(result.failed) ? result.failed.length : 0,
+        transferred: Array.isArray(result.transferred) ? result.transferred : [],
+        failed: Array.isArray(result.failed) ? result.failed : [],
+      },
+    });
+    const failedCount = Array.isArray(result.failed) ? result.failed.length : 0;
+    const deliveredCount = Array.isArray(result.transferred) ? result.transferred.length : 0;
+    finishExecutionLedgerEntry(ledgerId, {
+      status: failedCount ? 'warn' : 'complete',
+      detail: `${deliveredCount} delivered, ${failedCount} failed.`,
+    });
+    history.unshift({
+      title: retry ? 'Airdrop retry completed' : 'Airdrop completed',
+      detail: `${updatedProof.airdrop.deliveredCount} delivered, ${updatedProof.airdrop.failedCount} failed.`,
+      time: 'Just now',
+    });
+    pollLiveOps().catch(() => null);
+    if (!quiet) notify(`${retry ? 'Retry' : 'Airdrop'}: ${updatedProof.airdrop.failedCount} failed`);
+    if (refreshReadiness) await checkExecutionReadiness();
+    return result;
+  } catch (error) {
+    finishExecutionLedgerEntry(ledgerId, {
+      status: 'error',
+      error: error.message || 'Airdrop failed',
+      detail: error.message || 'Airdrop failed.',
+    });
+    if (!quiet) notify(error.message || 'Airdrop failed');
+  } finally {
+    state.airdropRunning = false;
+    renderAll();
+  }
+}
+
+function applyQuoteAcquireJob(job) {
+  const fingerprint = job?.v2QuoteAcquireFingerprint
+    || state.quoteAcquire.fingerprint
+    || state.quoteAcquire.job?.v2QuoteAcquireFingerprint
+    || null;
+  state.quoteAcquire.job = job ? {
+    ...job,
+    v2QuoteAcquireFingerprint: fingerprint,
+  } : null;
+  state.quoteAcquire.fingerprint = fingerprint;
+  state.quoteAcquire.error = job?.error || null;
+  state.quoteAcquire.lastUpdatedAt = new Date().toISOString();
+  state.quoteAcquire.running = job?.status === 'running';
+  state.quoteAcquire.polling = state.quoteAcquire.running;
+  if (job?.status === 'done') {
+    if (quoteAcquireTimer) {
+      window.clearInterval(quoteAcquireTimer);
+      quoteAcquireTimer = null;
+    }
+    const failed = Array.isArray(job.results) ? job.results.filter((row) => row.success === false).length : 0;
+    if (!state.quoteAcquire.notifiedDone) {
+      notify(failed ? `Quote acquire finished with ${failed} failure${failed === 1 ? '' : 's'}` : 'Quote tokens acquired');
+      state.quoteAcquire.notifiedDone = true;
+    }
+  }
+}
+
+async function pollQuoteAcquire() {
+  const { jobId } = state.quoteAcquire;
+  if (!jobId || state.apiStatus !== 'connected' || !state.apiClient?.getAcquireQuoteTokens) return;
+  try {
+    const job = await state.apiClient.getAcquireQuoteTokens(jobId);
+    applyQuoteAcquireJob(job);
+  } catch (error) {
+    state.quoteAcquire.error = error.message || 'Quote acquire status failed';
+    state.quoteAcquire.polling = false;
+    if (quoteAcquireTimer) {
+      window.clearInterval(quoteAcquireTimer);
+      quoteAcquireTimer = null;
+    }
+  }
+  renderChartDeck();
+  renderClassicBridge();
+}
+
+function startQuoteAcquirePolling() {
+  if (quoteAcquireTimer) return;
+  quoteAcquireTimer = window.setInterval(() => {
+    pollQuoteAcquire().catch(() => null);
+  }, 2000);
+  pollQuoteAcquire().catch(() => null);
+}
+
+async function startQuoteAcquire() {
+  const fundingEstimateStatus = classicFundingEstimateStatus(currentLaunchConfig());
+  const routes = quoteAcquireRoutes();
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  if (!fundingEstimateStatus.matchesConfig) {
+    notify(fundingEstimateStatus.stale ? 'Rerun funding estimate first' : 'Run funding estimate first');
+    return;
+  }
+  if (!routes.length) {
+    notify(quoteAcquireManualCount() ? 'This estimate needs manual quote-token prefund' : 'No quote acquire needed');
+    return;
+  }
+  if (!walletPublicKey) {
+    notify('Generate or select a Trebuchet wallet first');
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.acquireQuoteTokens) {
+    notify('Quote acquire requires the local Trebuchet app');
+    return;
+  }
+  if (!state.demoActive && typeof window.confirm === 'function') {
+    const ok = window.confirm(
+      `Acquire ${routes.length} quote-token route${routes.length === 1 ? '' : 's'} from the selected Trebuchet-managed wallet? This can spend SOL from that wallet.`,
+    );
+    if (!ok) return;
+  }
+
+  const v2QuoteAcquireFingerprint = quoteAcquireFingerprint(currentLaunchConfig(), walletPublicKey);
+  state.quoteAcquire = {
+    ...defaultQuoteAcquireState(),
+    running: true,
+    polling: true,
+    fingerprint: v2QuoteAcquireFingerprint,
+    job: {
+      status: 'running',
+      total: routes.length,
+      completed: 0,
+      results: [],
+      pendingMints: routes.map((route) => route.quoteMint).filter(Boolean),
+      inProgressMints: [],
+      v2QuoteAcquireFingerprint,
+    },
+  };
+  renderClassicBridge();
+
+  try {
+    const started = await state.apiClient.acquireQuoteTokens({
+      walletPublicKey,
+      autoSwapPlan: routes,
+    });
+    state.quoteAcquire.jobId = started.jobId;
+    state.quoteAcquire.job = {
+      ...state.quoteAcquire.job,
+      jobId: started.jobId,
+      v2QuoteAcquireFingerprint,
+    };
+    startQuoteAcquirePolling();
+    notify('Quote acquire job started');
+  } catch (error) {
+    state.quoteAcquire.running = false;
+    state.quoteAcquire.polling = false;
+    state.quoteAcquire.error = error.message || 'Quote acquire failed to start';
+    renderClassicBridge();
+    notify(state.quoteAcquire.error);
+  }
+}
+
+async function clearQuoteAcquire() {
+  const { jobId, running } = state.quoteAcquire;
+  if (running) {
+    notify('Quote acquire is still running');
+    return;
+  }
+  if (jobId && state.apiStatus === 'connected' && state.apiClient?.cancelAcquireQuoteTokens) {
+    await state.apiClient.cancelAcquireQuoteTokens(jobId).catch(() => null);
+  }
+  resetQuoteAcquireState({ keepRunning: false });
+  renderChartDeck();
+  renderClassicBridge();
+  notify('Quote acquire job cleared');
+}
+
+async function stageTransactions() {
+  if (state.staging) return;
+  state.staging = true;
+  renderQueue();
+  const config = currentLaunchConfig();
+  try {
+    let plan = null;
+    if (state.apiStatus === 'connected' && state.apiClient?.stageLaunchPlan) {
+      plan = await state.apiClient.stageLaunchPlan({
+        ...config,
+        walletPublicKey: selectedLaunchWalletPublicKey(),
+      });
+    }
+    applyLaunchPlan(plan || fallbackLaunchPlan(), config);
+    notify(plan?.source === 'local-api'
+      ? `Run plan staged from local API (${state.transactions.length} operations)`
+      : 'Static run plan staged');
+  } catch (error) {
+    console.warn('v2 launch-plan staging failed:', error);
+    applyLaunchPlan(fallbackLaunchPlan());
+    notify('Local plan unavailable; staged static fallback');
+  } finally {
+    state.staging = false;
+    renderAll();
+  }
+}
+
+function simulateLaunch() {
+  state.simulated = true;
+  state.launchStage = Math.min(launchStages.length - 1, state.launchStage + 1);
+  renderAll();
+  notify('Simulation refreshed');
+}
+
+function addManagedWallet(wallet, { select = true } = {}) {
+  if (!wallet?.publicKey) return;
+  const existingIndex = state.managedWallets.findIndex((item) => item.publicKey === wallet.publicKey);
+  if (existingIndex >= 0) state.managedWallets[existingIndex] = { ...state.managedWallets[existingIndex], ...wallet };
+  else state.managedWallets.unshift(wallet);
+  if (select) {
+    state.selectedWalletPublicKey = wallet.publicKey;
+    state.accountId = wallet.publicKey;
+    state.connected = wallet.hasSecretKey !== false;
+    resetManualPrefundState();
+    resetFundingWalletState();
+  }
+}
+
+function selectRecoveryWallet(publicKey, { switchToWallet = true } = {}) {
+  const wallet = pendingRecoveryWallet(publicKey);
+  if (!wallet) {
+    notify('Recovery wallet not found');
+    return null;
+  }
+  addManagedWallet({
+    ...wallet,
+    label: 'Recovery Wallet',
+    source: wallet.source || 'pending-recovery',
+    hasSecretKey: wallet.hasSecretKey === true,
+    hasMnemonic: wallet.hasMnemonic === true,
+  });
+  state.revealedWallet = null;
+  state.revealError = null;
+  if (switchToWallet) setView('wallet');
+  renderAll();
+  notify('Recovery wallet selected');
+  return wallet;
+}
+
+async function generateManagedWallet() {
+  if (state.apiStatus === 'connected' && state.apiClient?.generateManagedWallet) {
+    const wallet = await state.apiClient.generateManagedWallet();
+    addManagedWallet(wallet);
+    renderAll();
+    notify('Trebuchet-managed wallet generated');
+    return;
+  }
+
+  notify('Launch wallet generation requires the local Trebuchet app');
+}
+
+async function importManagedWallet() {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.importManagedWallet) {
+    notify('Import requires the local Trebuchet app');
+    return;
+  }
+  const secret = window.prompt('Paste a Solana mnemonic, base58 secret key, or JSON secret-key array. It stays on this machine.');
+  if (!secret) return;
+  const wallet = await state.apiClient.importManagedWallet(secret);
+  addManagedWallet(wallet);
+  renderAll();
+  notify('Wallet imported into Trebuchet');
+}
+
+async function refreshSecretPinStatus({ reloadBoot = false } = {}) {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.getSecretPinStatus) return;
+  if (reloadBoot && state.apiClient?.bootstrap) {
+    await refreshLocalApiState();
+    return;
+  }
+  const status = await state.apiClient.getSecretPinStatus();
+  applySecretPinStatus(status);
+}
+
+async function setupSecretPin() {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.setupSecretPin) {
+    notify('Recovery PIN requires the local Trebuchet app');
+    return;
+  }
+  if (state.secretPin.configured) {
+    notify('Recovery PIN is already configured');
+    return;
+  }
+  const pin = promptRecoveryPin('Set');
+  if (!pin) return;
+  const confirmPin = promptRecoveryPin('Confirm');
+  if (!confirmPin) return;
+  if (pin !== confirmPin) {
+    notify('Recovery PIN entries did not match');
+    return;
+  }
+
+  state.secretPin.busy = 'Setting';
+  renderAll();
+  try {
+    const status = await state.apiClient.setupSecretPin(pin);
+    applySecretPinStatus(status);
+    await refreshSecretPinStatus({ reloadBoot: true });
+    notify('Recovery PIN set');
+  } catch (error) {
+    state.secretPin.busy = null;
+    notify(error.message || 'Recovery PIN setup failed');
+  } finally {
+    state.secretPin.busy = null;
+    renderAll();
+  }
+}
+
+async function unlockSecretPin() {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.unlockSecretPin) {
+    notify('Recovery PIN requires the local Trebuchet app');
+    return;
+  }
+  if (!state.secretPin.configured) {
+    setupSecretPin();
+    return;
+  }
+  if (state.secretPin.unlocked) {
+    notify('Recovery PIN already unlocked');
+    return;
+  }
+  const pin = promptRecoveryPin('Unlock');
+  if (!pin) return;
+
+  state.secretPin.busy = 'Unlocking';
+  renderAll();
+  try {
+    const status = await state.apiClient.unlockSecretPin(pin);
+    applySecretPinStatus(status);
+    await refreshSecretPinStatus({ reloadBoot: true });
+    notify('Recovery PIN unlocked');
+  } catch (error) {
+    state.secretPin.busy = null;
+    notify(error.message || 'Recovery PIN unlock failed');
+  } finally {
+    state.secretPin.busy = null;
+    renderAll();
+  }
+}
+
+async function changeSecretPin() {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.changeSecretPin) {
+    notify('Recovery PIN change requires the local Trebuchet app');
+    return;
+  }
+  if (!state.secretPin.configured) {
+    notify('Set a Recovery PIN first');
+    return;
+  }
+  const currentPin = promptRecoveryPin('Current');
+  if (!currentPin) return;
+  const newPin = promptRecoveryPin('New');
+  if (!newPin) return;
+  const confirmPin = promptRecoveryPin('Confirm new');
+  if (!confirmPin) return;
+  if (newPin !== confirmPin) {
+    notify('New Recovery PIN entries did not match');
+    return;
+  }
+
+  state.secretPin.busy = 'Changing';
+  renderAll();
+  try {
+    const status = await state.apiClient.changeSecretPin({ currentPin, newPin });
+    applySecretPinStatus(status);
+    await refreshSecretPinStatus({ reloadBoot: true });
+    notify('Recovery PIN changed');
+  } catch (error) {
+    state.secretPin.busy = null;
+    notify(error.message || 'Recovery PIN change failed');
+  } finally {
+    state.secretPin.busy = null;
+    renderAll();
+  }
+}
+
+async function lockSecretPin() {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.lockSecretPin) {
+    notify('Recovery PIN requires the local Trebuchet app');
+    return;
+  }
+
+  state.secretPin.busy = 'Locking';
+  renderAll();
+  try {
+    const status = await state.apiClient.lockSecretPin();
+    applySecretPinStatus(status);
+    state.revealedWallet = null;
+    state.revealError = null;
+    await refreshSecretPinStatus({ reloadBoot: true });
+    notify('Recovery PIN locked');
+  } catch (error) {
+    state.secretPin.busy = null;
+    notify(error.message || 'Recovery PIN lock failed');
+  } finally {
+    state.secretPin.busy = null;
+    renderAll();
+  }
+}
+
+async function resetSecretPin() {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.resetSecretPin) {
+    notify('Recovery PIN reset requires the local Trebuchet app');
+    return;
+  }
+  if (!state.secretPin.configured) {
+    notify('No Recovery PIN is configured');
+    return;
+  }
+  if (typeof window.confirm === 'function') {
+    const ok = window.confirm(
+      'Reset Recovery PIN?\n\nThis deletes the PIN wrapper and permanently discards locally saved launch wallets and Vanity CAs that are encrypted by that PIN. Use this only if the PIN is lost and you have no recoverable launch in progress.',
+    );
+    if (!ok) return;
+  }
+  if (typeof window.prompt !== 'function') {
+    notify('Reset confirmation prompt is unavailable');
+    return;
+  }
+  const phrase = window.prompt('Type RESET RECOVERY PIN to discard PIN-encrypted local secrets.');
+  if (phrase !== 'RESET RECOVERY PIN') {
+    notify('Recovery PIN reset cancelled');
+    return;
+  }
+
+  state.secretPin.busy = 'Resetting';
+  renderAll();
+  try {
+    const result = await state.apiClient.resetSecretPin(phrase);
+    applySecretPinStatus(result.status);
+    state.revealedWallet = null;
+    state.revealError = null;
+    state.vanityCandidates = state.vanityCandidates.filter((candidate) => candidate.persisted !== true);
+    await refreshLocalApiState();
+    const removedWallets = Number(result.removed?.pendingWallets || 0);
+    const removedCAs = Number(result.removed?.vanityCAs || 0);
+    state.lastSecretPinReset = {
+      at: new Date().toISOString(),
+      removed: {
+        pendingWallets: removedWallets,
+        vanityCAs: removedCAs,
+      },
+      status: result.status || state.secretPin,
+    };
+    notify(`Recovery PIN reset; discarded ${removedWallets} wallet${removedWallets === 1 ? '' : 's'} and ${removedCAs} Vanity CA${removedCAs === 1 ? '' : 's'}`);
+  } catch (error) {
+    state.secretPin.busy = null;
+    notify(error.message || 'Recovery PIN reset failed');
+  } finally {
+    state.secretPin.busy = null;
+    renderAll();
+  }
+}
+
+async function loadWalletQr(publicKey = selectedLaunchWalletPublicKey()) {
+  if (!publicKey) {
+    notify('Select a Trebuchet wallet first');
+    return;
+  }
+  const wallet = state.managedWallets.find((item) => item.publicKey === publicKey);
+  if (wallet?.qrCode) {
+    state.walletQr = { publicKey, qrCode: wallet.qrCode, loading: false, error: null };
+    renderWallet();
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.getWalletQr) {
+    state.walletQr = {
+      publicKey,
+      qrCode: null,
+      loading: false,
+      error: 'Open through the local Trebuchet app to render the funding QR.',
+    };
+    renderWallet();
+    notify('Wallet QR requires the local Trebuchet app');
+    return;
+  }
+
+  state.walletQr = { publicKey, qrCode: null, loading: true, error: null };
+  renderWallet();
+  try {
+    const result = await state.apiClient.getWalletQr(publicKey);
+    state.walletQr = {
+      publicKey: result.publicKey || publicKey,
+      qrCode: result.qrCode,
+      loading: false,
+      error: null,
+    };
+    state.managedWallets = state.managedWallets.map((item) => (
+      item.publicKey === publicKey ? { ...item, qrCode: result.qrCode } : item
+    ));
+    notify('Funding QR loaded');
+  } catch (error) {
+    state.walletQr = {
+      publicKey,
+      qrCode: null,
+      loading: false,
+      error: error.message || 'Wallet QR failed',
+    };
+    notify(state.walletQr.error);
+  } finally {
+    renderWallet();
+  }
+}
+
+async function revealWalletSecret(publicKey = selectedLaunchWalletPublicKey()) {
+  if (!publicKey) {
+    notify('Select a Trebuchet wallet first');
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.revealPendingWallet) {
+    notify('Secret reveal requires the local Trebuchet app');
+    return;
+  }
+  if (typeof window.confirm === 'function') {
+    const ok = window.confirm('Reveal the recovery secret for this launch wallet? Only do this when you are ready to back it up or recover manually.');
+    if (!ok) return;
+  }
+
+  state.revealingWalletPublicKey = publicKey;
+  state.revealError = null;
+  renderAll();
+  try {
+    state.revealedWallet = await state.apiClient.revealPendingWallet(publicKey);
+    notify('Recovery secret revealed');
+  } catch (error) {
+    state.revealedWallet = null;
+    state.revealError = error.message || 'Recovery secret reveal failed';
+    notify(state.revealError);
+  } finally {
+    state.revealingWalletPublicKey = null;
+    renderAll();
+  }
+}
+
+function clearRevealedWalletSecret(publicKey = selectedLaunchWalletPublicKey()) {
+  if (!state.revealedWallet || state.revealedWallet.publicKey !== publicKey) return;
+  state.revealedWallet = null;
+  state.revealError = null;
+  renderWallet();
+  notify('Recovery secret hidden');
+}
+
+async function discardSelectedWallet(publicKey = selectedLaunchWalletPublicKey()) {
+  if (!publicKey) {
+    notify('Select a Trebuchet wallet first');
+    return;
+  }
+  if (state.fullRunRunning || state.realExecutionRunning) {
+    notify('Wait for the launch operation to finish before discarding a wallet');
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.dismissPendingWallet) {
+    notify('Wallet discard requires the local Trebuchet app');
+    return;
+  }
+  if (typeof window.confirm === 'function') {
+    const ok = window.confirm(
+      `Discard local recovery entry for ${shortAddress(publicKey)}?\n\nThis deletes Trebuchet's local copy of the launch wallet secret. Only continue if the wallet is empty, intentionally abandoned, or backed up elsewhere.`,
+    );
+    if (!ok) return;
+  }
+  if (typeof window.prompt !== 'function') {
+    notify('Wallet discard confirmation prompt is unavailable');
+    return;
+  }
+  const typed = window.prompt('Type the full wallet address to discard its local recovery entry.');
+  if (typed !== publicKey) {
+    notify('Wallet discard cancelled');
+    return;
+  }
+
+  state.discardingWalletPublicKey = publicKey;
+  renderAll();
+  try {
+    await state.apiClient.dismissPendingWallet(publicKey);
+    state.managedWallets = state.managedWallets.filter((wallet) => wallet.publicKey !== publicKey);
+    state.recovery.pendingWallets = state.recovery.pendingWallets.filter((wallet) => wallet.publicKey !== publicKey);
+    state.recovery.pendingWalletCount = state.recovery.pendingWallets.length;
+    if (state.revealedWallet?.publicKey === publicKey) {
+      state.revealedWallet = null;
+      state.revealError = null;
+    }
+    if (state.walletQr.publicKey === publicKey) {
+      state.walletQr = { publicKey: null, qrCode: null, loading: false, error: null };
+    }
+    const nextWallet = state.managedWallets[0] || null;
+    state.selectedWalletPublicKey = nextWallet?.publicKey || null;
+    state.accountId = nextWallet?.publicKey || 'launch';
+    state.connected = nextWallet?.hasSecretKey === true;
+    await refreshLocalApiState();
+    notify('Local wallet recovery entry discarded');
+  } catch (error) {
+    notify(error.message || 'Wallet discard failed');
+  } finally {
+    state.discardingWalletPublicKey = null;
+    renderAll();
+  }
+}
+
+function recoverySweepWarningCount(result = {}) {
+  return Number(result.solSweepError ? 1 : 0)
+    + (Array.isArray(result.tokenSweep?.errors) ? result.tokenSweep.errors.length : 0)
+    + (Array.isArray(result.nftSweep?.errors) ? result.nftSweep.errors.length : 0)
+    + (Array.isArray(result.airdrop?.failed) ? result.airdrop.failed.length : 0);
+}
+
+function recoverySweepMetrics(sweep = {}) {
+  const result = sweep.result || {};
+  const tokenRows = Array.isArray(result.tokenSweep?.transferred) ? result.tokenSweep.transferred : [];
+  const nftRows = Array.isArray(result.nftSweep?.transferred) ? result.nftSweep.transferred : [];
+  const warnings = sweep.warningCount ?? recoverySweepWarningCount(result);
+  return {
+    tokens: Number(result.tokensTransferred ?? tokenRows.length ?? 0),
+    nfts: nftRows.length,
+    sol: Number(result.solTransferred || 0),
+    warnings,
+    entryState: sweep.stillPending ? 'Kept' : sweep.error ? 'Unknown' : 'Cleared',
+  };
+}
+
+function recoverySweepNextSteps(sweep = {}) {
+  if (sweep.error) {
+    return [
+      'Check the Recovery PIN, RPC health, and destination address, then retry Sweep.',
+      'Reveal the recovery secret only if you need to recover the wallet manually.',
+    ];
+  }
+  if (sweep.partial || sweep.stillPending) {
+    return [
+      'Recovery entry is still kept locally. Retry Sweep after RPC or token-account state settles.',
+      'Inspect the destination wallet and Activity log before deciding anything is clean.',
+      'Only Discard after confirming the wallet is empty or the secret is backed up elsewhere.',
+    ];
+  }
+  return [
+    'Assets moved to the destination and the local recovery entry was cleared.',
+    'Keep the report/proof bundle with the launch notes if this was final cleanup.',
+  ];
+}
+
+function renderRecoverySweepResult(sweep) {
+  if (!sweep) return '';
+  const metrics = recoverySweepMetrics(sweep);
+  const steps = recoverySweepNextSteps(sweep);
+  const state = sweep.error ? 'danger' : (sweep.partial || sweep.stillPending) ? 'warn' : '';
+  const badge = sweep.error ? 'Failed' : (sweep.partial || sweep.stillPending) ? 'Review' : 'Clean';
+  return `
+    <div class="recovery-sweep-result ${state}">
+      <div class="recovery-sweep-head">
+        <span>
+          <span class="eyebrow">Post-sweep cleanup</span>
+          <strong>${escapeHtml(shortAddress(sweep.publicKey))} to ${escapeHtml(shortAddress(sweep.destinationWallet))}</strong>
+        </span>
+        <span class="risk-badge ${state}">${escapeHtml(badge)}</span>
+      </div>
+      <p>${escapeHtml(sweep.message)}</p>
+      <div class="recovery-sweep-grid">
+        <span><small>Tokens</small><strong>${metrics.tokens}</strong></span>
+        <span><small>NFTs</small><strong>${metrics.nfts}</strong></span>
+        <span><small>SOL</small><strong>${metrics.sol.toFixed(4)}</strong></span>
+        <span><small>Warnings</small><strong>${metrics.warnings}</strong></span>
+        <span><small>Recovery entry</small><strong>${escapeHtml(metrics.entryState)}</strong></span>
+      </div>
+      <ul class="recovery-sweep-steps">
+        ${steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}
+      </ul>
+    </div>
+  `;
+}
+
+async function sweepRecoveryWallet(publicKey) {
+  if (!publicKey) {
+    notify('Select a recovery wallet first');
+    return;
+  }
+  const wallet = pendingRecoveryWallet(publicKey);
+  if (!wallet) {
+    notify('Recovery wallet not found');
+    return;
+  }
+  if (wallet.decryptionFailed) {
+    notify('Saved secret is unavailable for this wallet');
+    return;
+  }
+  if (state.fullRunRunning || state.realExecutionRunning) {
+    notify('Wait for the launch operation to finish before sweeping a wallet');
+    return;
+  }
+  if (state.secretPin.locked || wallet.secretPinLocked) {
+    notify('Unlock the Recovery PIN before sweeping this wallet');
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.sweepPendingWallet) {
+    notify('Recovery sweep requires the local Trebuchet app');
+    return;
+  }
+  if (typeof window.prompt !== 'function') {
+    notify('Recovery sweep destination prompt is unavailable');
+    return;
+  }
+
+  const defaultDestination = currentLaunchConfig().poolTopology.sweepDestination || '';
+  const destinationWallet = String(
+    window.prompt('Destination wallet for recovered assets', defaultDestination) || '',
+  ).trim();
+  if (!destinationWallet) {
+    notify('Recovery sweep cancelled');
+    return;
+  }
+  if (!isProbablySolanaAddress(destinationWallet)) {
+    notify('Destination wallet does not look like a Solana address');
+    return;
+  }
+  if (destinationWallet === publicKey) {
+    notify('Destination must be different from the recovery wallet');
+    return;
+  }
+  if (typeof window.confirm === 'function') {
+    const ok = window.confirm(
+      `Sweep recovered assets?\n\nFrom: ${publicKey}\nTo: ${destinationWallet}\n\nTrebuchet will sign from the locally saved launch wallet and will only remove the recovery entry if the wallet verifies empty after the sweep.`,
+    );
+    if (!ok) return;
+  }
+  const typed = window.prompt('Type the full recovery wallet address to sweep it.');
+  if (typed !== publicKey) {
+    notify('Recovery sweep cancelled');
+    return;
+  }
+
+  state.sweepingWalletPublicKey = publicKey;
+  state.lastRecoverySweep = null;
+  renderAll();
+  try {
+    const result = await state.apiClient.sweepPendingWallet({ walletPublicKey: publicKey, destinationWallet });
+    const warningCount = recoverySweepWarningCount(result);
+    await refreshLocalApiState();
+    const stillPending = state.recovery.pendingWallets.some((walletRow) => walletRow.publicKey === publicKey);
+    const partial = warningCount > 0 || stillPending;
+    state.lastRecoverySweep = {
+      publicKey,
+      destinationWallet,
+      result,
+      partial,
+      stillPending,
+      warningCount,
+      error: false,
+      message: partial
+        ? `Sweep returned ${warningCount} warning${warningCount === 1 ? '' : 's'}${stillPending ? '; recovery entry remains for another attempt' : ''}.`
+        : 'Recovery wallet swept and cleared from the local pending-wallet store.',
+    };
+    notify(partial ? 'Recovery sweep finished with warnings' : 'Recovery sweep completed');
+  } catch (error) {
+    state.lastRecoverySweep = {
+      publicKey,
+      destinationWallet,
+      result: null,
+      partial: false,
+      error: true,
+      message: error.message || 'Recovery sweep failed',
+    };
+    notify(error.message || 'Recovery sweep failed');
+  } finally {
+    state.sweepingWalletPublicKey = null;
+    renderAll();
+  }
+}
+
+async function cancelRefundLaunch() {
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  const destinationWallet = currentLaunchConfig().poolTopology.sweepDestination || '';
+  if (!walletPublicKey) {
+    notify('Select a Trebuchet launch wallet first');
+    return;
+  }
+  if (state.fullRunRunning || state.realExecutionRunning || state.demoLaunchRunning || state.reportPublishing || state.airdropRunning || state.quoteAcquire.running) {
+    notify('Wait for the current launch operation to finish before cancelling');
+    return;
+  }
+  if (state.secretPin.locked) {
+    notify('Unlock the Recovery PIN before cancelling and refunding');
+    return;
+  }
+  if (state.apiStatus !== 'connected' || (!state.apiClient?.cancelLaunchRefund && !state.apiClient?.sweepPendingWallet)) {
+    notify('Cancel & Refund requires the local Trebuchet app');
+    return;
+  }
+  if (!isProbablySolanaAddress(destinationWallet)) {
+    notify('Set a valid sweep destination before cancelling');
+    return;
+  }
+  if (destinationWallet === walletPublicKey) {
+    notify('Destination must be different from the launch wallet');
+    return;
+  }
+  if (typeof window.confirm === 'function') {
+    const ok = window.confirm(
+      `Cancel and refund this launch?\n\nFrom: ${walletPublicKey}\nTo: ${destinationWallet}\n\nTrebuchet will sweep tokens, SOL, and Fee Key NFTs from the selected launch wallet. Token mints and pools already created on-chain cannot be undone.`,
+    );
+    if (!ok) return;
+  }
+  if (typeof window.prompt === 'function') {
+    const typed = window.prompt('Type the full launch wallet address to confirm Cancel & Refund.');
+    if (typed !== walletPublicKey) {
+      notify('Cancel & Refund cancelled');
+      return;
+    }
+  }
+
+  state.cancelRefund = {
+    running: true,
+    lastResult: null,
+    error: null,
+    completedAt: null,
+  };
+  const ledgerId = startExecutionLedgerEntry({
+    kind: 'cancel-refund',
+    endpoint: '/api/transfer-assets',
+    detail: `Sweeping ${shortAddress(walletPublicKey)} to ${shortAddress(destinationWallet)}.`,
+  });
+  renderAll();
+  try {
+    const run = state.apiClient.cancelLaunchRefund || state.apiClient.sweepPendingWallet;
+    const result = await run({ walletPublicKey, destinationWallet });
+    const warningCount = recoverySweepWarningCount(result);
+    const partial = warningCount > 0;
+    const message = partial
+      ? `Cancel & Refund finished with ${warningCount} warning${warningCount === 1 ? '' : 's'}; inspect recovery before starting over.`
+      : 'Cancel & Refund swept the launch wallet to the destination.';
+    state.cancelRefund = {
+      running: false,
+      lastResult: {
+        walletPublicKey,
+        destinationWallet,
+        result,
+        warningCount,
+        partial,
+        message,
+      },
+      error: null,
+      completedAt: new Date().toISOString(),
+    };
+    finishExecutionLedgerEntry(ledgerId, {
+      status: partial ? 'warn' : 'complete',
+      detail: message,
+    });
+    await refreshLocalApiState();
+    pollLiveOps().catch(() => null);
+    notify(partial ? 'Cancel & Refund completed with warnings' : 'Cancel & Refund completed');
+  } catch (error) {
+    const message = error.message || 'Cancel & Refund failed';
+    state.cancelRefund = {
+      running: false,
+      lastResult: null,
+      error: message,
+      completedAt: new Date().toISOString(),
+    };
+    finishExecutionLedgerEntry(ledgerId, {
+      status: 'error',
+      error: message,
+      detail: message,
+    });
+    notify(message);
+  } finally {
+    renderAll();
+  }
+}
+
+function addVanityCandidate(candidate, { select = true } = {}) {
+  if (!candidate?.publicKey) return;
+  const existingIndex = state.vanityCandidates.findIndex((item) => item.publicKey === candidate.publicKey);
+  if (existingIndex >= 0) state.vanityCandidates[existingIndex] = { ...state.vanityCandidates[existingIndex], ...candidate };
+  else state.vanityCandidates.push(candidate);
+  if (select) state.selectedVanityPublicKey = candidate.publicKey;
+}
+
+async function removeVanityCandidateByPublicKey(publicKey, { confirm = true } = {}) {
+  const candidate = state.vanityCandidates.find((item) => item.publicKey === publicKey);
+  if (!candidate) {
+    notify('Select a saved Vanity CA first');
+    return false;
+  }
+  if (confirm && typeof window.confirm === 'function') {
+    const ok = window.confirm(`Remove saved Vanity CA ${shortAddress(publicKey)} from local options?`);
+    if (!ok) return false;
+  }
+  if (state.apiStatus === 'connected' && state.apiClient?.removeVanityCandidate && candidate.persisted !== false) {
+    await state.apiClient.removeVanityCandidate(publicKey);
+  }
+  state.vanityCandidates = state.vanityCandidates.filter((item) => item.publicKey !== publicKey);
+  if (state.selectedVanityPublicKey === publicKey) {
+    state.selectedVanityPublicKey = state.vanityCandidates.length
+      ? state.vanityCandidates[state.vanityCandidates.length - 1].publicKey
+      : null;
+  }
+  invalidateClassicOutputs();
+  renderAll();
+  notify('Saved Vanity CA removed');
+  return true;
+}
+
+async function pruneHiddenVanityCandidates() {
+  const visible = new Set(state.vanityCandidates.slice(-4).map((candidate) => candidate.publicKey));
+  if (state.selectedVanityPublicKey) visible.add(state.selectedVanityPublicKey);
+  const hidden = state.vanityCandidates.filter((candidate) => !visible.has(candidate.publicKey));
+  if (!hidden.length) {
+    notify('No hidden Vanity CAs to prune');
+    return;
+  }
+  if (typeof window.confirm === 'function') {
+    const ok = window.confirm(`Prune ${hidden.length} hidden saved Vanity CA option${hidden.length === 1 ? '' : 's'}? The selected and most recent visible options stay available.`);
+    if (!ok) return;
+  }
+  for (const candidate of hidden) {
+    if (state.apiStatus === 'connected' && state.apiClient?.removeVanityCandidate && candidate.persisted !== false) {
+      await state.apiClient.removeVanityCandidate(candidate.publicKey);
+    }
+  }
+  state.vanityCandidates = state.vanityCandidates.filter((candidate) => visible.has(candidate.publicKey));
+  invalidateClassicOutputs();
+  renderAll();
+  notify(`Pruned ${hidden.length} hidden Vanity CA option${hidden.length === 1 ? '' : 's'}`);
+}
+
+async function startVanityGrind() {
+  if (state.vanityRunning) {
+    if (state.vanitySource) state.vanitySource.close();
+    state.vanityRunning = false;
+    state.vanityProgress = null;
+    state.vanityProgressStats = null;
+    if (state.apiStatus === 'connected' && state.apiClient?.cancelVanityGrind) {
+      await state.apiClient.cancelVanityGrind().catch(() => null);
+    }
+    renderAll();
+    notify('Vanity grind cancelled');
+    return;
+  }
+
+  const vanity = currentVanityConfig();
+  if (!vanity.prefix && !vanity.suffix) {
+    notify('Enter a vanity start or end target');
+    return;
+  }
+  const estimate = vanityPatternEstimate(vanity.prefix, vanity.suffix);
+  if (estimate.invalid.length) {
+    notify(`Vanity target contains invalid Base58 character${estimate.invalid.length === 1 ? '' : 's'}: ${estimate.invalid.join(', ')}`);
+    renderVanityCandidates();
+    return;
+  }
+
+  if (state.apiStatus !== 'connected' || typeof EventSource !== 'function') {
+    const target = vanity.prefix && vanity.suffix
+      ? `${vanity.prefix}...${vanity.suffix}`
+      : vanity.prefix || vanity.suffix;
+    addVanityCandidate({
+      publicKey: `${target || 'CA'}Static${Math.floor(Math.random() * 900000 + 100000)}`,
+      target,
+      prefix: vanity.prefix || null,
+      suffix: vanity.suffix || null,
+      mode: vanity.mode,
+      rarity: 'static preview',
+      persisted: false,
+    });
+    renderAll();
+    notify('Static Vanity CA option added');
+    return;
+  }
+
+  state.vanityRunning = true;
+  state.vanityProgress = 'Starting';
+  state.vanityProgressStats = { expectedAttempts: estimate.expectedAttempts, startedAt: Date.now(), attempts: 0, rate: null };
+  renderAll();
+
+  try {
+    const token = await state.apiClient.getSessionToken();
+    const params = new URLSearchParams({ token });
+    if (vanity.prefix) params.set('prefix', vanity.prefix);
+    if (vanity.suffix) params.set('suffix', vanity.suffix);
+    const source = new EventSource(`/api/generate-vanity-wallet-stream?${params.toString()}`);
+    state.vanitySource = source;
+    source.addEventListener('message', (event) => {
+      let data;
+      try { data = JSON.parse(event.data); } catch { return; }
+      if (data.type === 'start') {
+        state.vanityProgress = `Target ${data.target}`;
+        state.vanityProgressStats = { expectedAttempts: Number(data.expected || estimate.expectedAttempts), startedAt: Date.now(), attempts: 0, rate: null };
+      } else if (data.type === 'progress') {
+        const attempts = Number(data.attempts || 0).toLocaleString();
+        const pct = clampPercent(Number(data.epoch || 0) * 100);
+        state.vanityProgress = `${attempts} tries / ${pct}% expected`;
+        const now = Date.now();
+        const prior = state.vanityProgressStats || {};
+        const priorAttempts = Number(prior.attempts || 0);
+        const priorAt = Number(prior.updatedAt || prior.startedAt || now);
+        const deltaSeconds = Math.max(0.001, (now - priorAt) / 1000);
+        const rate = Number(data.attempts) > priorAttempts
+          ? (Number(data.attempts) - priorAttempts) / deltaSeconds
+          : Number(prior.rate || 0);
+        state.vanityProgressStats = {
+          expectedAttempts: Number(prior.expectedAttempts || estimate.expectedAttempts),
+          startedAt: Number(prior.startedAt || now),
+          updatedAt: now,
+          attempts: Number(data.attempts || priorAttempts),
+          rate,
+        };
+      } else if (data.type === 'done') {
+        source.close();
+        state.vanityRunning = false;
+        state.vanitySource = null;
+        state.vanityProgress = null;
+        state.vanityProgressStats = null;
+        addVanityCandidate({
+          publicKey: data.wallet.publicKey,
+          target: data.wallet.target || null,
+          prefix: data.wallet.prefix || vanity.prefix || null,
+          suffix: data.wallet.suffix || vanity.suffix || null,
+          mode: data.wallet.mode || vanity.mode,
+          rarity: data.wallet.rarity || null,
+          attempts: data.wallet.attempts || null,
+          persisted: data.wallet.persisted === true,
+        });
+        renderAll();
+        notify('Vanity CA saved as an option');
+      } else if (data.type === 'cancelled') {
+        source.close();
+        state.vanityRunning = false;
+        state.vanitySource = null;
+        state.vanityProgress = null;
+        state.vanityProgressStats = null;
+        renderAll();
+        notify('Vanity grind cancelled');
+      } else if (data.type === 'error') {
+        source.close();
+        state.vanityRunning = false;
+        state.vanitySource = null;
+        state.vanityProgress = null;
+        state.vanityProgressStats = null;
+        renderAll();
+        notify(data.error || 'Vanity grind failed');
+        return;
+      }
+      renderVanityCandidates();
+      renderClassicBridge();
+    });
+    source.addEventListener('error', () => {
+      source.close();
+      state.vanityRunning = false;
+      state.vanitySource = null;
+      state.vanityProgress = null;
+      state.vanityProgressStats = null;
+      renderAll();
+      notify('Vanity stream disconnected');
+    });
+  } catch (error) {
+    state.vanityRunning = false;
+    state.vanitySource = null;
+    state.vanityProgress = null;
+    state.vanityProgressStats = null;
+    renderAll();
+    notify(error.message || 'Vanity grind failed');
+  }
+}
+
+async function estimateClassicFunding() {
+  const config = currentLaunchConfig();
+  const fundingRequest = classicFundingEstimateRequest(config);
+  if (state.apiStatus === 'connected' && state.apiClient?.estimateClassicFunding) {
+    try {
+      state.classicFundingEstimate = stampClassicFundingEstimate(
+        await state.apiClient.estimateClassicFunding(fundingRequest),
+        config,
+      );
+      resetQuoteAcquireState();
+      resetManualPrefundState();
+      renderAll();
+      refreshManualPrefundBalance({ quiet: true }).catch(() => null);
+      notify(`Classic estimate: ${Number(state.classicFundingEstimate.totalSol || 0).toFixed(3)} SOL`);
+      return;
+    } catch (error) {
+      notify(error.message || 'Classic funding estimate failed');
+      return;
+    }
+  }
+  state.classicFundingEstimate = stampClassicFundingEstimate({
+    totalSol: Number(state.launchPlan?.funding?.estimatedSolCost || 0)
+      || baseTransactions.reduce((total, tx) => total + tx.cost, 0),
+    autoSwapPlan: [],
+    byQuote: {},
+  }, config);
+  resetQuoteAcquireState();
+  resetManualPrefundState();
+  renderAll();
+  notify('Static funding estimate staged');
+}
+
+async function resolveCustomQuoteToken(poolId) {
+  const pool = state.customPools.find((item) => item.id === poolId);
+  if (!pool) {
+    notify('Custom pool is unavailable');
+    return null;
+  }
+  const query = customQuoteLookupValue(pool);
+  const symbol = String(pool.quoteSymbol || '').trim().toUpperCase();
+  if (!query || (!pool.quoteMint && !KNOWN_SAFE_QUOTE_SYMBOLS.has(symbol))) {
+    notify('Enter a quote mint before verifying this custom pool');
+    return null;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.getQuoteTokenInfo) {
+    notify('Quote-token verification requires the local Trebuchet app');
+    return null;
+  }
+
+  state.quoteTokenInfo[poolId] = {
+    query,
+    loading: true,
+    info: null,
+    error: null,
+    checkedAt: null,
+  };
+  renderPoolEditorPanel();
+
+  try {
+    const info = await state.apiClient.getQuoteTokenInfo(query);
+    if (info?.address) pool.quoteMint = info.address;
+    if (info?.symbol) pool.quoteSymbol = String(info.symbol).toUpperCase();
+    if (Number.isFinite(Number(info?.decimals))) pool.quoteDecimals = Number(info.decimals);
+    state.quoteTokenInfo[poolId] = {
+      query: customQuoteLookupValue(pool),
+      loading: false,
+      info,
+      error: null,
+      checkedAt: new Date().toISOString(),
+    };
+    invalidateClassicOutputs();
+    refreshClassicPreview({ includePoolEditor: true });
+    const badge = customQuoteInfoBadge(pool);
+    notify(badge.className === 'danger' ? 'Quote token blocked by safety check' : 'Quote token verified');
+    return info;
+  } catch (error) {
+    state.quoteTokenInfo[poolId] = {
+      query,
+      loading: false,
+      info: null,
+      error: error.message || 'Quote-token verification failed',
+      checkedAt: new Date().toISOString(),
+    };
+    refreshClassicPreview({ includePoolEditor: true });
+    notify(state.quoteTokenInfo[poolId].error);
+    return null;
+  }
+}
+
+function applyFundingWalletAsSweepDestination() {
+  const hint = selectedFundingWalletHint();
+  if (!hint.funder) {
+    notify('No detected funding wallet to use');
+    return false;
+  }
+  const input = document.getElementById('sweepDestination');
+  if (!input) {
+    notify('Sweep destination input is unavailable');
+    return false;
+  }
+  input.value = hint.funder;
+  invalidateClassicOutputs();
+  refreshClassicPreview({ includePoolEditor: true });
+  renderAll();
+  notify('Detected funder filled as sweep destination. Verify before launch.');
+  return true;
+}
+
+async function detectFundingWallet({ quiet = false } = {}) {
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  if (!walletPublicKey) {
+    if (!quiet) notify('Generate or select a Trebuchet wallet first');
+    return null;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.findFundingWallet) {
+    if (!quiet) notify('Funding wallet detection requires the local Trebuchet app');
+    return null;
+  }
+
+  state.fundingWallet = {
+    ...state.fundingWallet,
+    walletPublicKey,
+    checking: true,
+    error: null,
+  };
+  renderAll();
+
+  try {
+    const result = await state.apiClient.findFundingWallet(walletPublicKey);
+    const funder = result?.funder || null;
+    state.fundingWallet = {
+      walletPublicKey,
+      funder,
+      amount: funder ? result?.amount ?? null : null,
+      checking: false,
+      checkedAt: new Date().toISOString(),
+      exhausted: !funder,
+      error: null,
+    };
+    if (funder) {
+      const input = document.getElementById('sweepDestination');
+      if (input && !input.value.trim()) {
+        input.value = funder;
+        state.executionReadiness = null;
+      }
+      if (!quiet) notify(`Funding wallet detected: ${shortAddress(funder)}`);
+    } else if (!quiet) {
+      notify('No clear funding wallet found');
+    }
+    return state.fundingWallet;
+  } catch (error) {
+    state.fundingWallet = {
+      walletPublicKey,
+      funder: null,
+      amount: null,
+      checking: false,
+      checkedAt: new Date().toISOString(),
+      exhausted: false,
+      error: error.message || 'Funding wallet detection failed',
+    };
+    if (!quiet) notify(state.fundingWallet.error);
+    return null;
+  } finally {
+    renderAll();
+  }
+}
+
+async function checkExecutionReadiness() {
+  const config = currentLaunchConfig();
+  const walletPublicKey = state.selectedWalletPublicKey || state.managedWallets[0]?.publicKey || '';
+  state.executionChecking = true;
+  renderClassicBridge();
+
+  try {
+    if (state.apiStatus === 'connected' && state.apiClient?.checkExecutionReadiness) {
+      state.executionReadiness = await state.apiClient.checkExecutionReadiness({
+        walletPublicKey,
+        config,
+        fundingEstimate: currentClassicFundingEstimateForConfig(config),
+        airdropRecipients: config.poolTopology.airdrop.recipients,
+      });
+      rememberLaunchProof(state.executionReadiness);
+      const blockerCount = state.executionReadiness.blockers?.length || 0;
+      renderAll();
+      notify(blockerCount ? `${blockerCount} execution blocker${blockerCount === 1 ? '' : 's'}` : 'Classic execution payloads ready');
+      return;
+    }
+
+    state.executionReadiness = {
+      contractVersion: 1,
+      status: 'blocked',
+      nextEndpoint: null,
+      nextAction: 'Open local app',
+      walletPublicKey: walletPublicKey || null,
+      blockers: [{
+        id: 'local-api-unavailable',
+        phase: 'wallet',
+        title: 'Local API unavailable',
+        detail: 'Execution readiness requires the authenticated Trebuchet local API.',
+        severity: 'blocker',
+      }],
+      warnings: [],
+      phases: [
+        { id: 'token', title: 'Create token', endpoint: '/api/create-token', state: 'waiting' },
+        { id: 'liquidity', title: 'Create pools', endpoint: '/api/create-lp', state: 'waiting' },
+        { id: 'recover', title: 'Resume launch', endpoint: '/api/resume-launch', state: 'waiting' },
+        { id: 'sweep', title: 'Sweep assets', endpoint: '/api/transfer-assets', state: 'waiting' },
+      ],
+    };
+    renderAll();
+    notify('Local API required for execution readiness');
+  } catch (error) {
+    notify(error.message || 'Execution readiness check failed');
+  } finally {
+    state.executionChecking = false;
+    renderAll();
+  }
+}
+
+async function runDemoLaunch() {
+  if (!state.demoActive) {
+    notify('Demo mode is required for v2 demo launch');
+    return;
+  }
+  const config = currentLaunchConfig();
+  const walletPublicKey = state.selectedWalletPublicKey || state.managedWallets[0]?.publicKey || '';
+  if (!walletPublicKey) {
+    notify('Generate a Trebuchet wallet first');
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.runDemoLaunch) {
+    notify('Demo launch requires the local Trebuchet app');
+    return;
+  }
+
+  state.demoLaunchRunning = true;
+  renderAll();
+  try {
+    state.lastDemoLaunchRun = await state.apiClient.runDemoLaunch({
+      walletPublicKey,
+      config,
+      fundingEstimate: currentClassicFundingEstimateForConfig(config),
+      airdropRecipients: config.poolTopology.airdrop.recipients,
+    });
+    state.executionReadiness = state.lastDemoLaunchRun.readiness || state.executionReadiness;
+    applyLaunchPlan(state.executionReadiness?.plan || state.launchPlan || fallbackLaunchPlan());
+    state.transactions.forEach((tx) => {
+      tx.state = 'signed';
+    });
+    state.launchStage = launchStages.length - 1;
+    state.approvalOpen = false;
+    history.unshift({
+      title: `${state.lastDemoLaunchRun.token?.symbol || config.token.symbol} demo launch completed`,
+      detail: `${shortAddress(state.lastDemoLaunchRun.token?.tokenMint)} minted, ${state.lastDemoLaunchRun.liquidity?.results?.length || 0} pool${state.lastDemoLaunchRun.liquidity?.results?.length === 1 ? '' : 's'}, sweep simulated.`,
+      time: 'Just now',
+    });
+    pollLiveOps().catch(() => null);
+    notify('Demo launch completed end to end');
+  } catch (error) {
+    notify(error.message || 'Demo launch failed');
+  } finally {
+    state.demoLaunchRunning = false;
+    renderAll();
+  }
+}
+
+async function executeNextRunOperation() {
+  const config = currentLaunchConfig();
+  const walletPublicKey = state.selectedWalletPublicKey || state.managedWallets[0]?.publicKey || '';
+  if (!walletPublicKey) {
+    notify('Generate or select a Trebuchet wallet first');
+    return;
+  }
+  if (state.demoActive) {
+    notify('Use Run demo while demo mode is active');
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.executeNextRunOperation) {
+    notify('Real execution requires the local Trebuchet app');
+    return;
+  }
+  if (!state.executionReadiness || state.executionReadiness.status !== 'ready') {
+    await checkExecutionReadiness();
+  }
+  const readiness = state.executionReadiness;
+  if (!readiness?.nextEndpoint) {
+    notify('No classic endpoint is ready');
+    return;
+  }
+  if (Array.isArray(readiness.blockers) && readiness.blockers.length > 0) {
+    notify(`${readiness.blockers.length} execution blocker${readiness.blockers.length === 1 ? '' : 's'}`);
+    return;
+  }
+  const finalizationIssue = executeNextTransferFinalizationIssue(readiness, config);
+  if (finalizationIssue) {
+    notify(finalizationIssue);
+    return;
+  }
+
+  if (typeof window.confirm === 'function') {
+    const ok = window.confirm(
+      `${readiness.nextAction}\n\nTrebuchet will run ${readiness.nextEndpoint} with the managed local wallet ${shortAddress(walletPublicKey)}. This can send real mainnet transactions.`,
+    );
+    if (!ok) return;
+  }
+
+  state.realExecutionRunning = true;
+  const ledgerId = startExecutionLedgerEntry({
+    kind: 'endpoint',
+    endpoint: readiness.nextEndpoint,
+    label: readiness.nextAction || fullRunEndpointLabel(readiness.nextEndpoint),
+    detail: `Confirmed ${readiness.nextEndpoint} for ${shortAddress(walletPublicKey)}.`,
+  });
+  renderAll();
+  try {
+    const dossierProof = currentLaunchProof();
+    const dossierConfig = proofConfigForFingerprint(dossierProof, config);
+    const result = await state.apiClient.executeNextRunOperation({
+      walletPublicKey,
+      config,
+      fundingEstimate: currentClassicFundingEstimateForConfig(config),
+      airdropRecipients: config.poolTopology.airdrop.recipients,
+      confirmNextEndpoint: readiness.nextEndpoint,
+      localDossier: currentLocalDossier(dossierProof, dossierConfig),
+    });
+    state.lastRealExecution = result.executed;
+    state.executionReadiness = result.readiness || state.executionReadiness;
+    rememberLaunchProof(result.proof || result.readiness?.proof);
+    if (result.executed?.endpoint === '/api/create-token' && result.executed.result?.tokenMint) {
+      history.unshift({
+        title: `${config.token.symbol} token created`,
+        detail: `${shortAddress(result.executed.result.tokenMint)} minted by the Trebuchet-managed wallet.`,
+        time: 'Just now',
+      });
+    } else if (Array.isArray(result.executed?.result?.results)) {
+      history.unshift({
+        title: `${config.token.symbol} liquidity executed`,
+        detail: `${result.executed.result.results.length} pool${result.executed.result.results.length === 1 ? '' : 's'} recorded by classic execution.`,
+        time: 'Just now',
+      });
+    } else {
+      history.unshift({
+        title: `${config.token.symbol} ${result.executed?.action || 'execution'} complete`,
+        detail: `${result.executed?.endpoint || 'Classic endpoint'} finished through the guarded v2 bridge.`,
+        time: 'Just now',
+      });
+    }
+    finishExecutionLedgerEntry(ledgerId, {
+      status: 'complete',
+      detail: `${result.executed?.action || fullRunEndpointLabel(result.executed?.endpoint)} completed.`,
+      ...ledgerObservationFromExecution(result.executed),
+    });
+    await refreshLocalApiState();
+    pollLiveOps().catch(() => null);
+    notify(`${result.executed?.action || 'Classic operation'} complete`);
+  } catch (error) {
+    finishExecutionLedgerEntry(ledgerId, {
+      status: 'error',
+      error: error.message || 'Execution failed',
+      detail: error.message || 'Execution failed.',
+    });
+    notify(error.message || 'Execution failed');
+  } finally {
+    state.realExecutionRunning = false;
+    renderAll();
+  }
+}
+
+function executeNextTransferFinalizationIssue(readiness, config = currentLaunchConfig()) {
+  if (readiness?.nextEndpoint !== '/api/transfer-assets') return null;
+  const proof = currentLaunchProof();
+  const safeConfig = proofConfigForFingerprint(proof, config);
+  const airdropStatus = airdropCompletionStatus(proof, safeConfig.poolTopology);
+  const airdropIssue = airdropCompletionIssue(airdropStatus);
+  if (airdropIssue) return airdropIssue;
+  if (!proof) return 'Refresh readiness so Trebuchet can verify the launch proof before final sweep.';
+
+  const staleReport = staleReportPublishForProof(proof, safeConfig);
+  if (staleReport) return 'Launch report is stale for this proof; republish before final sweep.';
+
+  const report = currentReportPublish(proof, safeConfig);
+  const localDossier = currentLocalDossier(proof, safeConfig);
+  const staleLocalDossier = !localDossier
+    ? [proof?.localDossier, state.lastLocalDossier].find((dossier) => dossier && typeof dossier === 'object')
+    : null;
+  const staleLocalDossierIssue = staleLocalDossier
+    ? localDossierFinalizationIssue(staleLocalDossier, proof, safeConfig)
+    : null;
+  if (!report?.jsonUri && !report?.htmlUri && staleLocalDossierIssue && staleLocalDossierIssue !== 'missing') {
+    return `Local dossier proof is stale or incomplete (${staleLocalDossierIssue}); download a fresh dossier before final sweep.`;
+  }
+  if (!report?.jsonUri && !report?.htmlUri && !localDossier) {
+    return state.prefs.publishLaunchReport === false
+      ? 'Report publishing is off; download the local dossier before final sweep.'
+      : 'Publish or download the launch report before final sweep.';
+  }
+  return null;
+}
+
+function fullRunPendingAirdropCount(proof) {
+  const config = proofConfigForFingerprint(proof, currentLaunchConfig());
+  return airdropCompletionStatus(proof, config.poolTopology).pending;
+}
+
+function fullRunCompletionAudit(proof = currentLaunchProof(), config = currentLaunchConfig()) {
+  const blockers = [];
+  const safeConfig = proofConfigForFingerprint(proof, config && typeof config === 'object' ? config : { poolTopology: {} });
+  const topology = safeConfig.poolTopology || {};
+  const token = proof?.token || {};
+  const tokenAuthorityFields = ['mintAuthorityRenounced', 'freezeAuthorityDisabled', 'metadataUpdateAuthorityRevoked', 'metadataImmutable'];
+  const tokenAuthorityPassCount = tokenAuthorityFields.filter((field) => token[field] === true).length;
+  const results = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
+  const plannedPools = buildV2ReportPoolPlan(safeConfig, results, proof);
+  const plannedPoolCount = Math.max(1, plannedPools.length || topology?.pools?.length || 0);
+  const recordedPoolIds = [
+    ...(Array.isArray(proof?.liquidity?.poolIds) ? proof.liquidity.poolIds : []),
+    ...results.map((pool) => pool?.poolId).filter(Boolean),
+  ].filter((value, index, list) => value && list.indexOf(value) === index);
+  const proofPoolCount = Number(proof?.liquidity?.poolCount || 0);
+  const recordedPoolCount = recordedPoolIds.length;
+  const plannedPositionCount = plannedPools.reduce((sum, pool) => sum + Number(pool.plannedPositionCount || 0), 0);
+  const liquidityEvidence = comparisonLiquidityEvidenceState(proof, {
+    plannedPoolCount,
+    plannedPositionCount,
+  });
+  const recordedPositionCount = liquidityEvidence.positionCount;
+  const lockedPositionCount = liquidityEvidence.lockedPositionCount;
+  const feeKeyCount = liquidityEvidence.feeKeyCount;
+  const txEvidence = v2LiquidityTransactionEvidenceCounts(results);
+  const poolCreateTxCount = txEvidence.poolCreateTxCount;
+  const openTxCount = txEvidence.openTxCount;
+  const lockTxCount = txEvidence.lockTxCount;
+  const feeKeyRecipientTarget = txEvidence.feeKeyRecipientRows.length;
+  const feeKeyRecipientTransferred = txEvidence.feeKeyRecipientTransferred;
+  const airdropStatus = airdropCompletionStatus(proof, topology);
+  const report = currentReportPublish(proof, safeConfig);
+  const reportUri = report?.htmlUri || report?.jsonUri || null;
+  const localDossier = currentLocalDossier(proof, safeConfig);
+  const reportArtifactRecord = report || localDossier || null;
+  const reportLocalOnly = state.prefs.publishLaunchReport === false;
+  const staleReport = staleReportPublishForProof(proof, safeConfig);
+  const finalSweepComplete = transferHasWalletEmptyFinalSweepEvidence(proof?.transfer);
+  const reportArtifactSweepBound = Boolean(
+    finalSweepComplete
+    && reportArtifactRecord
+    && reportArtifactMatchesTerminalSweep(reportArtifactRecord, proof)
+  );
+  const proofLaunchConfigSnapshot = proofLaunchConfigSnapshotState(proof);
+  const localJournalEvidenceState = proofJournalEvidenceState(proof);
+  const matchingLocalJournal = localJournalEvidenceState.journal;
+  const terminalJournalComplete = proofHasTerminalLaunchJournal(proof);
+
+  if (!proof || typeof proof !== 'object') {
+    blockers.push('Launch proof is missing after the full run.');
+  }
+  if (proofLaunchConfigSnapshot.state === 'missing') {
+    blockers.push('Frozen launch-config snapshot proof is missing.');
+  } else if (proofLaunchConfigSnapshot.state === 'mismatch') {
+    blockers.push(`Frozen launch-config snapshot does not match launch evidence (${proofLaunchConfigSnapshot.mismatches.join(', ')}).`);
+  } else if (!proofLaunchConfigSnapshot.complete) {
+    blockers.push(`Frozen launch-config snapshot is incomplete (${proofLaunchConfigSnapshot.missing.join(', ')}).`);
+  }
+  if (!String(token.mint || '').trim()) {
+    blockers.push('Token mint proof is missing.');
+  }
+  if (tokenAuthorityPassCount < tokenAuthorityFields.length) {
+    blockers.push(`Token authority proof is ${tokenAuthorityPassCount}/${tokenAuthorityFields.length}.`);
+  }
+  if (recordedPoolCount < plannedPoolCount) {
+    blockers.push(`Pool proof is ${recordedPoolCount}/${plannedPoolCount}.`);
+  }
+  if (plannedPoolCount > 0 && poolCreateTxCount < plannedPoolCount) {
+    blockers.push(`Pool-create transaction proof is ${poolCreateTxCount}/${plannedPoolCount}.`);
+  }
+  if (liquidityEvidence.missing.includes('pool count')) {
+    blockers.push('Pool count proof does not match recorded pool rows.');
+  } else if (Number.isFinite(proofPoolCount) && proofPoolCount > 0 && proofPoolCount !== recordedPoolCount) {
+    blockers.push('Pool count proof does not match recorded pool IDs.');
+  }
+  if (plannedPositionCount <= 0) {
+    blockers.push('Planned position count is missing.');
+  } else if (recordedPositionCount < plannedPositionCount) {
+    blockers.push(`Position proof is ${recordedPositionCount}/${plannedPositionCount}.`);
+  }
+  if (liquidityEvidence.missing.includes('position count')) {
+    blockers.push('Position count proof does not match recorded position rows.');
+  }
+  if (liquidityEvidence.missing.includes('position records')) {
+    blockers.push('Position record proof is thinner than the reported position count.');
+  }
+  if (recordedPositionCount > 0 && openTxCount < recordedPositionCount) {
+    blockers.push(`Position-open transaction proof is ${openTxCount}/${recordedPositionCount}.`);
+  }
+  if (recordedPositionCount > 0 && lockedPositionCount < recordedPositionCount) {
+    blockers.push(`Burn & Earn lock proof is ${lockedPositionCount}/${recordedPositionCount}.`);
+  }
+  if (recordedPositionCount > 0 && lockTxCount < recordedPositionCount) {
+    blockers.push(`Burn & Earn lock transaction proof is ${lockTxCount}/${recordedPositionCount}.`);
+  }
+  if (liquidityEvidence.missing.includes('lock count')) {
+    blockers.push('Burn & Earn lock count does not match recorded lock rows.');
+  }
+  if (lockedPositionCount > 0 && feeKeyCount < lockedPositionCount) {
+    blockers.push(`Fee Key NFT proof is ${feeKeyCount}/${lockedPositionCount}.`);
+  }
+  if (liquidityEvidence.missing.includes('fee key count')) {
+    blockers.push('Fee Key NFT count does not match recorded Fee Key rows.');
+  }
+  if (feeKeyRecipientTransferred < feeKeyRecipientTarget) {
+    blockers.push(`Fee Key recipient transfer proof is ${feeKeyRecipientTransferred}/${feeKeyRecipientTarget}.`);
+  }
+  if (airdropStatus.retryRequired) {
+    blockers.push(`${airdropStatus.failed} airdrop recipient${airdropStatus.failed === 1 ? '' : 's'} failed.`);
+  } else if (airdropStatus.pending > 0) {
+    blockers.push(`${airdropStatus.pending} airdrop recipient${airdropStatus.pending === 1 ? '' : 's'} pending.`);
+  } else if (!airdropStatus.complete) {
+    blockers.push(airdropCompletionIssue(airdropStatus) || 'Airdrop proof is incomplete.');
+  }
+  if (staleReport) {
+    blockers.push('Launch report proof is stale for this launch.');
+  } else if (!reportUri && !localDossier) {
+    blockers.push(reportLocalOnly
+      ? 'Report publishing is off; download or attach the local dossier before marking the run complete.'
+      : 'Launch report artifact proof is missing.');
+  } else if (reportLocalOnly && !localDossier) {
+    blockers.push('Report publishing is off; download or attach the local dossier before marking the run complete.');
+  }
+  if (!finalSweepComplete) {
+    blockers.push('Wallet-empty final-sweep proof is missing.');
+  } else if ((reportUri || localDossier) && !reportArtifactSweepBound) {
+    blockers.push('Launch report artifact is missing terminal final-sweep evidence; download a fresh proof artifact after final sweep.');
+  }
+  if (finalSweepComplete && proof?.journalId && !matchingLocalJournal) {
+    blockers.push('Matching launch journal is not loaded from the local recovery store.');
+  } else if (finalSweepComplete && localJournalEvidenceState.mismatches.length) {
+    blockers.push(`Local launch journal does not match proof (${localJournalEvidenceState.mismatches.join(', ')}).`);
+  } else if (finalSweepComplete && localJournalEvidenceState.missing.length) {
+    blockers.push(`Local launch journal is missing proof backing (${localJournalEvidenceState.missing.join(', ')}).`);
+  } else if (finalSweepComplete && !terminalJournalComplete) {
+    blockers.push('Launch journal has not reached transfer_completed.');
+  }
+
+  return {
+    complete: blockers.length === 0,
+    blockers,
+    reportUri,
+    localDossier,
+    finalSweepComplete,
+    terminalJournalComplete,
+    tokenAuthorityPassCount,
+    tokenAuthorityTotal: tokenAuthorityFields.length,
+    recordedPoolCount,
+    plannedPoolCount,
+    poolCreateTxCount,
+    recordedPositionCount,
+    plannedPositionCount,
+    openTxCount,
+    lockedPositionCount,
+    lockTxCount,
+    feeKeyCount,
+    feeKeyRecipientTransferred,
+    feeKeyRecipientTarget,
+  };
+}
+
+function fullRunEndpointLabel(endpoint) {
+  return {
+    '/api/create-token': 'Creating token',
+    '/api/create-lp': 'Creating liquidity',
+    '/api/resume-launch': 'Resuming liquidity',
+    '/api/transfer-assets': 'Sweeping assets',
+  }[endpoint] || 'Running classic operation';
+}
+
+async function refreshExecutionReadinessForFullRun(walletPublicKey, config) {
+  const readiness = await state.apiClient.checkExecutionReadiness({
+    walletPublicKey,
+    config,
+    fundingEstimate: currentClassicFundingEstimateForConfig(config),
+    airdropRecipients: config.poolTopology.airdrop.recipients,
+  });
+  state.executionReadiness = readiness;
+  rememberLaunchProof(readiness);
+  return readiness;
+}
+
+async function runFullLaunch() {
+  const config = currentLaunchConfig();
+  const walletPublicKey = state.selectedWalletPublicKey || state.managedWallets[0]?.publicKey || '';
+  if (!walletPublicKey) {
+    notify('Generate or select a Trebuchet wallet first');
+    return;
+  }
+  if (state.demoActive) {
+    runDemoLaunch();
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.executeNextRunOperation) {
+    notify('Full launch requires the local Trebuchet app');
+    return;
+  }
+  if (state.fullRunRunning || state.realExecutionRunning) {
+    notify('A launch operation is already running');
+    return;
+  }
+
+  let readiness = state.executionReadiness;
+  try {
+    if (!readiness || readiness.status !== 'ready') {
+      state.executionChecking = true;
+      state.fullRunStep = 'Checking readiness';
+      renderAll();
+      readiness = await refreshExecutionReadinessForFullRun(walletPublicKey, config);
+    }
+  } catch (error) {
+    notify(error.message || 'Execution readiness check failed');
+    state.executionChecking = false;
+    state.fullRunStep = null;
+    renderAll();
+    return;
+  } finally {
+    state.executionChecking = false;
+  }
+
+  if (Array.isArray(readiness.blockers) && readiness.blockers.length > 0) {
+    notify(`${readiness.blockers.length} execution blocker${readiness.blockers.length === 1 ? '' : 's'}`);
+    renderAll();
+    return;
+  }
+  if (!readiness.nextEndpoint) {
+    notify(readiness.nextAction || 'No classic endpoint is ready');
+    renderAll();
+    return;
+  }
+
+  if (typeof window.confirm === 'function') {
+    const ok = window.confirm(
+      `Run full launch?\n\nTrebuchet will keep using the managed local wallet ${shortAddress(walletPublicKey)} until the classic launch flow reaches sweep or a blocker appears. This can send multiple real mainnet transactions.`,
+    );
+    if (!ok) return;
+  }
+
+  state.fullRunRunning = true;
+  state.fullRunStep = 'Starting';
+  renderAll();
+  const executed = [];
+  const finalization = {};
+
+  try {
+    for (let index = 0; index < 5; index += 1) {
+      readiness = state.executionReadiness || await refreshExecutionReadinessForFullRun(walletPublicKey, config);
+      if (Array.isArray(readiness.blockers) && readiness.blockers.length > 0) {
+        throw new Error(readiness.blockers[0]?.detail || 'Execution became blocked');
+      }
+      const endpoint = readiness.nextEndpoint;
+      if (!endpoint) break;
+
+      if (endpoint === '/api/transfer-assets') {
+        let proof = currentLaunchProof();
+        let proofConfig = proofConfigForFingerprint(proof, config);
+        let airdropStatus = airdropCompletionStatus(proof, proofConfig.poolTopology);
+        if (airdropStatus.retryRequired) {
+          state.fullRunStep = 'Retrying airdrop';
+          renderAll();
+          finalization.airdrop = await runV2Airdrop({ retry: true, skipConfirm: true, quiet: true, refreshReadiness: false });
+          const failed = Array.isArray(finalization.airdrop?.failed) ? finalization.airdrop.failed.length : 0;
+          if (!finalization.airdrop || failed > 0) {
+            throw new Error(failed > 0
+              ? `Airdrop still has ${failed} failed recipient${failed === 1 ? '' : 's'}; final sweep stopped.`
+              : 'Airdrop retry did not complete; final sweep stopped.');
+          }
+        }
+        proof = currentLaunchProof();
+        proofConfig = proofConfigForFingerprint(proof, config);
+        airdropStatus = airdropCompletionStatus(proof, proofConfig.poolTopology);
+        if (airdropStatus.pending > 0) {
+          state.fullRunStep = 'Running airdrop';
+          renderAll();
+          finalization.airdrop = await runV2Airdrop({ skipConfirm: true, quiet: true, refreshReadiness: false });
+          const failed = Array.isArray(finalization.airdrop?.failed) ? finalization.airdrop.failed.length : 0;
+          if (!finalization.airdrop || failed > 0) {
+            throw new Error(failed > 0
+              ? `Airdrop has ${failed} failed recipient${failed === 1 ? '' : 's'}; retry before final sweep.`
+              : 'Airdrop did not complete; final sweep stopped.');
+          }
+        }
+        proof = currentLaunchProof();
+        proofConfig = proofConfigForFingerprint(proof, config);
+        airdropStatus = airdropCompletionStatus(proof, proofConfig.poolTopology);
+        if (airdropStatus.failed > 0) {
+          throw new Error(`Airdrop has ${airdropStatus.failed} failed recipient${airdropStatus.failed === 1 ? '' : 's'}; retry before final sweep.`);
+        }
+        if (!airdropStatus.complete) {
+          throw new Error(airdropCompletionIssue(airdropStatus) || 'Airdrop is not complete; final sweep stopped.');
+        }
+        const reportProof = currentLaunchProof();
+        const reportConfig = proofConfigForFingerprint(reportProof, config);
+        const reportPublish = currentReportPublish(reportProof, reportConfig);
+        const reportDone = reportPublish?.jsonUri || reportPublish?.htmlUri || currentLocalDossier(reportProof, reportConfig);
+        if (!reportDone && state.prefs.publishLaunchReport === false) {
+          throw new Error('Report publishing is off; download the local dossier before final sweep.');
+        }
+        if (!reportDone && reportProof?.canPublishReport && proofHasReportPublishEvidence(reportProof, reportConfig)) {
+          state.fullRunStep = 'Publishing report';
+          renderAll();
+          finalization.report = await publishV2LaunchReport({ quiet: true, refreshReadiness: false });
+          if (!finalization.report || finalization.report.failed || finalization.report.skipped) {
+            throw new Error(finalization.report?.error || finalization.report?.reason || 'Launch report did not publish; final sweep stopped.');
+          }
+        } else if (!reportDone) {
+          throw new Error('Publish or download the launch report before final sweep.');
+        }
+        readiness = await refreshExecutionReadinessForFullRun(walletPublicKey, config);
+      }
+
+      if (!readiness.nextEndpoint) break;
+      const endpointToRun = readiness.nextEndpoint;
+      state.fullRunStep = fullRunEndpointLabel(endpointToRun);
+      const ledgerId = startExecutionLedgerEntry({
+        kind: 'endpoint',
+        endpoint: endpointToRun,
+        label: fullRunEndpointLabel(endpointToRun),
+        detail: readiness.nextAction || `Confirmed ${endpointToRun} for ${shortAddress(walletPublicKey)}.`,
+      });
+      renderAll();
+      try {
+        const dossierProof = currentLaunchProof();
+        const dossierConfig = proofConfigForFingerprint(dossierProof, config);
+        const result = await state.apiClient.executeNextRunOperation({
+          walletPublicKey,
+          config,
+          fundingEstimate: currentClassicFundingEstimateForConfig(config),
+          airdropRecipients: config.poolTopology.airdrop.recipients,
+          confirmNextEndpoint: endpointToRun,
+          localDossier: currentLocalDossier(dossierProof, dossierConfig),
+        });
+        executed.push(result.executed);
+        state.lastRealExecution = result.executed;
+        state.executionReadiness = result.readiness || state.executionReadiness;
+        rememberLaunchProof(result.proof || result.readiness?.proof);
+        finishExecutionLedgerEntry(ledgerId, {
+          status: 'complete',
+          detail: `${result.executed?.action || fullRunEndpointLabel(result.executed?.endpoint)} completed.`,
+          ...ledgerObservationFromExecution(result.executed),
+        });
+        pollLiveOps().catch(() => null);
+
+        if (result.executed?.endpoint === '/api/transfer-assets') break;
+      } catch (error) {
+        finishExecutionLedgerEntry(ledgerId, {
+          status: 'error',
+          error: error.message || 'Classic operation failed',
+          detail: error.message || 'Classic operation failed.',
+        });
+        throw error;
+      }
+    }
+
+    state.fullRunStep = 'Verifying launch proof';
+    renderAll();
+    try {
+      readiness = await refreshExecutionReadinessForFullRun(walletPublicKey, config);
+    } catch (error) {
+      finalization.proofVerificationError = error.message || 'Launch proof refresh failed';
+    }
+    try {
+      await refreshLocalApiState();
+    } catch (error) {
+      finalization.recoveryRefreshError = error.message || 'Local recovery refresh failed';
+    }
+    const completion = fullRunCompletionAudit(currentLaunchProof(), config);
+    const fullRunStatus = completion.complete ? 'complete' : 'needs-proof';
+    state.lastFullRun = {
+      status: fullRunStatus,
+      executed,
+      finalization,
+      proof: currentLaunchProof(),
+      completion,
+      completedAt: completion.complete ? new Date().toISOString() : null,
+      advancedAt: new Date().toISOString(),
+    };
+    history.unshift({
+      title: completion.complete
+        ? `${config.token.symbol} full launch complete`
+        : `${config.token.symbol} full launch needs proof`,
+      detail: completion.complete
+        ? `${executed.length} classic operation${executed.length === 1 ? '' : 's'} executed and terminal proof is attached.`
+        : `${executed.length} classic operation${executed.length === 1 ? '' : 's'} executed; ${completion.blockers[0] || 'proof review is still pending'}`,
+      time: 'Just now',
+    });
+    await refreshLocalApiState();
+    pollLiveOps().catch(() => null);
+    notify(completion.complete
+      ? `Full launch complete: ${executed.length} operation${executed.length === 1 ? '' : 's'} executed`
+      : `Full launch needs proof: ${completion.blockers[0] || `${executed.length} operation${executed.length === 1 ? '' : 's'} advanced`}`);
+  } catch (error) {
+    notify(error.message || 'Full launch failed');
+  } finally {
+    state.fullRunRunning = false;
+    state.fullRunStep = null;
+    renderAll();
+  }
+}
+
+async function runLaunchEnvelope() {
+  if (!state.transactions.length) return;
+  const walletPublicKey = state.selectedWalletPublicKey || account().publicKey || account().id;
+  if (state.apiStatus === 'connected' && state.apiClient?.armRunEnvelope) {
+    try {
+      state.lastRunEnvelope = await state.apiClient.armRunEnvelope({
+        walletPublicKey,
+        config: currentLaunchConfig(),
+      });
+    } catch (error) {
+      notify(error.message || 'Could not arm local run');
+      return;
+    }
+  } else {
+    state.lastRunEnvelope = {
+      id: `static-run-${Date.now()}`,
+      walletPublicKey,
+      signer: 'static-preview',
+      status: 'armed',
+      operationCount: state.transactions.length,
+    };
+  }
+  state.transactions.forEach((tx) => {
+    if (tx.state !== 'signed') tx.state = 'signed';
+  });
+  state.launchStage = launchStages.length - 1;
+  state.activeApprovalId = null;
+  state.approvalOpen = false;
+  history.unshift({
+    title: `${($('#tokenSymbol').value || 'TOK').toUpperCase()} local run completed`,
+    detail: `${state.transactions.length} operations signed by ${account().name}; envelope ${state.lastRunEnvelope.id}.`,
+    time: 'Just now',
+  });
+  renderAll();
+  notify('Local run completed');
+}
+
+async function checkForUpdates() {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.checkForUpdates) {
+    notify('Update checks require the local Trebuchet app');
+    return;
+  }
+  if (state.updateCheck.checking) {
+    notify('Update check already running');
+    return;
+  }
+  state.updateCheck = {
+    ...state.updateCheck,
+    checking: true,
+    error: null,
+  };
+  renderSettings();
+  try {
+    const result = await state.apiClient.checkForUpdates();
+    if (result?.ran === false) {
+      state.updateCheck = {
+        ...state.updateCheck,
+        checking: false,
+        error: result.reason || 'Update check unavailable',
+        lastResult: {
+          status: 'error',
+          message: result.reason === 'no-handler'
+            ? 'Update checking is only available in the Electron app.'
+            : result.reason || 'Update check unavailable.',
+          releasesUrl: state.releaseUrl,
+          checkOnStartup: state.prefs.checkForUpdatesOnStartup,
+        },
+        lastCheckedAt: new Date().toISOString(),
+      };
+      renderSettings();
+      notify(state.updateCheck.lastResult.message);
+      return;
+    }
+    notify('Update check requested');
+    setTimeout(() => {
+      if (!state.updateCheck.checking) return;
+      state.updateCheck = {
+        ...state.updateCheck,
+        checking: false,
+        lastCheckedAt: new Date().toISOString(),
+      };
+      if (state.activeView === 'settings') renderSettings();
+    }, 20000);
+  } catch (error) {
+    state.updateCheck = {
+      ...state.updateCheck,
+      checking: false,
+      error: error.message || 'Update check failed',
+      lastResult: {
+        status: 'error',
+        message: error.message || 'Update check failed',
+        releasesUrl: state.releaseUrl,
+        checkOnStartup: state.prefs.checkForUpdatesOnStartup,
+      },
+      lastCheckedAt: new Date().toISOString(),
+    };
+    renderSettings();
+    notify(state.updateCheck.error);
+  }
+}
+
+async function toggleUpdateAutocheck() {
+  const next = !state.prefs.checkForUpdatesOnStartup;
+  if (state.apiStatus !== 'connected' || !state.apiClient?.setUserPrefs) {
+    notify('Auto-update preference requires the local Trebuchet app');
+    return;
+  }
+  state.prefs.checkForUpdatesOnStartup = next;
+  renderSettings();
+  try {
+    const prefs = await state.apiClient.setUserPrefs({ checkForUpdatesOnStartup: next });
+    state.prefs.checkForUpdatesOnStartup = prefs.checkForUpdatesOnStartup !== false;
+    notify(`Startup update checks ${state.prefs.checkForUpdatesOnStartup ? 'enabled' : 'disabled'}`);
+  } catch (error) {
+    state.prefs.checkForUpdatesOnStartup = !next;
+    notify(error.message || 'Update preference failed');
+  } finally {
+    renderSettings();
+  }
+}
+
+async function toggleReportPublishingPref() {
+  const next = state.prefs.publishLaunchReport === false;
+  if (state.apiStatus !== 'connected' || !state.apiClient?.setUserPrefs) {
+    notify('Report publishing preference requires the local Trebuchet app');
+    return;
+  }
+  state.prefs.publishLaunchReport = next;
+  invalidateClassicOutputs();
+  refreshClassicPreview();
+  try {
+    const prefs = await state.apiClient.setUserPrefs({ publishLaunchReport: next });
+    const previous = state.prefs.publishLaunchReport;
+    state.prefs.publishLaunchReport = prefs.publishLaunchReport !== false;
+    if (state.prefs.publishLaunchReport !== previous) {
+      invalidateClassicOutputs();
+      refreshClassicPreview();
+    }
+    notify(`Report publishing ${state.prefs.publishLaunchReport ? 'enabled' : 'disabled'}`);
+  } catch (error) {
+    state.prefs.publishLaunchReport = !next;
+    invalidateClassicOutputs();
+    refreshClassicPreview();
+    notify(error.message || 'Report publishing preference failed');
+  } finally {
+    renderSettings();
+  }
+}
+
+function rpcInputValues() {
+  return {
+    name: String($('[data-rpc-field="name"]')?.value || '').trim(),
+    url: String($('[data-rpc-field="url"]')?.value || '').trim(),
+  };
+}
+
+async function testRpcEndpoint() {
+  const { url } = rpcInputValues();
+  if (!url) {
+    state.rpcTestResult = { ok: false, error: 'Enter an RPC URL first' };
+    renderSettings();
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.testRpc) {
+    notify('RPC testing requires the local Trebuchet app');
+    return;
+  }
+  state.rpcBusy = 'test';
+  state.rpcTestResult = null;
+  renderSettings();
+  try {
+    state.rpcTestResult = await state.apiClient.testRpc(url);
+    notify(state.rpcTestResult.ok ? 'RPC test passed' : 'RPC test failed');
+  } catch (error) {
+    state.rpcTestResult = { ok: false, error: error.message || 'RPC test failed' };
+    notify(state.rpcTestResult.error);
+  } finally {
+    state.rpcBusy = null;
+    renderSettings();
+  }
+}
+
+async function addRpcEndpoint() {
+  const { name, url } = rpcInputValues();
+  if (!name || !url) {
+    state.rpcTestResult = { ok: false, error: 'RPC name and URL are required' };
+    renderSettings();
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.addRpc) {
+    notify('RPC management requires the local Trebuchet app');
+    return;
+  }
+  state.rpcBusy = 'add';
+  renderSettings();
+  try {
+    const config = await state.apiClient.addRpc({ name, url, setActive: true });
+    applyRpcConfig(config);
+    state.rpcTestResult = null;
+    await refreshLocalApiState();
+    notify(`RPC added: ${name}`);
+  } catch (error) {
+    state.rpcTestResult = { ok: false, error: error.message || 'RPC save failed' };
+    notify(state.rpcTestResult.error);
+  } finally {
+    state.rpcBusy = null;
+    renderAll();
+  }
+}
+
+async function selectRpcEndpoint(url) {
+  if (!url) return;
+  if (state.apiStatus !== 'connected' || !state.apiClient?.selectRpc) {
+    notify('RPC management requires the local Trebuchet app');
+    return;
+  }
+  state.rpcBusy = 'select';
+  renderSettings();
+  try {
+    const config = await state.apiClient.selectRpc(url);
+    applyRpcConfig(config);
+    await refreshLocalApiState();
+    notify(`RPC selected: ${safeRpcUrl(url)}`);
+  } catch (error) {
+    notify(error.message || 'RPC switch failed');
+  } finally {
+    state.rpcBusy = null;
+    renderAll();
+  }
+}
+
+async function removeRpcEndpoint(url) {
+  if (!url) return;
+  if (state.rpcSaved.length <= 1) {
+    notify('Cannot remove the last saved RPC');
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.removeRpc) {
+    notify('RPC management requires the local Trebuchet app');
+    return;
+  }
+  if (typeof window.confirm === 'function') {
+    const ok = window.confirm(`Remove saved RPC ${safeRpcUrl(url)}?`);
+    if (!ok) return;
+  }
+  state.rpcBusy = 'remove';
+  renderSettings();
+  try {
+    const config = await state.apiClient.removeRpc(url);
+    applyRpcConfig(config);
+    await refreshLocalApiState();
+    notify('RPC removed');
+  } catch (error) {
+    notify(error.message || 'RPC remove failed');
+  } finally {
+    state.rpcBusy = null;
+    renderAll();
+  }
+}
+
+function applyBootState(boot) {
+  if (!boot?.api) {
+    state.apiStatus = 'static';
+    state.apiDetail = 'Static preview; local API is unavailable.';
+    return;
+  }
+
+  state.apiStatus = boot.api.status || (boot.api.available ? 'connected' : 'static');
+  state.apiDetail = boot.api.detail || 'Static preview; local API is unavailable.';
+  state.demoActive = boot.demo?.active === true;
+  state.network = state.demoActive ? 'Demo' : 'Mainnet';
+  state.rpcActiveUrl = boot.rpc?.activeUrl || null;
+  state.rpcSaved = Array.isArray(boot.rpc?.saved) ? boot.rpc.saved : [];
+  state.rpcName = boot.rpc?.label || 'Unknown RPC';
+  state.rpcHealth = boot.rpc?.health || 'unknown';
+  state.rpcHealthLabel = boot.rpc?.healthLabel || 'unknown';
+  state.rpcLatencyMs = boot.rpc?.latencyMs ?? null;
+  state.rpcError = boot.rpc?.error || null;
+  state.viewportSmoke = boot.viewportSmoke || null;
+  state.appVersion = boot.app?.version || null;
+  state.releaseUrl = boot.app?.releaseUrl || state.releaseUrl;
+  state.releaseTrust = boot.app?.releaseTrust || state.releaseTrust;
+  state.updateCheck.available = boot.app?.updateCheckAvailable === true;
+  applySecretPinStatus(boot.secretPin || {});
+  state.prefs = {
+    publishLaunchReport: boot.prefs?.publishLaunchReport !== false,
+    checkForUpdatesOnStartup: boot.prefs?.checkForUpdatesOnStartup !== false,
+  };
+  state.recovery = {
+    journals: Array.isArray(boot.recovery?.journals) ? boot.recovery.journals : [],
+    pendingWallets: Array.isArray(boot.recovery?.pendingWallets) ? boot.recovery.pendingWallets : [],
+    journalCount: boot.recovery?.journalCount || 0,
+    activeJournalCount: boot.recovery?.activeJournalCount || 0,
+    failedJournalCount: boot.recovery?.failedJournalCount || 0,
+    pendingWalletCount: boot.recovery?.pendingWalletCount || 0,
+  };
+  state.managedWallets = Array.isArray(boot.wallets?.managed)
+    ? boot.wallets.managed
+    : state.recovery.pendingWallets;
+  state.vanityCandidates = Array.isArray(boot.vanity?.candidates)
+    ? boot.vanity.candidates.filter((candidate) => candidate && candidate.publicKey && !candidate.decryptionFailed)
+    : [];
+  state.vanityAvailable = boot.vanity?.available === true;
+  state.vanityReason = boot.vanity?.reason || null;
+  state.clmmFeeTiers = normalizeClmmFeeTiers(boot.feeTiers?.tiers);
+  state.clmmFeeTiersSource = boot.feeTiers?.available ? 'local-api' : 'fallback';
+  state.clmmFeeTiersError = boot.feeTiers?.error || null;
+  if (state.vanityCandidates.length && !state.selectedVanityPublicKey) {
+    state.selectedVanityPublicKey = state.vanityCandidates[state.vanityCandidates.length - 1].publicKey;
+  }
+  if (state.managedWallets.length && !state.selectedWalletPublicKey) {
+    state.selectedWalletPublicKey = state.managedWallets[0].publicKey;
+    state.accountId = state.selectedWalletPublicKey;
+    state.connected = state.managedWallets[0].hasSecretKey === true;
+  }
+  $('#networkLabel').textContent = state.demoActive ? 'Demo' : state.rpcName;
+}
+
+async function bootLocalApi() {
+  const createClient = window.TrebuchetV2Api?.createV2ApiClient;
+  if (!createClient) {
+    applyBootState({
+      api: {
+        available: false,
+        status: 'static',
+        detail: 'Static preview; v2 API client did not load.',
+      },
+    });
+    renderAll();
+    return;
+  }
+
+  const client = createClient();
+  state.apiClient = client;
+  const boot = await client.bootstrap();
+  applyBootState(boot);
+  renderAll();
+  if (boot.api?.available) notify('Local API connected');
+}
+
+async function refreshLocalApiState() {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.bootstrap) return;
+  const boot = await state.apiClient.bootstrap();
+  applyBootState(boot);
+}
+
+async function pollLiveOps() {
+  if (state.apiStatus !== 'connected' || !state.apiClient) {
+    state.liveOps.polling = false;
+    return;
+  }
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  if (walletPublicKey !== state.liveOps.walletPublicKey) {
+    state.liveOps.walletPublicKey = walletPublicKey;
+    state.liveOps.lp = null;
+    state.liveOps.lpCursor = 0;
+    state.liveOps.lpEvents = [];
+    state.liveOps.airdrop = null;
+    state.liveOps.airdropSnapshots = [];
+    resetManualPrefundState();
+  }
+
+  state.liveOps.polling = true;
+  const tasks = [];
+  if (walletPublicKey && state.apiClient.getLpProgress) {
+    tasks.push(state.apiClient.getLpProgress({
+      walletPublicKey,
+      since: state.liveOps.lpCursor,
+    }).then((lp) => ({ type: 'lp', value: lp })));
+  }
+  if (walletPublicKey && state.apiClient.getAirdropProgress) {
+    tasks.push(state.apiClient.getAirdropProgress(walletPublicKey).then((airdrop) => ({ type: 'airdrop', value: airdrop })));
+  }
+  if (state.apiClient.getServerLogs) {
+    tasks.push(state.apiClient.getServerLogs({
+      since: state.liveOps.logCursor,
+      limit: 25,
+    }).then((logs) => ({ type: 'logs', value: logs })));
+  }
+  const fundingEstimateStatus = classicFundingEstimateStatus(currentLaunchConfig());
+  const shouldCheckWalletBalance = Boolean(
+    walletPublicKey
+    && fundingEstimateStatus.matchesConfig
+    && state.apiClient.checkDetailedBalance
+  );
+  if (!shouldCheckWalletBalance && (state.manualPrefund.balance || state.manualPrefund.error || state.manualPrefund.polling)) {
+    resetManualPrefundState();
+  }
+  const lastManualCheckMs = Date.parse(state.manualPrefund.lastUpdatedAt || '');
+  const manualCheckDue = !Number.isFinite(lastManualCheckMs) || Date.now() - lastManualCheckMs > WALLET_BALANCE_REFRESH_INTERVAL_MS;
+  if (
+    shouldCheckWalletBalance
+    && !state.manualPrefund.polling
+    && manualCheckDue
+  ) {
+    state.manualPrefund = {
+      ...state.manualPrefund,
+      walletPublicKey,
+      polling: true,
+      error: null,
+    };
+    tasks.push(state.apiClient.checkDetailedBalance(walletPublicKey)
+      .then((balance) => ({ type: 'manualPrefund', value: { walletPublicKey, balance } }))
+      .catch((error) => ({ type: 'manualPrefundError', value: { walletPublicKey, error } })));
+  }
+
+  const results = await Promise.allSettled(tasks);
+  let classicBridgeDirty = false;
+  results.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    const { type, value } = result.value;
+    if (type === 'lp') {
+      state.liveOps.lp = value;
+      if (value?.totalEvents != null) state.liveOps.lpCursor = Number(value.totalEvents) || 0;
+      if (Array.isArray(value?.events) && value.events.length) {
+        state.liveOps.lpEvents = [...state.liveOps.lpEvents, ...value.events].slice(-20);
+      }
+    } else if (type === 'airdrop') {
+      state.liveOps.airdrop = value;
+      rememberAirdropProgress(value);
+    } else if (type === 'logs' && Array.isArray(value)) {
+      if (value.length) {
+        state.liveOps.logs = [...state.liveOps.logs, ...value].slice(-20);
+        state.liveOps.logCursor = Math.max(state.liveOps.logCursor, ...value.map((entry) => Number(entry.seq || 0)));
+      }
+    } else if (type === 'manualPrefund' && value?.walletPublicKey === selectedLaunchWalletPublicKey()) {
+      state.manualPrefund = {
+        walletPublicKey: value.walletPublicKey,
+        balance: value.balance,
+        polling: false,
+        error: null,
+        lastUpdatedAt: new Date().toISOString(),
+      };
+      classicBridgeDirty = true;
+    } else if (type === 'manualPrefundError' && value?.walletPublicKey === selectedLaunchWalletPublicKey()) {
+      state.manualPrefund = {
+        ...state.manualPrefund,
+        walletPublicKey: value.walletPublicKey,
+        polling: false,
+        error: value.error?.message || 'Launch-wallet balance check failed',
+        lastUpdatedAt: new Date().toISOString(),
+      };
+      classicBridgeDirty = true;
+    }
+  });
+  state.liveOps.lastUpdatedAt = new Date().toISOString();
+  renderChartDeck();
+  renderLiveOpsPanel();
+  renderSignaturePanel();
+  renderGlobalStrip();
+  if (classicBridgeDirty) renderClassicBridge();
+}
+
+function startLiveOpsPolling() {
+  if (liveOpsTimer) return;
+  liveOpsTimer = window.setInterval(() => {
+    pollLiveOps().catch(() => {
+      state.liveOps.polling = false;
+      renderLiveOpsPanel();
+      renderSignaturePanel();
+    });
+  }, 2500);
+  pollLiveOps().catch(() => null);
+}
+
+async function resumeJournal(journalId) {
+  if (!journalId) return;
+  const journal = state.recovery.journals.find((item) => item.id === journalId);
+  if (!canResumeJournal(journal)) {
+    notify(state.demoActive ? 'Disable demo mode to resume real journals' : 'Journal is not resumable');
+    return;
+  }
+  const plan = journalResumePlan(journal);
+  if (plan.manualRecoveryRequired) {
+    notify('Automatic resume is blocked for this journal; use manual recovery.');
+    return;
+  }
+  if (typeof window.confirm === 'function') {
+    const planRows = plan.items.slice(0, 4).map((item) => `- ${item}`).join('\n');
+    const ok = window.confirm(
+      `${plan.title}\n\n${plan.detail}\n\n${planRows}\n\n` +
+        'This can send real transactions from the recovered launch wallet.',
+    );
+    if (!ok) return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.resumeLaunchJournal) {
+    notify('Resume requires the local Trebuchet app');
+    return;
+  }
+  state.recoveryActionId = journalId;
+  renderHistory();
+  try {
+    state.lastRecoveryResult = await state.apiClient.resumeLaunchJournal(journalId);
+    await refreshLocalApiState();
+    pollLiveOps().catch(() => null);
+    notify(state.lastRecoveryResult.recovered ? 'Journal recovered for transfer' : 'Journal resume completed');
+  } catch (error) {
+    notify(error.message || 'Journal resume failed');
+  } finally {
+    state.recoveryActionId = null;
+    renderAll();
+  }
+}
+
+async function dismissJournal(journalId) {
+  if (!journalId) return;
+  const journal = state.recovery.journals.find((item) => item.id === journalId);
+  if (!canDismissJournal(journal)) return;
+  if (typeof window.confirm === 'function') {
+    const ok = window.confirm('Dismiss this launch journal from the active recovery list?');
+    if (!ok) return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.dismissLaunchJournal) {
+    notify('Dismiss requires the local Trebuchet app');
+    return;
+  }
+  state.recoveryActionId = journalId;
+  renderHistory();
+  try {
+    await state.apiClient.dismissLaunchJournal(journalId);
+    await refreshLocalApiState();
+    pollLiveOps().catch(() => null);
+    notify('Journal dismissed');
+  } catch (error) {
+    notify(error.message || 'Journal dismiss failed');
+  } finally {
+    state.recoveryActionId = null;
+    renderAll();
+  }
+}
+
+function drawLaunchCanvas() {
+  const canvas = document.getElementById('launchCanvas');
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const scale = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(rect.width * scale);
+  canvas.height = Math.floor(rect.height * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+
+  const styles = getComputedStyle(document.documentElement);
+  const green = styles.getPropertyValue('--green').trim();
+  const amber = styles.getPropertyValue('--amber').trim();
+  const red = styles.getPropertyValue('--red').trim();
+  const blue = styles.getPropertyValue('--blue').trim();
+  const muted = styles.getPropertyValue('--muted').trim();
+  const panel = styles.getPropertyValue('--panel').trim();
+  const width = rect.width;
+  const height = rect.height;
+  const colors = [green, blue, amber, green, red];
+  const points = launchStages.map((_, index) => {
+    const x = 42 + ((width - 84) * index) / (launchStages.length - 1);
+    const y = index % 2 === 0 ? height * 0.62 : height * 0.33;
+    return [x, y];
+  });
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.strokeStyle = muted;
+  ctx.globalAlpha = 0.16;
+  ctx.lineWidth = 1;
+  for (let y = 32; y < height; y += 32) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = green;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  points.forEach(([x, y], index) => {
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  points.forEach(([x, y], index) => {
+    const active = index === state.launchStage;
+    ctx.beginPath();
+    ctx.fillStyle = colors[index];
+    ctx.arc(x, y, active ? 12 : 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = panel;
+    ctx.font = '800 11px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(index + 1), x, y);
+  });
+}
+
+function handleDynamicInput(event) {
+  const customInput = event.target.closest('[data-custom-pool-field]');
+  if (customInput) {
+    const pool = state.customPools.find((item) => item.id === customInput.dataset.poolId);
+    if (!pool) return;
+    pool[customInput.dataset.customPoolField] = customInput.value;
+    if (['quoteMint', 'quoteSymbol'].includes(customInput.dataset.customPoolField)) {
+      delete state.quoteTokenInfo[pool.id];
+    }
+    invalidateClassicOutputs();
+    refreshClassicPreview();
+    return;
+  }
+
+  const baseInput = event.target.closest('[data-base-field]');
+  if (baseInput) {
+    if (baseInput.dataset.baseField === 'manualLadderText') {
+      state.baseManualLadderText = baseInput.value;
+    } else if (baseInput.dataset.baseField === 'baseSupportDepth') {
+      state.baseSupportDepth = baseInput.value;
+    }
+    invalidateClassicOutputs();
+    refreshClassicPreview();
+    return;
+  }
+
+  if (event.target.id === 'airdropCsvText') {
+    state.airdropCsvText = event.target.value;
+    invalidateClassicOutputs();
+    refreshClassicPreview();
+    return;
+  }
+
+  if (event.target.classList?.contains('classic-artifact-text')) {
+    state.classicReportComparison.input = event.target.value;
+    state.classicReportComparison.error = null;
+    persistClassicReportComparison();
+  }
+}
+
+function handleClick(event) {
+  const nav = event.target.closest('[data-view]');
+  if (nav) {
+    setView(nav.dataset.view);
+    return;
+  }
+
+  const actionTarget = event.target.closest('[data-action]');
+  if (!actionTarget) return;
+
+  const { action } = actionTarget.dataset;
+  if (action === 'review') {
+    state.connected = true;
+    state.activeApprovalId = actionTarget.dataset.tx;
+    state.approvalOpen = true;
+    renderAll();
+    return;
+  }
+
+  if (action === 'run-launch') {
+    runLaunchEnvelope();
+    return;
+  }
+
+  if (action === 'generate-wallet') {
+    generateManagedWallet().catch((error) => notify(error.message || 'Wallet generation failed'));
+    return;
+  }
+
+  if (action === 'start-vanity') {
+    startVanityGrind().catch((error) => notify(error.message || 'Vanity grind failed'));
+    return;
+  }
+
+  if (action === 'select-vanity') {
+    state.selectedVanityPublicKey = actionTarget.dataset.publicKey || null;
+    renderAll();
+    notify(state.selectedVanityPublicKey ? 'Vanity CA selected' : 'Random CA selected');
+    return;
+  }
+
+  if (action === 'remove-selected-vanity') {
+    removeVanityCandidateByPublicKey(state.selectedVanityPublicKey).catch((error) => notify(error.message || 'Failed to remove Vanity CA'));
+    return;
+  }
+
+  if (action === 'prune-hidden-vanity') {
+    pruneHiddenVanityCandidates().catch((error) => notify(error.message || 'Failed to prune Vanity CAs'));
+    return;
+  }
+
+  if (action === 'estimate-funding') {
+    estimateClassicFunding();
+    return;
+  }
+
+  if (action === 'detect-funding-wallet') {
+    detectFundingWallet();
+    return;
+  }
+
+  if (action === 'use-funding-wallet-sweep') {
+    applyFundingWalletAsSweepDestination();
+    return;
+  }
+
+  if (action === 'connect-solflare') {
+    connectSolflareWallet().catch((error) => notify(error.message || 'Solflare connection failed'));
+    return;
+  }
+
+  if (action === 'disconnect-solflare') {
+    disconnectSolflareWallet().catch((error) => notify(error.message || 'Solflare disconnect failed'));
+    return;
+  }
+
+  if (action === 'use-solflare-destination') {
+    applySolflareAsSweepDestination();
+    return;
+  }
+
+  if (action === 'check-readiness') {
+    checkExecutionReadiness();
+    return;
+  }
+
+  if (action === 'run-demo-launch') {
+    runDemoLaunch();
+    return;
+  }
+
+  if (action === 'execute-next-run') {
+    executeNextRunOperation();
+    return;
+  }
+
+  if (action === 'run-full-launch') {
+    runFullLaunch();
+    return;
+  }
+
+  if (action === 'start-quote-acquire') {
+    startQuoteAcquire();
+    return;
+  }
+
+  if (action === 'poll-quote-acquire') {
+    pollQuoteAcquire();
+    return;
+  }
+
+  if (action === 'clear-quote-acquire') {
+    clearQuoteAcquire();
+    return;
+  }
+
+  if (action === 'refresh-manual-prefund') {
+    refreshManualPrefundBalance();
+    return;
+  }
+
+  if (action === 'open-activity-log') {
+    state.activityLog.open = true;
+    renderActivityLogDrawer();
+    return;
+  }
+
+  if (action === 'close-activity-log') {
+    state.activityLog.open = false;
+    renderActivityLogDrawer();
+    return;
+  }
+
+  if (action === 'filter-activity-log') {
+    const nextFilter = actionTarget.dataset.logFilter;
+    if (['all', 'progress', 'airdrop', 'log', 'warn', 'error'].includes(nextFilter)) {
+      state.activityLog.filter = nextFilter;
+      renderActivityLogDrawer();
+    }
+    return;
+  }
+
+  if (action === 'clear-execution-audit') {
+    clearExecutionAudit();
+    return;
+  }
+
+  if (action === 'cancel-refund-launch') {
+    cancelRefundLaunch();
+    return;
+  }
+
+  if (action === 'round-slices-100') {
+    normalizeAllSlices();
+    return;
+  }
+
+  if (action === 'add-custom-pool') {
+    addCustomPool();
+    return;
+  }
+
+  if (action === 'resolve-custom-quote') {
+    resolveCustomQuoteToken(actionTarget.dataset.poolId).catch((error) => notify(error.message || 'Quote-token verification failed'));
+    return;
+  }
+
+  if (action === 'remove-custom-pool') {
+    removeCustomPool(actionTarget.dataset.poolId);
+    return;
+  }
+
+  if (action === 'sample-airdrop') {
+    setAirdropText([
+      'wallet,tokens',
+      '11111111111111111111111111111111,1000',
+      'So11111111111111111111111111111111111111112,2500',
+    ].join('\n'));
+    notify('Sample airdrop CSV loaded');
+    return;
+  }
+
+  if (action === 'fit-airdrop-budget') {
+    fitAirdropBudget();
+    return;
+  }
+
+  if (action === 'clear-airdrop') {
+    setAirdropText('');
+    notify('Airdrop CSV cleared');
+    return;
+  }
+
+  if (action === 'clear-token-logo') {
+    clearTokenLogo();
+    return;
+  }
+
+  if (action === 'toggle-report-publish') {
+    toggleReportPublishingPref().catch((error) => notify(error.message || 'Report publishing preference failed'));
+    return;
+  }
+
+  if (action === 'download-report-preview') {
+    downloadReportPreview();
+    return;
+  }
+
+  if (action === 'publish-v2-report') {
+    publishV2LaunchReport();
+    return;
+  }
+
+  if (action === 'run-v2-airdrop') {
+    runV2Airdrop();
+    return;
+  }
+
+  if (action === 'retry-v2-airdrop') {
+    runV2Airdrop({ retry: true });
+    return;
+  }
+
+  if (action === 'download-v2-proof') {
+    downloadV2Proof();
+    return;
+  }
+
+  if (action === 'download-v2-dossier') {
+    downloadV2DossierHtml();
+    return;
+  }
+
+  if (action === 'load-v2-proof') {
+    requestV2ProofImport();
+    return;
+  }
+
+  if (action === 'copy-v2-proof-summary') {
+    copyText(buildProofShareSummary(), 'Launch proof summary');
+    return;
+  }
+
+  if (action === 'compare-classic-artifact') {
+    runClassicArtifactComparison();
+    return;
+  }
+
+  if (action === 'load-classic-artifact') {
+    requestClassicArtifactImport();
+    return;
+  }
+
+  if (action === 'clear-classic-artifact') {
+    clearClassicArtifactComparison();
+    return;
+  }
+
+  if (action === 'inspect-recovery') {
+    setView('history');
+    notify('Recovery journal opened');
+    return;
+  }
+
+  if (action === 'resume-journal') {
+    resumeJournal(actionTarget.dataset.journalId);
+    return;
+  }
+
+  if (action === 'dismiss-journal') {
+    dismissJournal(actionTarget.dataset.journalId);
+    return;
+  }
+
+  if (action === 'select-recovery-step') {
+    state.recoveryWizardStep = actionTarget.dataset.step || null;
+    renderHistory();
+    return;
+  }
+
+  if (action === 'recovery-wizard-prev' || action === 'recovery-wizard-next') {
+    const wizard = currentRecoveryWizardModel();
+    const index = wizard.screens.findIndex((screen) => screen.id === wizard.active.id);
+    const nextIndex = action === 'recovery-wizard-prev'
+      ? Math.max(0, index - 1)
+      : Math.min(wizard.screens.length - 1, index + 1);
+    state.recoveryWizardStep = wizard.screens[nextIndex]?.id || wizard.active.id;
+    renderHistory();
+    return;
+  }
+
+  if (action === 'review-plan') {
+    stageTransactions();
+    return;
+  }
+
+  if (action === 'import-wallet') {
+    importManagedWallet().catch((error) => notify(error.message || 'Wallet import failed'));
+    return;
+  }
+
+  if (action === 'close-approval') {
+    state.approvalOpen = false;
+    renderExtension();
+    return;
+  }
+
+  if (action === 'toggle-wallet') {
+    state.connected = !state.connected;
+    state.approvalOpen = false;
+    renderAll();
+    notify(state.connected ? 'Wallet unlocked' : 'Wallet locked');
+    return;
+  }
+
+  if (action === 'select-account') {
+    const selectedAccountId = actionTarget.dataset.account;
+    const selectedAccount = walletAccounts().find((item) => item.id === selectedAccountId);
+    state.accountId = selectedAccountId;
+    state.selectedWalletPublicKey = selectedAccount?.publicKey || null;
+    state.revealedWallet = null;
+    state.revealError = null;
+    resetManualPrefundState();
+    resetFundingWalletState();
+    state.connected = true;
+    renderAll();
+    notify(`${account().name} selected`);
+    return;
+  }
+
+  if (action === 'select-recovery-wallet') {
+    selectRecoveryWallet(actionTarget.dataset.wallet);
+    return;
+  }
+
+  if (action === 'use-recovery-wallet-for-launch') {
+    const wallet = selectRecoveryWallet(actionTarget.dataset.wallet, { switchToWallet: false });
+    if (wallet) {
+      setView('launch');
+      notify('Recovery wallet selected for the next launch run');
+    }
+    return;
+  }
+
+  if (action === 'copy-recovery-wallet') {
+    copyText(actionTarget.dataset.wallet, 'Recovery wallet address');
+    return;
+  }
+
+  if (action === 'reveal-recovery-wallet') {
+    const walletPublicKey = actionTarget.dataset.wallet;
+    selectRecoveryWallet(walletPublicKey, { switchToWallet: true });
+    revealWalletSecret(walletPublicKey).catch((error) => notify(error.message || 'Recovery secret reveal failed'));
+    return;
+  }
+
+  if (action === 'sweep-recovery-wallet') {
+    sweepRecoveryWallet(actionTarget.dataset.wallet).catch((error) => notify(error.message || 'Recovery sweep failed'));
+    return;
+  }
+
+  if (action === 'discard-recovery-wallet') {
+    discardSelectedWallet(actionTarget.dataset.wallet).catch((error) => notify(error.message || 'Wallet discard failed'));
+    return;
+  }
+
+  if (action === 'copy-wallet-address') {
+    copyText(selectedLaunchWalletPublicKey(), 'Funding address');
+    return;
+  }
+
+  if (action === 'load-wallet-qr') {
+    loadWalletQr().catch((error) => notify(error.message || 'Wallet QR failed'));
+    return;
+  }
+
+  if (action === 'reveal-wallet-secret') {
+    revealWalletSecret().catch((error) => notify(error.message || 'Recovery secret reveal failed'));
+    return;
+  }
+
+  if (action === 'hide-wallet-secret') {
+    clearRevealedWalletSecret();
+    return;
+  }
+
+  if (action === 'discard-wallet') {
+    discardSelectedWallet().catch((error) => notify(error.message || 'Wallet discard failed'));
+    return;
+  }
+
+  if (action === 'copy-wallet-secret') {
+    const revealed = state.revealedWallet?.publicKey === selectedLaunchWalletPublicKey()
+      ? state.revealedWallet
+      : null;
+    if (!revealed) {
+      notify('Reveal the recovery secret first');
+      return;
+    }
+    const secretType = actionTarget.dataset.secretType;
+    const value = secretType === 'mnemonic'
+      ? revealed.mnemonic
+      : secretType === 'secretKeyJson'
+        ? JSON.stringify(revealed.secretKey || [])
+        : revealed.secretKeyB58;
+    copyText(value, secretType === 'mnemonic' ? 'Mnemonic' : 'Recovery secret');
+    return;
+  }
+
+  if (action === 'copy-manual-prefund') {
+    const copyKind = actionTarget.dataset.copy;
+    if (copyKind === 'wallet') {
+      copyText(selectedLaunchWalletPublicKey(), 'Manual prefund wallet');
+      return;
+    }
+    const item = quoteManualPrefundItems().find((row) => row.mint === actionTarget.dataset.mint);
+    if (!item) {
+      notify('Manual prefund row is unavailable');
+      return;
+    }
+    if (copyKind === 'mint') {
+      copyText(item.mint, 'Quote token mint');
+      return;
+    }
+    if (copyKind === 'amount') {
+      copyText(plainManualPrefundAmount(item.amount) || item.rawAmount, 'Manual prefund amount');
+      return;
+    }
+    return;
+  }
+
+  if (action === 'setup-secret-pin') {
+    setupSecretPin().catch((error) => notify(error.message || 'Recovery PIN setup failed'));
+    return;
+  }
+
+  if (action === 'unlock-secret-pin') {
+    unlockSecretPin().catch((error) => notify(error.message || 'Recovery PIN unlock failed'));
+    return;
+  }
+
+  if (action === 'change-secret-pin') {
+    changeSecretPin().catch((error) => notify(error.message || 'Recovery PIN change failed'));
+    return;
+  }
+
+  if (action === 'lock-secret-pin') {
+    lockSecretPin().catch((error) => notify(error.message || 'Recovery PIN lock failed'));
+    return;
+  }
+
+  if (action === 'reset-secret-pin') {
+    resetSecretPin().catch((error) => notify(error.message || 'Recovery PIN reset failed'));
+    return;
+  }
+
+  if (action === 'refresh-secret-pin') {
+    refreshSecretPinStatus({ reloadBoot: true })
+      .then(() => {
+        renderAll();
+        notify('Recovery PIN status refreshed');
+      })
+      .catch((error) => notify(error.message || 'Recovery PIN refresh failed'));
+    return;
+  }
+
+  if (action === 'check-updates') {
+    checkForUpdates().catch((error) => notify(error.message || 'Update check failed'));
+    return;
+  }
+
+  if (action === 'test-rpc') {
+    testRpcEndpoint();
+    return;
+  }
+
+  if (action === 'add-rpc') {
+    addRpcEndpoint();
+    return;
+  }
+
+  if (action === 'select-rpc') {
+    selectRpcEndpoint(actionTarget.dataset.url);
+    return;
+  }
+
+  if (action === 'remove-rpc') {
+    removeRpcEndpoint(actionTarget.dataset.url);
+    return;
+  }
+
+  if (action === 'toggle-update-autocheck') {
+    toggleUpdateAutocheck().catch((error) => notify(error.message || 'Update preference failed'));
+    return;
+  }
+
+  if (action === 'open-release-page') {
+    const url = actionTarget.dataset.url || state.releaseUrl;
+    if (typeof window.open === 'function') {
+      window.open(url, '_blank');
+    } else {
+      notify(url);
+    }
+    return;
+  }
+
+  if (action === 'select-discovery') {
+    state.selectedDiscoveryId = actionTarget.dataset.token;
+    renderDiscovery();
+    return;
+  }
+
+  if (action === 'toggle-setting') {
+    const setting = settings.find((item) => item.id === actionTarget.dataset.setting);
+    if (!setting) return;
+    setting.enabled = !setting.enabled;
+    renderSettings();
+    notify(`${setting.title} ${setting.enabled ? 'enabled' : 'disabled'}`);
+    return;
+  }
+
+  if (action === 'noop') {
+    notify(actionTarget.dataset.message || 'Selected');
+  }
+}
+
+function bindEvents() {
+  document.addEventListener('click', handleClick);
+  document.addEventListener('input', handleDynamicInput);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && state.activityLog.open) {
+      state.activityLog.open = false;
+      renderActivityLogDrawer();
+    }
+  });
+
+  $('#networkButton').addEventListener('click', () => {
+    state.network = state.network === 'Mainnet' ? 'Devnet' : 'Mainnet';
+    $('#networkLabel').textContent = state.network;
+    renderAll();
+    notify(`${state.network} selected`);
+  });
+
+  $('#themeButton').addEventListener('click', () => {
+    document.body.classList.toggle('light-mode');
+    drawLaunchCanvas();
+  });
+
+  $('#walletButton').addEventListener('click', () => {
+    state.connected = !state.connected;
+    renderAll();
+    notify(state.connected ? 'Wallet connected' : 'Wallet disconnected');
+  });
+
+  $('#stageButton').addEventListener('click', stageTransactions);
+  $('#simulateButton').addEventListener('click', simulateLaunch);
+  $('#tokenLogoFile').addEventListener('change', (event) => {
+    selectTokenLogo(event.target.files?.[0] || null);
+  });
+
+  $('#newVaultButton').addEventListener('click', () => {
+    generateManagedWallet().catch((error) => notify(error.message || 'Wallet generation failed'));
+  });
+
+  $$('.mode-button').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.launchMode = button.dataset.mode;
+      $$('.mode-button').forEach((item) => item.classList.toggle('is-selected', item === button));
+      renderLaunchPreview();
+      renderQueue();
+      renderGlobalStrip();
+      notify(`${button.dataset.label || button.textContent.trim()} selected`);
+    });
+  });
+
+  [
+    'tokenName',
+    'tokenSymbol',
+    'tokenSupply',
+    'tokenDescription',
+    'targetMarketCapUsd',
+    'launchSol',
+    'avatarCollectionName',
+    'avatarSupply',
+    'vanityStart',
+    'vanityEnd',
+    'mainPoolPercent',
+    'quotePoolPercent',
+    'preallocationSupplyPercent',
+    'quotePoolVenue',
+    'sliceShares',
+    'ladderBands',
+    'supportSol',
+    'airdropWallets',
+    'airdropSupplyPercent',
+    'airdropAutoFit',
+    'feeKeyRecipient',
+    'sweepDestination',
+  ].forEach((id) => {
+    $(`#${id}`).addEventListener('input', () => {
+      invalidateClassicOutputs();
+      refreshClassicPreview({ includePoolEditor: true });
+    });
+  });
+
+  window.addEventListener('resize', drawLaunchCanvas);
+}
+
+window.getConnectedSolflareWallet = () => (
+  state.solflare.publicKey
+    ? { publicKey: state.solflare.publicKey, connectedAt: state.solflare.connectedAt }
+    : null
+);
+window.applySolflareDestinationWallet = applySolflareAsSweepDestination;
+window.addEventListener?.('solana#initialized', () => {
+  wireSolflareProviderEvents();
+  initializeSolflareWallet();
+  renderAll();
+});
+
+restoreExecutionLedger();
+restoreLaunchProof();
+restoreClassicReportComparison();
+bindEvents();
+initializeSolflareWallet();
+setView('launch');
+renderAll();
+startLiveOpsPolling();
+bootLocalApi().catch((error) => {
+  console.warn('v2 local API bootstrap failed:', error);
+  applyBootState({
+    api: {
+      available: false,
+      status: 'static',
+      detail: 'Static preview; local API bootstrap failed.',
+    },
+  });
+  renderAll();
+});

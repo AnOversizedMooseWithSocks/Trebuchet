@@ -30,6 +30,7 @@ import {
   pickAssetForPlatform,
   parseReleaseTag,
   pickLatestRelease,
+  releaseTrustForArtifact,
 } from './updateCheck.js';
 
 // __dirname equivalent in ESM. Used to resolve sibling files like README.md.
@@ -309,6 +310,7 @@ async function checkForUpdates(win, options = {}) {
       downloadUrl: asset.browser_download_url,
       downloadFilename: asset.name,
       releaseUrl: release.html_url,
+      releaseTrust: releaseTrustForArtifact(release.body || '', asset.name, process.platform),
       // The renderer truncates release notes for the modal; we just
       // pass the raw markdown through. May be empty.
       notes: release.body || '',
@@ -704,6 +706,10 @@ function createWindow() {
     if (win.isDestroyed()) return;
     if (!userPrefs.get().checkForUpdatesOnStartup) return;
     checkForUpdates(win, { silent: true });
+  });
+  updateCheckBridge.registerManualHandler(() => {
+    if (win.isDestroyed()) return;
+    checkForUpdates(win);
   });
 
   // Initial compositor reset (Windows-only).

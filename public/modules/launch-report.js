@@ -7,10 +7,10 @@
 // transactions; transfer txs for any Fee Keys sent to external recipients;
 // and a tokenomics summary mirroring the visualization modal's content.
 //
-// Triggered from step 5 (after all pools created) or step 6 (after
-// transfer). Both bindings call the same generator; the report content
-// doesn't change between those two stages because all on-chain ops
-// commit by step 5 — step 6 just sweeps the ephemeral wallet.
+// Triggered from step 5 (after all pools created) or step 6 (during
+// finalization). The permanent publish happens after airdrop delivery and
+// before the final sweep, so the report records the planned sweep
+// destination without claiming the sweep transaction has already happened.
 
 // Build an explorer URL for an address or transaction signature. Solscan
 // is the de facto standard; users can change cluster via the UI if they
@@ -86,6 +86,11 @@ function renderLockBadge(locked) {
   return locked
     ? `<span class="badge badge-locked">🔒 Locked</span>`
     : `<span class="badge badge-unlocked">Not locked</span>`;
+}
+
+function getPlannedSweepDestinationWallet() {
+  const value = document.getElementById('destinationWallet')?.value?.trim();
+  return value || null;
 }
 
 // Compute the lock-status roll-up across every position in every pool.
@@ -376,6 +381,7 @@ function buildLaunchReportHtml({ logoDataUrl = null } = {}) {
   const supply = parseNumberInput(document.getElementById('tokenSupply'));
   const targetMc = parseNumberInput(document.getElementById('targetMarketCap'));
   const summary = computeLockSummary(results);
+  const plannedSweepDestination = getPlannedSweepDestinationWallet();
 
   // Reuse the same chart and breakdown the preview modal uses, so the
   // report's tokenomics view matches what the user saw at launch time.
@@ -1257,6 +1263,7 @@ function buildLaunchReportHtml({ logoDataUrl = null } = {}) {
   <h3 class="subsection">Mint &amp; launch wallet</h3>
   ${renderAddressRow('Token mint', tokenInfo.mint)}
   ${tempWallet?.publicKey ? renderAddressRow('Launch wallet', tempWallet.publicKey) : ''}
+  ${plannedSweepDestination ? renderAddressRow('Planned sweep destination', plannedSweepDestination) : ''}
   ${tokenInfo.metadataUri ? renderAddressRow('Metadata URI', tokenInfo.metadataUri) : ''}
 
   ${(tokenInfo.mintAuthorityRenounced || tokenInfo.freezeAuthorityDisabled || tokenInfo.metadataUpdateAuthorityRevoked) ? `
@@ -1492,6 +1499,7 @@ function getPublishedReport() {
 // the Arweave free-tier limit) and never includes secrets.
 function buildLaunchReportData(lp) {
   const results = (lp && Array.isArray(lp.results)) ? lp.results : [];
+  const plannedSweepDestination = getPlannedSweepDestinationWallet();
 
   // Map one position record into the audit shape. Every field here exists
   // to let a third party verify a Trebuchet launch principle on-chain:
@@ -1502,11 +1510,19 @@ function buildLaunchReportData(lp) {
   //     two, so a verifier can confirm the liquidity can never be pulled);
   //   - recipient/transferredTo + the transfer tx prove where each fee
   //     stream went.
-  // Older journals (pre-feeKeyNftMint / pre-tick-recording) yield nulls for
-  // the missing fields rather than failing.
+  // Older journals (pre-feeKeyNftMint / pre-tick-recording / pre-shape
+  // metadata) yield nulls for the missing fields rather than failing.
   const mapPosition = (pos, type, extra) => ({
     type,
     ...(extra || {}),
+    sliceIndex: Number.isFinite(Number(pos.sliceIndex)) ? Number(pos.sliceIndex) : extra?.sliceIndex ?? null,
+    bandIndex: Number.isFinite(Number(pos.bandIndex)) ? Number(pos.bandIndex) : extra?.bandIndex ?? null,
+    supportIndex: Number.isFinite(Number(pos.supportIndex)) ? Number(pos.supportIndex) : extra?.supportIndex ?? null,
+    sharePercent: Number.isFinite(Number(pos.sharePercent)) ? Number(pos.sharePercent) : extra?.sharePercent ?? null,
+    supplyPercent: Number.isFinite(Number(pos.supplyPercent)) ? Number(pos.supplyPercent) : extra?.supplyPercent ?? null,
+    lowerMultiplier: Number.isFinite(Number(pos.lowerMultiplier)) ? Number(pos.lowerMultiplier) : extra?.lowerMultiplier ?? null,
+    upperMultiplier: Number.isFinite(Number(pos.upperMultiplier)) ? Number(pos.upperMultiplier) : extra?.upperMultiplier ?? null,
+    depthPct: Number.isFinite(Number(pos.depthPct)) ? Number(pos.depthPct) : extra?.depthPct ?? null,
     tickLower: Number.isFinite(pos.tickLower) ? pos.tickLower : null,
     tickUpper: Number.isFinite(pos.tickUpper) ? pos.tickUpper : null,
     positionNftMint: pos.nftMint || null,
@@ -1517,13 +1533,57 @@ function buildLaunchReportData(lp) {
     transferTx: pos.txIds?.transfer || null,
   });
 
+  const mapAirdropRow = (row) => ({
+    wallet: row?.wallet || null,
+    tokens: Number.isFinite(Number(row?.tokens)) ? Number(row.tokens) : null,
+    amountRaw: row?.amountRaw == null ? null : String(row.amountRaw),
+    txId: row?.txId || row?.signature || null,
+    attempts: Number.isFinite(Number(row?.attempts)) ? Number(row.attempts) : null,
+    error: row?.error || null,
+  });
+  const airdrop = (() => {
+    if (lastAirdropResult && typeof lastAirdropResult === 'object') {
+      const transferred = Array.isArray(lastAirdropResult.transferred)
+        ? lastAirdropResult.transferred.map(mapAirdropRow)
+        : [];
+      const failed = Array.isArray(lastAirdropResult.failed)
+        ? lastAirdropResult.failed.map(mapAirdropRow)
+        : [];
+      return {
+        status: failed.length ? 'partial' : 'delivered',
+        plannedRecipientCount: transferred.length + failed.length,
+        deliveredCount: transferred.length,
+        failedCount: failed.length,
+        transferred,
+        failed,
+      };
+    }
+    const pending = buildAirdropTransferPayload();
+    if (!pending || !Array.isArray(pending.recipients) || pending.recipients.length === 0) {
+      return null;
+    }
+    return {
+      status: 'pending',
+      plannedRecipientCount: pending.recipients.length,
+      deliveredCount: 0,
+      failedCount: 0,
+      tokenMint: pending.tokenMint || null,
+      tokenDecimals: Number.isFinite(Number(pending.tokenDecimals)) ? Number(pending.tokenDecimals) : null,
+      recipients: pending.recipients.map(mapAirdropRow),
+      transferred: [],
+      failed: [],
+    };
+  })();
+
   return {
     // Version of this inner payload. The Arweave envelope's Schema-Version
     // tag (owned by launchReportService) describes the envelope; this field
     // tracks the launch payload itself. v1 was the original thin shape
     // (mint + pool ids); v2 adds the per-position audit records and the
-    // token-safety facts.
-    dataVersion: 2,
+    // token-safety facts; v3 adds structured airdrop evidence; v4 adds the
+    // planned final sweep destination recorded before the sweep executes; v5
+    // adds slice/ladder/support shape fields for depth-chart parity checks.
+    dataVersion: 5,
     launchWallet: tempWallet ? String(tempWallet.publicKey) : null,
     // Flat token identity fields kept from v1 for any reader already
     // consuming them; the structured facts live under token.
@@ -1532,6 +1592,11 @@ function buildLaunchReportData(lp) {
     symbol: createdTokenInfo?.symbol || null,
     decimals: createdTokenInfo?.decimals ?? null,
     totalSupply: createdTokenInfo?.totalSupply ?? null,
+    destinationWallet: plannedSweepDestination,
+    transfer: {
+      status: plannedSweepDestination ? 'planned-before-sweep' : 'not-recorded',
+      destinationWallet: plannedSweepDestination,
+    },
     supply: (() => {
       const allocated = results.reduce(
         (s, r) => s + (Number.isFinite(r.supplyPercent) ? r.supplyPercent : 0),
@@ -1583,14 +1648,19 @@ function buildLaunchReportData(lp) {
         })),
         ...(r.ladderPositions || []).map((p) => mapPosition(p, 'ladder', {
           bandIndex: p.bandIndex ?? null,
+          supplyPercent: Number.isFinite(Number(p.supplyPercent)) ? Number(p.supplyPercent) : null,
+          lowerMultiplier: Number.isFinite(Number(p.lowerMultiplier)) ? Number(p.lowerMultiplier) : null,
+          upperMultiplier: Number.isFinite(Number(p.upperMultiplier)) ? Number(p.upperMultiplier) : null,
         })),
         ...(r.supportPositions || []).map((p) => mapPosition(p, 'support', {
+          supportIndex: p.supportIndex ?? null,
           depthPct: Number.isFinite(p.depthPct) ? p.depthPct : null,
           quoteRaw: p.quoteRaw || null,
         })),
         ...(r.bootstrap ? [mapPosition(r.bootstrap, 'bootstrap')] : []),
       ],
     })),
+    airdrop,
   };
 }
 
@@ -1902,7 +1972,3 @@ function _legacyCopyReport(text, count, mode) {
   }
   document.body.removeChild(ta);
 }
-
-
-
-

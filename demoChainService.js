@@ -553,6 +553,16 @@ export async function handleCreateToken(req, res) {
         console.warn(`[demo] invalid vanityCAKeypair, falling back: ${e.message}`);
         mint = demoAddress();
       }
+    } else if (vanityPrefix && vanitySuffix
+        && typeof vanityPrefix === 'string'
+        && typeof vanitySuffix === 'string'
+        && vanityPrefix.length > 0
+        && vanitySuffix.length > 0) {
+      const px = vanityPrefix.slice(0, 15);
+      const sx = vanitySuffix.slice(0, 15);
+      const middle = Math.max(1, 32 - px.length - sx.length);
+      mint = px + randomBase58(middle) + sx;
+      console.log(`[demo] synthesizing start/end vanity CA: ${mint}`);
     } else if (vanityPrefix && typeof vanityPrefix === 'string' && vanityPrefix.length > 0) {
       // Construct a 32-char base58 string starting with the user's prefix.
       // Clamp prefix length to 31 so we always have at least one random
@@ -1007,8 +1017,8 @@ export function handleResumeLaunch(req, res) {
 // Enumerates the launch wallet's NFTs, fungible tokens, and SOL from the
 // ledger; sleeps per item; removes each as it "transfers"; and returns the
 // same { tokensTransferred, solTransferred, destinationWallet, nftSweep,
-// tokenSweep, solSweepError } shape the real endpoint returns. After the
-// sweep the wallet is empty in the ledger (everything moved to the
+// tokenSweep, solSweepError, walletEmpty } shape the real endpoint returns.
+// After the sweep the wallet is empty in the ledger (everything moved to the
 // destination, which we don't track).
 
 // Shared airdrop simulator — used by both handleTransferAssets (the
@@ -1155,6 +1165,7 @@ export async function handleTransferAssets(req, res, opts = {}) {
       nftSweep,
       tokenSweep,
       solSweepError: null,
+      walletEmpty: true,
       // Match the real handler: airdrop is null when not configured,
       // or { transferred: [...], failed: [...] } when run. The
       // frontend reads response.airdrop.transferred.length and

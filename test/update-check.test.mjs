@@ -6,6 +6,7 @@ import {
   pickAssetForPlatform,
   parseReleaseTag,
   pickLatestRelease,
+  releaseTrustForArtifact,
 } from '../updateCheck.js';
 
 // Tests for the pure parts of the update-check feature. Anything
@@ -293,6 +294,56 @@ test('parseReleaseTag returns null for malformed input', () => {
   // skip pre-releases by default unless the user opts in).
   assert.equal(parseReleaseTag('v1.0.0-rc1'), null);
   assert.equal(parseReleaseTag('v1.0.0-beta.2'), null);
+});
+
+// ---------------------------------------------------------------------------
+// Release trust disclosure
+// ---------------------------------------------------------------------------
+
+test('releaseTrustForArtifact reads the selected artifact trust row from release notes', () => {
+  const notes = [
+    '# v1.2.3',
+    '',
+    '## Trust status',
+    '',
+    '- macOS arm64: unsigned test artifact (Trebuchet-1.2.3-arm64.dmg)',
+    '- macOS x64: signed and notarized (Trebuchet-1.2.3-x64.dmg)',
+    '- Windows: signed (Trebuchet-1.2.3-Portable.exe, Trebuchet-1.2.3-Setup.exe)',
+    '- Linux: unsigned (Trebuchet-1.2.3-x86_64.AppImage)',
+  ].join('\n');
+
+  const macUnsigned = releaseTrustForArtifact(notes, 'Trebuchet-1.2.3-arm64.dmg', 'darwin');
+  assert.equal(macUnsigned.status, 'unsigned-test-artifact');
+  assert.equal(macUnsigned.signingStatus, 'unsigned');
+  assert.equal(macUnsigned.notarizationStatus, 'not-notarized');
+  assert.match(macUnsigned.detail, /unsigned and not notarized/);
+
+  const macSigned = releaseTrustForArtifact(notes, 'Trebuchet-1.2.3-x64.dmg', 'darwin');
+  assert.equal(macSigned.status, 'signed-and-notarized');
+  assert.equal(macSigned.signingStatus, 'signed');
+  assert.equal(macSigned.notarizationStatus, 'notarized');
+
+  const windows = releaseTrustForArtifact(notes, 'Trebuchet-1.2.3-Portable.exe', 'win32');
+  assert.equal(windows.status, 'signed');
+  assert.equal(windows.signingStatus, 'signed');
+  assert.equal(windows.notarizationStatus, 'not-applicable');
+
+  const linux = releaseTrustForArtifact(notes, 'Trebuchet-1.2.3-x86_64.AppImage', 'linux');
+  assert.equal(linux.status, 'unsigned');
+  assert.equal(linux.signingStatus, 'unsigned');
+  assert.equal(linux.notarizationStatus, 'not-applicable');
+});
+
+test('releaseTrustForArtifact is conservative when release notes do not name the selected artifact', () => {
+  const trust = releaseTrustForArtifact(
+    '- macOS arm64: signed and notarized (Trebuchet-1.2.3-arm64.dmg)',
+    'Trebuchet-1.2.3-x64.dmg',
+    'darwin',
+  );
+  assert.equal(trust.status, 'unknown');
+  assert.equal(trust.signingStatus, 'unknown');
+  assert.equal(trust.notarizationStatus, 'unknown');
+  assert.match(trust.detail, /verify before installing/);
 });
 
 // ---------------------------------------------------------------------------

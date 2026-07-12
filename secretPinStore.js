@@ -386,6 +386,15 @@ export function setPin(pin) {
   return status();
 }
 
+export function rotateUnlockedPin(pin) {
+  validatePin(pin);
+  if (!isUnlocked()) {
+    throw new Error('Secret PIN is locked; unlock before changing the PIN');
+  }
+  writeV2State({ pin, dataKey: _dataKey });
+  return status();
+}
+
 export function unlock(pin) {
   validatePin(pin);
   const state = readState();
@@ -397,6 +406,16 @@ export function unlock(pin) {
 
 export function lock() {
   wipeKeys();
+}
+
+export function reset() {
+  wipeKeys();
+  try {
+    fs.unlinkSync(stateFile());
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  return status();
 }
 
 export function isPinToken(token) {

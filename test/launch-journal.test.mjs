@@ -109,6 +109,17 @@ test('updates token, pool, and transfer state while filtering secrets', async (t
   assert.equal(completed[0].lp.results[0].txIds.createPool, 'tx-create');
   assert.equal(completed[0].transfer.destinationWallet, 'Dest222');
   assert.equal(completed[0].completedAt, completed[0].updatedAt);
+  const updatedCompleted = launchJournal.update(
+    completed[0].id,
+    { reportPublish: { mint: completed[0].token.mint, jsonUri: 'ar://report-json' } },
+    { stage: 'report_published', mint: completed[0].token.mint },
+  );
+  assert.equal(updatedCompleted.reportPublish.jsonUri, 'ar://report-json');
+  assert.equal(launchJournal.activeForWallet(walletPublicKey), null);
+  const completedAfterUpdate = launchJournal.list({ includeCompleted: true });
+  assert.equal(completedAfterUpdate.length, 1);
+  assert.equal(completedAfterUpdate[0].reportPublish.jsonUri, 'ar://report-json');
+  assert.equal(completedAfterUpdate[0].events.at(-1).stage, 'report_published');
 
   const rawText = readFileSync(journalFile(configDir), 'utf8');
   assert.equal(rawText.includes('tempWalletSecretKey'), false);

@@ -230,6 +230,23 @@ export function activeForWallet(walletPublicKey) {
   return journal ? clone(journal) : null;
 }
 
+export function update(id, patch = {}, event = null) {
+  if (!id) return null;
+  const list = load();
+  const journal = list.find((entry) => entry.id === id);
+  if (!journal) return null;
+  mergeKnownFields(journal, patch);
+  if (event) {
+    const sanitizedEvent = sanitizeForJournal(event);
+    journal.events.push({ ts: nowIso(), ...sanitizedEvent });
+    journal.events = journal.events.slice(-MAX_EVENTS);
+  }
+  journal.updatedAt = nowIso();
+  if (journal.status === 'completed' && !journal.completedAt) journal.completedAt = journal.updatedAt;
+  persist(list);
+  return clone(journal);
+}
+
 export function upsertForWallet(walletPublicKey, patch = {}, event = null) {
   if (!walletPublicKey) return null;
   const list = load();

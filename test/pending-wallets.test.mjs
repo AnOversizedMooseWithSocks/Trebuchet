@@ -157,3 +157,40 @@ test('stores pending wallet secrets with the configured Recovery PIN', async (t)
     assert.deepEqual(pendingWallets.get('PinWallet11111111111111111111111111111111').secretKey, [7, 8, 9]);
   });
 });
+
+test('removes only PIN-encrypted pending wallets during destructive PIN reset', async (t) => {
+  await withMutedConsole(async () => {
+    const configDir = makeTempConfigDir(t);
+    secretStore.lockSecretPin();
+    secretStore.setSafeStorage(null);
+    writeFileSync(
+      pendingWalletFile(configDir),
+      JSON.stringify([
+        {
+          publicKey: 'PinWallet11111111111111111111111111111111',
+          createdAt: '2026-01-02T03:04:05.000Z',
+          secretKeyEnc: 'pin:discarded',
+          mnemonicEnc: 'pin:discarded-mnemonic',
+        },
+        {
+          publicKey: 'PlainWallet111111111111111111111111111111',
+          createdAt: '2026-01-02T03:04:05.000Z',
+          secretKeyEnc: 'plain:[1,2,3]',
+          mnemonicEnc: 'plain:still recoverable',
+        },
+      ]) + '\n',
+    );
+
+    const pendingWallets = await importFreshPendingWallets(configDir);
+
+    assert.equal(pendingWallets.removePinEncrypted(), 1);
+    assert.deepEqual(pendingWallets.list(), [
+      {
+        publicKey: 'PlainWallet111111111111111111111111111111',
+        createdAt: '2026-01-02T03:04:05.000Z',
+        secretKey: [1, 2, 3],
+        mnemonic: 'still recoverable',
+      },
+    ]);
+  });
+});

@@ -338,4 +338,6 @@ test('update-check API URL matches the canonical repo case from package.json', (
     `main.js must NOT use /releases/latest — that endpoint excludes ` +
       `prereleases and 404s while every release is unsigned`,
   );
+  assert.match(main, /releaseTrustForArtifact/);
+  assert.match(main, /releaseTrust: releaseTrustForArtifact\(release\.body \|\| '', asset\.name, process\.platform\)/);
 });

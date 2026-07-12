@@ -189,6 +189,19 @@ export function remove(publicKey) {
   if (filtered.length !== list.length) persist(filtered);
 }
 
+export function removePinEncrypted() {
+  const raw = readRaw();
+  const filteredRaw = raw.filter((entry) => !(
+    secretStore.isSecretPinToken(entry?.secretKeyEnc) ||
+    secretStore.isSecretPinToken(entry?.mnemonicEnc)
+  ));
+  if (filteredRaw.length !== raw.length) {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    fs.writeFileSync(FILE, JSON.stringify(filteredRaw, null, 2) + '\n');
+  }
+  return raw.length - filteredRaw.length;
+}
+
 // Return a single pending wallet by public key, decrypted, or null if not
 // found. Convenience over list().find(...) for the common "I have the pubkey,
 // give me the recoverable secret" lookup (resume, and the server-side signer

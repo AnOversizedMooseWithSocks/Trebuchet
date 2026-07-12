@@ -92,6 +92,24 @@ test('sets, locks, and unlocks a PIN-encrypted token', (t) => {
   assert.equal(secretPinStore.decryptString(token), 'launch wallet secret');
 });
 
+test('rotates an unlocked PIN without losing existing encrypted tokens', (t) => {
+  useConfigDir(t);
+
+  secretPinStore.setPin('1234');
+  const token = secretPinStore.encryptString('recoverable wallet');
+
+  const status = secretPinStore.rotateUnlockedPin('5678');
+  assert.equal(status.configured, true);
+  assert.equal(status.unlocked, true);
+  assert.equal(secretPinStore.decryptString(token), 'recoverable wallet');
+
+  secretPinStore.lock();
+  assert.equal(secretPinStore.unlock('1234'), false);
+  assert.equal(secretPinStore.decryptString(token), null);
+  assert.equal(secretPinStore.unlock('5678'), true);
+  assert.equal(secretPinStore.decryptString(token), 'recoverable wallet');
+});
+
 test('uses safeStorage-protected device secret when available', (t) => {
   const dir = useConfigDir(t);
   secretPinStore.setSafeStorage(fakeSafeStorage());
@@ -123,6 +141,23 @@ test('validates PIN shape', (t) => {
   assert.throws(() => secretPinStore.setPin('123'), /exactly 4 digits/);
   assert.throws(() => secretPinStore.setPin('12a4'), /exactly 4 digits/);
   assert.throws(() => secretPinStore.unlock('12345'), /exactly 4 digits/);
+});
+
+test('resets PIN state and wipes in-memory keys', (t) => {
+  const dir = useConfigDir(t);
+
+  secretPinStore.setPin('4321');
+  const token = secretPinStore.encryptString('discarded local secret');
+
+  assert.equal(existsSync(path.join(dir, '.secretPin.json')), true);
+  const status = secretPinStore.reset();
+
+  assert.equal(status.configured, false);
+  assert.equal(status.unlocked, false);
+  assert.equal(status.locked, false);
+  assert.equal(existsSync(path.join(dir, '.secretPin.json')), false);
+  assert.equal(secretPinStore.decryptString(token), null);
+  assert.equal(secretPinStore.unlock('4321'), false);
 });
 
 test('secretStore prefers PIN tokens when a PIN is configured', (t) => {

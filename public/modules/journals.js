@@ -196,7 +196,15 @@ function journalPriorResults(journal) {
   const source = Array.isArray(lp.results) && lp.results.length > 0
     ? lp.results
     : (Array.isArray(lp.partialResults) ? lp.partialResults : []);
-  return source.filter((result) => result && result.poolId);
+  return source.filter((result) => {
+    if (!result?.poolId) return false;
+    if (result.phase1Complete !== false) return true;
+    return [
+      ...(Array.isArray(result.mainPositions) ? result.mainPositions : []),
+      ...(Array.isArray(result.ladderPositions) ? result.ladderPositions : []),
+      ...(Array.isArray(result.supportPositions) ? result.supportPositions : []),
+    ].some((position) => position?.nftMint);
+  });
 }
 
 function journalHasCompletedLp(journal) {
