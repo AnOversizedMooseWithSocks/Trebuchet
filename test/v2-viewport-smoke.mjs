@@ -84,7 +84,9 @@ async function smokeViewport(browser, viewport) {
       };
       return {
         clientWidth: document.documentElement.clientWidth,
+        clientHeight: document.documentElement.clientHeight,
         scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
         title: document.title,
         launchVisible: document.querySelector('#view-launch')?.classList.contains('is-active') === true,
         chartSvgCount: document.querySelectorAll('#chartDeck svg').length,
@@ -94,15 +96,39 @@ async function smokeViewport(browser, viewport) {
         chartDeckClientWidth: document.querySelector('#chartDeck')?.clientWidth ?? 0,
         chartDeckScrollWidth: document.querySelector('#chartDeck')?.scrollWidth ?? 0,
         rects: {
+          launchShell: rectFor('#view-launch .surface-main'),
           cockpit: rectFor('.cockpit-board'),
           chartDeck: rectFor('#chartDeck'),
           tokenomicsChart: rectFor('#tokenomicsChart'),
           liquidityChart: rectFor('#liquidityChart'),
           fundingMeter: rectFor('#fundingMeter'),
-          parityPanel: rectFor('#parityPanel'),
+          workspaceTabs: rectFor('#launchWorkspaceTabs'),
+          workspaceViewport: rectFor('#launchWorkspaceViewport'),
+          actionPanel: rectFor('.cockpit-board .action-panel'),
+          setupDock: rectFor('.setup-dock'),
         },
       };
     });
+
+    const workspaceStates = {};
+    for (const workspace of ['configure', 'fund', 'execute', 'verify', 'recover']) {
+      await page.click(`.launch-workspace-tab[data-launch-workspace="${workspace}"]`);
+      workspaceStates[workspace] = await page.evaluate((selectedWorkspace) => {
+        const selectedTab = document.querySelector(`.launch-workspace-tab[data-launch-workspace="${selectedWorkspace}"]`);
+        const visiblePaneCount = Array.from(document.querySelectorAll('[data-launch-pane]'))
+          .filter((panel) => !panel.hidden && panel.getClientRects().length > 0).length;
+        const classicSection = document.querySelector(`[data-classic-workspace="${selectedWorkspace}"]`);
+        return {
+          bodyWorkspace: document.body.dataset.launchWorkspace,
+          selected: selectedTab?.getAttribute('aria-selected') === 'true',
+          visiblePaneCount,
+          classicSectionVisible: classicSection
+            ? !classicSection.hidden && classicSection.getClientRects().length > 0
+            : selectedWorkspace === 'configure',
+        };
+      }, workspace);
+    }
+    await page.click('.launch-workspace-tab[data-launch-workspace="configure"]');
 
     assert.deepEqual(pageErrors, [], `${viewport.name}: page errors`);
     assert.deepEqual(consoleErrors, [], `${viewport.name}: console errors`);
@@ -116,18 +142,29 @@ async function smokeViewport(browser, viewport) {
     assert.ok(metrics.depthNodeCount > 0, `${viewport.name}: liquidity chart did not render`);
     assert.ok(metrics.fundingRowCount >= 3, `${viewport.name}: funding meter did not render`);
     assert.ok(metrics.parityRowCount >= 3, `${viewport.name}: parity panel did not render`);
+    for (const [workspace, workspaceState] of Object.entries(workspaceStates)) {
+      assert.equal(workspaceState.bodyWorkspace, workspace, `${viewport.name}: ${workspace} did not become active`);
+      assert.equal(workspaceState.selected, true, `${viewport.name}: ${workspace} tab is not selected`);
+      assert.ok(workspaceState.visiblePaneCount > 0, `${viewport.name}: ${workspace} has no visible workspace pane`);
+      assert.equal(workspaceState.classicSectionVisible, true, `${viewport.name}: ${workspace} content is hidden`);
+    }
+    const firstViewportFit = viewport.name === 'desktop'
+      ? metrics.scrollHeight <= metrics.clientHeight + 1
+        && metrics.rects.launchShell.bottom <= metrics.clientHeight + 1
+        && metrics.rects.workspaceViewport.bottom <= metrics.clientHeight + 1
+      : metrics.rects.cockpit.bottom <= viewport.height + 1;
     assert.ok(
-      metrics.rects.cockpit.bottom <= viewport.height + 1,
-      `${viewport.name}: primary cockpit does not fit the first viewport`,
+      firstViewportFit,
+      `${viewport.name}: launch workspace does not fit its intended viewport`,
     );
 
-    for (const selector of ['cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'parityPanel']) {
+    for (const selector of ['launchShell', 'cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'workspaceTabs', 'workspaceViewport', 'actionPanel', 'setupDock']) {
       assertRectSized(metrics.rects[selector], selector, viewport);
     }
 
     const initiallyVisibleSelectors = viewport.name === 'mobile'
-      ? ['cockpit', 'chartDeck', 'tokenomicsChart', 'parityPanel']
-      : ['cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'parityPanel'];
+      ? ['cockpit', 'chartDeck', 'tokenomicsChart', 'workspaceTabs', 'setupDock']
+      : ['launchShell', 'cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'workspaceTabs', 'workspaceViewport', 'actionPanel', 'setupDock'];
     for (const selector of initiallyVisibleSelectors) {
       assertRectVisible(metrics.rects[selector], selector, viewport);
     }
@@ -149,7 +186,7 @@ async function smokeViewport(browser, viewport) {
         liquidityChart: metrics.depthNodeCount > 0,
         fundingMeter: metrics.fundingRowCount >= 3,
         parityPanel: metrics.parityRowCount >= 3,
-        firstViewportFit: metrics.rects.cockpit.bottom <= viewport.height + 1,
+        firstViewportFit,
       },
     };
   } finally {

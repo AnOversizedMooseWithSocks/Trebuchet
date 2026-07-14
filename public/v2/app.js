@@ -9,18 +9,22 @@ const views = {
   settings: { eyebrow: 'Settings', title: 'Security defaults' },
 };
 
-const accounts = [
-  { id: 'launch', name: 'Launch Wallet', address: '7WAr...p9Qx', balance: 18.42, role: 'Trebuchet-managed signer', color: '#6be2a2' },
-  { id: 'ops', name: 'Imported Ops Wallet', address: '4Ops...8mZi', balance: 6.18, role: 'Imported local wallet', color: '#ffbd61' },
-  { id: 'cold', name: 'Sweep Destination', address: '9Cld...2HaP', balance: 42.03, role: 'Watched destination', color: '#7fb0ff' },
+const launchWorkspaces = [
+  { id: 'configure', title: 'Configure', detail: 'Token, pool topology, distribution, and launch safeguards.' },
+  { id: 'fund', title: 'Fund', detail: 'Estimate SOL, acquire quote tokens, and verify wallet balances.' },
+  { id: 'execute', title: 'Execute', detail: 'Run preflight, arm the local wallet, and watch live checkpoints.' },
+  { id: 'verify', title: 'Verify', detail: 'Review proof, publish the dossier, and compare Classic evidence.' },
+  { id: 'recover', title: 'Recover', detail: 'Resume interrupted work or safely sweep the launch wallet.' },
 ];
 
-const assets = [
-  { type: 'Fee Key', name: 'MKT SOL LP', detail: 'Burn & Earn lock proof attached', state: 'Verified' },
-  { type: 'NFT Collection', name: 'MoonKit Avatars', detail: 'Local avatar DB, Metaplex metadata, AI runtime seeds', state: 'Draft' },
-  { type: 'Report', name: 'MoonKit launch report', detail: 'Mint, pools, locks, fee-key transfers', state: 'Draft' },
-  { type: 'Token', name: 'MKT reserve', detail: 'Unallocated supply sweep target', state: 'Pending' },
-];
+const EMPTY_ACCOUNT = Object.freeze({
+  id: 'none',
+  name: 'No wallet selected',
+  address: 'Not connected',
+  balance: 0,
+  role: 'Generate or import a local wallet',
+  color: '#6f7783',
+});
 
 const launchStages = [
   {
@@ -241,244 +245,16 @@ const DEFAULT_CLMM_FEE_TIERS = Object.freeze([
   { index: 3, tradeFeeRate: 10000, tickSpacing: 120 },
 ]);
 
+const DISCOVERY_STORAGE_KEY = 'trebuchet:v2:discovery-registry:v1';
+const DISCOVERY_STORAGE_MAX_ENTRIES = 40;
+const DISCOVERY_STORAGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
 const standards = [
-  { title: 'Token', detail: 'Mint, pools, holders, authority' },
-  { title: 'Avatar NFTs', detail: 'Collection, traits, ownership gate' },
-  { title: 'AI Swarm', detail: 'Wallet personas and room triggers' },
-  { title: 'Provenance', detail: 'Reports, metadata, local DB hash' },
+  { title: 'Identity', detail: 'On-chain mint metadata and token program' },
+  { title: 'Authority', detail: 'Mint, freeze, and CLMM compatibility audit' },
+  { title: 'Distribution', detail: 'Supply and largest token-account concentration' },
+  { title: 'Provenance', detail: 'Local Trebuchet launch journal and report links' },
 ];
-
-const discoveryDataNotice = {
-  label: 'Mock dataset',
-  detail: 'Sample evidence only. Real Trebuchet report ingestion and chain/indexer verification are not connected yet.',
-};
-
-const discoveryTokens = [
-  {
-    id: 'mesh',
-    name: 'Kinetic Mesh',
-    symbol: 'MESH',
-    score: 94,
-    status: 'Pass',
-    confidence: 'High',
-    source: 'Mock Trebuchet report + chain sample',
-    dataSource: 'Mock sample',
-    color: '#6be2a2',
-    summary: 'Clean launch report, strong pool spread, revoked authorities, and steady holder growth.',
-    metrics: { liquidity: '4 pools', holders: '18.2k holders', authority: 'Revoked', depth: '$2.8m depth' },
-    evidence: [
-      ['Liquidity diversity', '31% largest pool, four routeable venues'],
-      ['Holder distribution', 'Top 10 at 33%, no hidden reserve cluster'],
-      ['Authority posture', 'Mint and freeze revoked, metadata disclosed'],
-      ['Launch provenance', 'Report hash and Fee Key mints verified'],
-    ],
-  },
-  {
-    id: 'atlas',
-    name: 'Atlas Yield',
-    symbol: 'ATY',
-    score: 88,
-    status: 'Pass',
-    confidence: 'Medium',
-    source: 'Mock chain + indexer sample',
-    dataSource: 'Mock sample',
-    color: '#7fb0ff',
-    summary: 'Good liquidity and transparent multisig policy, but one CLMM venue carries extra depth.',
-    metrics: { liquidity: '3 pools', holders: '9.7k holders', authority: 'Multisig', depth: '$1.4m depth' },
-    evidence: [
-      ['Liquidity diversity', '38% largest pool, quote diversity improving'],
-      ['Holder distribution', 'Top 10 at 39%, contributor wallets labeled'],
-      ['Authority posture', 'Metadata held by 3/5 multisig with disclosure'],
-      ['Launch provenance', 'No Trebuchet report; chain evidence only'],
-    ],
-  },
-  {
-    id: 'north',
-    name: 'Northstar',
-    symbol: 'NSTR',
-    score: 82,
-    status: 'Pass',
-    confidence: 'Medium',
-    source: 'Mock Trebuchet report sample',
-    dataSource: 'Mock sample',
-    color: '#ffbd61',
-    summary: 'Excellent locked-liquidity spread with smaller volume and incomplete holder labels.',
-    metrics: { liquidity: '5 pools', holders: '6.4k holders', authority: 'Revoked', depth: '$740k depth' },
-    evidence: [
-      ['Liquidity diversity', '27% largest pool, five locked ranges'],
-      ['Holder distribution', 'Top 10 at 41%, team labels incomplete'],
-      ['Authority posture', 'Mint/freeze revoked, metadata immutable'],
-      ['Launch provenance', 'Launch report and Fee Key transfers verified'],
-    ],
-  },
-  {
-    id: 'circuit',
-    name: 'Circuit Mint',
-    symbol: 'CIRC',
-    score: 71,
-    status: 'Watch',
-    confidence: 'Low',
-    source: 'Mock chain-only sample',
-    dataSource: 'Mock sample',
-    color: '#f36f5a',
-    summary: 'Promising depth, but top-pool concentration and timed authority controls need watching.',
-    metrics: { liquidity: '2 pools', holders: '4.1k holders', authority: 'Timed lock', depth: '$510k depth' },
-    evidence: [
-      ['Liquidity diversity', '46% largest pool, limited route diversity'],
-      ['Holder distribution', 'Top 10 at 48%, possible related wallets'],
-      ['Authority posture', 'Timed controls disclosed, not fully revoked'],
-      ['Launch provenance', 'No launch report or Fee Key proof found'],
-    ],
-  },
-];
-
-const avatarEcosystems = {
-  mesh: {
-    collection: {
-      name: 'Mesh Avatars',
-      symbol: 'MESH-AI',
-      supply: 2048,
-      minted: 1882,
-      source: 'local avatar DB',
-      manifest: 'db://avatars/mesh-v4',
-      gate: 'NFT holder claim',
-      assignment: 'wallet + token mint seed',
-    },
-    swarm: {
-      room: 'mesh-live',
-      activeAvatars: 426,
-      triggers: ['buy', 'send', 'LP add', 'NFT claim'],
-      events: [
-        {
-          from: 'MESH-042',
-          to: 'MESH-118',
-          amount: '42,000 MESH',
-          line: 'Route depth improved. Confidence moved from 91 to 94.',
-        },
-        {
-          from: 'MESH-118',
-          to: 'MESH-901',
-          amount: '8,400 MESH',
-          line: 'Holder cluster remains clean. No linked reserve cluster detected.',
-        },
-      ],
-    },
-    avatars: [
-      { name: 'MESH-042', role: 'liquidity scout', color: '#6be2a2' },
-      { name: 'MESH-118', role: 'flow monitor', color: '#7fb0ff' },
-      { name: 'MESH-901', role: 'provenance keeper', color: '#b09cff' },
-    ],
-  },
-  atlas: {
-    collection: {
-      name: 'Atlas Operators',
-      symbol: 'ATLAS-AI',
-      supply: 1024,
-      minted: 612,
-      source: 'local avatar DB',
-      manifest: 'db://avatars/atlas-v2',
-      gate: 'NFT holder claim',
-      assignment: 'wallet + collection mint seed',
-    },
-    swarm: {
-      room: 'atlas-yield',
-      activeAvatars: 118,
-      triggers: ['stake', 'send', 'treasury move'],
-      events: [
-        {
-          from: 'ATY-014',
-          to: 'ATY-233',
-          amount: '12,000 ATY',
-          line: 'Treasury routing changed. Disclosure found; concentration remains elevated.',
-        },
-        {
-          from: 'ATY-233',
-          to: 'ATY-771',
-          amount: '3,100 ATY',
-          line: 'Multisig posture logged. Waiting on second venue depth.',
-        },
-      ],
-    },
-    avatars: [
-      { name: 'ATY-014', role: 'treasury reader', color: '#7fb0ff' },
-      { name: 'ATY-233', role: 'policy witness', color: '#ffbd61' },
-      { name: 'ATY-771', role: 'risk monitor', color: '#f36f5a' },
-    ],
-  },
-  north: {
-    collection: {
-      name: 'Northstar Guides',
-      symbol: 'NSTR-AI',
-      supply: 777,
-      minted: 777,
-      source: 'local avatar DB',
-      manifest: 'db://avatars/northstar-v1',
-      gate: 'NFT holder claim',
-      assignment: 'wallet + token mint seed',
-    },
-    swarm: {
-      room: 'northstar-ranges',
-      activeAvatars: 203,
-      triggers: ['LP range', 'send', 'claim'],
-      events: [
-        {
-          from: 'NSTR-005',
-          to: 'NSTR-144',
-          amount: '7,770 NSTR',
-          line: 'Five bands are holding. Volume remains below trend.',
-        },
-        {
-          from: 'NSTR-144',
-          to: 'NSTR-602',
-          amount: '1,440 NSTR',
-          line: 'Wallet labels are sparse; holder grade stays provisional.',
-        },
-      ],
-    },
-    avatars: [
-      { name: 'NSTR-005', role: 'LP band watcher', color: '#ffbd61' },
-      { name: 'NSTR-144', role: 'volume analyst', color: '#6be2a2' },
-      { name: 'NSTR-602', role: 'wallet mapper', color: '#7fb0ff' },
-    ],
-  },
-  circuit: {
-    collection: {
-      name: 'Circuit Phantoms',
-      symbol: 'CIRC-AI',
-      supply: 512,
-      minted: 91,
-      source: 'local avatar DB',
-      manifest: 'db://avatars/circuit-draft',
-      gate: 'draft',
-      assignment: 'wallet + token mint seed',
-    },
-    swarm: {
-      room: 'circuit-watch',
-      activeAvatars: 24,
-      triggers: ['buy', 'authority change', 'send'],
-      events: [
-        {
-          from: 'CIRC-017',
-          to: 'CIRC-088',
-          amount: '5,000 CIRC',
-          line: 'Authority timer is visible. Revoke receipt not found.',
-        },
-        {
-          from: 'CIRC-088',
-          to: 'CIRC-309',
-          amount: '900 CIRC',
-          line: 'Second pool remains thin. Activity does not imply depth.',
-        },
-      ],
-    },
-    avatars: [
-      { name: 'CIRC-017', role: 'authority watcher', color: '#f36f5a' },
-      { name: 'CIRC-088', role: 'policy clock', color: '#b09cff' },
-      { name: 'CIRC-309', role: 'liquidity monitor', color: '#7fb0ff' },
-    ],
-  },
-};
-
 const signingPolicies = [
   { title: 'Encrypted local keys', detail: 'Trebuchet stores launch-wallet secrets behind the Recovery PIN and device protection.', state: 'pass' },
   { title: 'Managed wallet import', detail: 'Imported mnemonic, base58, or JSON keypairs become Trebuchet-controlled launch wallets after Recovery PIN unlock.', state: 'pass' },
@@ -489,31 +265,36 @@ const signingPolicies = [
 ];
 
 const settings = [
-  { id: 'simulate', title: 'Require simulation before local signing', detail: 'Every app-signed operation needs decoded effects and balance deltas.', enabled: true },
-  { id: 'unsafe', title: 'Block unsafe preallocation by default', detail: 'Advanced override requires consequence acknowledgement.', enabled: true },
-  { id: 'journal', title: 'Encrypted recovery journal', detail: 'Persist resumable checkpoints for durable chain phases.', enabled: true },
-  { id: 'batch', title: 'One-click armed run', detail: 'After funding, Trebuchet may sign the decoded run envelope without per-transaction prompts.', enabled: true },
+  { id: 'simulate', title: 'Simulation before local signing', detail: 'Every app-signed operation requires decoded effects and balance deltas.', status: 'Enforced' },
+  { id: 'unsafe', title: 'Unsafe preallocation guard', detail: 'Preallocation and authority constraints are validated before an envelope can be armed.', status: 'Enforced' },
+  { id: 'journal', title: 'Recovery journal', detail: 'Chain phases write resumable checkpoints through the authenticated local API.', status: 'Enforced' },
+  { id: 'batch', title: 'Armed run envelope', detail: 'A full run starts only after funding and readiness checks pass.', status: 'Guarded' },
 ];
 
 const localModes = [
   { title: 'Electron local wallet', detail: 'Full launch orchestration, encrypted keys, journals, native helpers, and filesystem access.', state: 'Current' },
-  { title: 'SPA demo mode', detail: 'Browser-safe config, reports, discovery scoring, and dry runs without holding keys.', state: 'Preview' },
+  { title: 'Browser prototype', detail: 'Browser UI uses the authenticated local API for wallets, discovery, reports, and guarded dry runs.', state: 'Current' },
   { title: 'Imported wallet support', detail: 'Import mnemonic, base58, or JSON local wallets with Recovery PIN unlock and explicit funding addresses.', state: 'Current' },
   { title: 'External wallet funding', detail: 'External wallets fund Trebuchet wallets; they do not sign every launch transaction.', state: 'Current' },
 ];
 
-const history = [
-  { title: 'v2 prototype rebuilt', detail: 'Trebuchet local wallet, Discovery evidence, and armed launch runs consolidated.', time: 'Just now' },
-  { title: 'Discovery scope tightened', detail: 'MVP now uses evidence, confidence, and on-chain provenance only.', time: 'Today' },
-  { title: 'macOS workaround scoped', detail: 'SPA/WASM direction added to avoid unsigned desktop friction.', time: 'Yesterday' },
-];
+const history = [];
 
 const state = {
   activeView: 'launch',
+  launchWorkspace: 'configure',
   network: 'Mainnet',
   connected: false,
-  accountId: accounts[0].id,
-  selectedDiscoveryId: discoveryTokens[0].id,
+  accountId: null,
+  selectedDiscoveryId: null,
+  discovery: {
+    records: [],
+    query: '',
+    filter: 'all',
+    inspecting: false,
+    error: null,
+    lastInspectedMint: null,
+  },
   launchMode: 'guarded',
   launchStage: 0,
   simulated: false,
@@ -711,6 +492,165 @@ function v2LocalStorage() {
     return window.localStorage || null;
   } catch {
     return null;
+  }
+}
+
+function normalizeDiscoveryRecord(record, { restoring = false } = {}) {
+  if (!record || typeof record !== 'object') return null;
+  const mint = String(record.mint || record.id || '').trim();
+  if (!mint || mint.length > 64) return null;
+  const inspectedAtMs = Date.parse(record.inspectedAt || '');
+  if (restoring && Number.isFinite(inspectedAtMs) && Date.now() - inspectedAtMs > DISCOVERY_STORAGE_MAX_AGE_MS) {
+    return null;
+  }
+  return {
+    ...record,
+    id: mint,
+    mint,
+    name: String(record.name || record.symbol || shortAddress(mint)).slice(0, 120),
+    symbol: String(record.symbol || shortAddress(mint)).slice(0, 24),
+    score: Math.max(0, Math.min(100, Number(record.score) || 0)),
+    status: ['Ready', 'Review', 'Watch'].includes(record.status) ? record.status : 'Review',
+    confidence: ['High', 'Medium', 'Low'].includes(record.confidence) ? record.confidence : 'Low',
+    inspectedAt: Number.isFinite(inspectedAtMs) ? new Date(inspectedAtMs).toISOString() : new Date().toISOString(),
+    notes: String(record.notes || '').slice(0, 500),
+    evidence: Array.isArray(record.evidence) ? record.evidence.slice(0, 12) : [],
+    warnings: Array.isArray(record.warnings)
+      ? record.warnings.slice(0, 8).map((warning) => String(warning).slice(0, 1200))
+      : [],
+  };
+}
+
+function persistDiscoveryRegistry() {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(DISCOVERY_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      selectedId: state.selectedDiscoveryId,
+      records: state.discovery.records.slice(0, DISCOVERY_STORAGE_MAX_ENTRIES),
+    }));
+  } catch {
+    // A full or unavailable localStorage must not block token inspection.
+  }
+}
+
+function restoreDiscoveryRegistry() {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    const saved = JSON.parse(storage.getItem(DISCOVERY_STORAGE_KEY) || 'null');
+    const records = Array.isArray(saved?.records)
+      ? saved.records.map((record) => normalizeDiscoveryRecord(record, { restoring: true })).filter(Boolean)
+      : [];
+    state.discovery.records = records.slice(0, DISCOVERY_STORAGE_MAX_ENTRIES);
+    state.selectedDiscoveryId = state.discovery.records.some((record) => record.id === saved?.selectedId)
+      ? saved.selectedId
+      : state.discovery.records[0]?.id || null;
+  } catch {
+    state.discovery.records = [];
+    state.selectedDiscoveryId = null;
+  }
+}
+
+function upsertDiscoveryRecord(record) {
+  const normalized = normalizeDiscoveryRecord(record);
+  if (!normalized) return null;
+  const existing = state.discovery.records.find((item) => item.id === normalized.id);
+  if (existing?.notes && !normalized.notes) normalized.notes = existing.notes;
+  state.discovery.records = [
+    normalized,
+    ...state.discovery.records.filter((item) => item.id !== normalized.id),
+  ].slice(0, DISCOVERY_STORAGE_MAX_ENTRIES);
+  state.selectedDiscoveryId = normalized.id;
+  persistDiscoveryRegistry();
+  return normalized;
+}
+
+function removeDiscoveryRecord(mint) {
+  state.discovery.records = state.discovery.records.filter((record) => record.id !== mint);
+  state.selectedDiscoveryId = state.discovery.records[0]?.id || null;
+  persistDiscoveryRegistry();
+  renderDiscovery();
+  notify('Token removed from the local registry');
+}
+
+function discoveryLocalProvenance(record) {
+  if (!record) return { proof: null, journal: null };
+  const proofMint = String(state.launchProof?.token?.mint || state.launchProof?.mint || '');
+  const proof = proofMint === record.mint ? state.launchProof : null;
+  const journal = record.journal || state.recovery.journals.find((item) => String(item?.token?.mint || '') === record.mint) || null;
+  return { proof, journal };
+}
+
+function discoveryWarningSummary(warning) {
+  const raw = String(warning || '').trim();
+  if (/concentration/i.test(raw)) {
+    return {
+      title: 'Concentration check delayed',
+      detail: /429|too many requests/i.test(raw)
+        ? 'The public RPC throttled this check. Refresh later or use a dedicated RPC in Settings.'
+        : 'Largest-account concentration could not be verified on this pass.',
+      raw,
+    };
+  }
+  if (/metadata/i.test(raw)) {
+    return {
+      title: 'Metadata check incomplete',
+      detail: 'Token identity metadata could not be verified on this pass.',
+      raw,
+    };
+  }
+  if (/authority/i.test(raw)) {
+    return {
+      title: 'Authority check incomplete',
+      detail: 'Mint and freeze authority evidence could not be verified on this pass.',
+      raw,
+    };
+  }
+  return {
+    title: 'One check needs another pass',
+    detail: 'Refresh the inspection or review the technical detail below.',
+    raw,
+  };
+}
+
+function filteredDiscoveryRecords() {
+  const query = state.discovery.query.trim().toLowerCase();
+  return state.discovery.records.filter((record) => {
+    if (state.discovery.filter !== 'all' && record.status.toLowerCase() !== state.discovery.filter) return false;
+    if (!query) return true;
+    return [record.name, record.symbol, record.mint]
+      .some((value) => String(value || '').toLowerCase().includes(query));
+  });
+}
+
+async function inspectDiscoveryMint(mint = $('#discoveryMintInput')?.value) {
+  const value = String(mint || '').trim();
+  if (!isProbablySolanaAddress(value)) {
+    state.discovery.error = 'Enter a valid Solana token mint address.';
+    renderDiscovery();
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.inspectDiscoveryToken) {
+    state.discovery.error = 'Live inspection requires the local Trebuchet app.';
+    renderDiscovery();
+    return;
+  }
+
+  state.discovery.inspecting = true;
+  state.discovery.error = null;
+  state.discovery.lastInspectedMint = value;
+  renderDiscovery();
+  try {
+    const record = await state.apiClient.inspectDiscoveryToken(value);
+    upsertDiscoveryRecord(record);
+    notify(`${record.symbol || shortAddress(value)} inspection saved`);
+  } catch (error) {
+    state.discovery.error = error.message || 'Token inspection failed.';
+  } finally {
+    state.discovery.inspecting = false;
+    renderDiscovery();
   }
 }
 
@@ -1027,20 +967,18 @@ function walletAccounts() {
       source: wallet.source || 'local',
     }));
   }
-  return accounts;
+  return [];
 }
 
 function account() {
   const rows = walletAccounts();
-  return rows.find((item) => item.id === state.accountId) || rows[0] || accounts[0];
+  return rows.find((item) => item.id === state.accountId) || rows[0] || EMPTY_ACCOUNT;
 }
 
 function selectedDiscovery() {
-  return discoveryTokens.find((item) => item.id === state.selectedDiscoveryId) || discoveryTokens[0];
-}
-
-function selectedEcosystem() {
-  return avatarEcosystems[selectedDiscovery().id] || avatarEcosystems[discoveryTokens[0].id];
+  return state.discovery.records.find((item) => item.id === state.selectedDiscoveryId)
+    || state.discovery.records[0]
+    || null;
 }
 
 function selectedLaunchWalletPublicKey() {
@@ -1997,6 +1935,26 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function formatDiscoveryPrice(value) {
+  const price = Number(value);
+  if (!Number.isFinite(price)) return 'No indexed price';
+  return `$${new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: price < 1 ? 6 : 4,
+  }).format(price)}`;
+}
+
+function formatAge(value) {
+  const timestamp = Date.parse(value || '');
+  if (!Number.isFinite(timestamp)) return 'Unknown age';
+  const elapsed = Math.max(0, Date.now() - timestamp);
+  const minutes = Math.floor(elapsed / 60000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function humanizeStage(value) {
@@ -3711,8 +3669,95 @@ function setView(view) {
   });
   $('#viewEyebrow').textContent = views[view].eyebrow;
   $('#viewTitle').textContent = views[view].title;
+  renderLaunchWorkspace();
   renderExtension();
   drawLaunchCanvas();
+}
+
+function launchWorkspaceStatus() {
+  const fundingEstimateStatus = classicFundingEstimateStatus(currentLaunchConfig());
+  const estimate = fundingEstimateStatus.matchesConfig ? state.classicFundingEstimate : null;
+  const proof = currentLaunchProof();
+  const recoveryCount = Number(state.recovery.failedJournalCount || 0)
+    + Number(state.recovery.pendingWalletCount || 0);
+  const readinessStatus = state.executionReadiness?.status;
+  return {
+    configure: state.launchPlan ? 'Plan staged' : 'Token & pools',
+    fund: fundingEstimateStatus.stale
+      ? 'Refresh estimate'
+      : estimate?.totalSol
+        ? `${Number(estimate.totalSol).toFixed(2)} SOL`
+        : 'Estimate',
+    execute: state.fullRunRunning || state.realExecutionRunning || state.demoLaunchRunning
+      ? 'Running'
+      : readinessStatus === 'ready'
+        ? 'Ready'
+        : readinessStatus === 'blocked'
+          ? 'Blocked'
+          : 'Preflight',
+    verify: proof ? 'Proof loaded' : 'Needs proof',
+    recover: recoveryCount ? `${recoveryCount} item${recoveryCount === 1 ? '' : 's'}` : 'Clear',
+  };
+}
+
+function renderLaunchWorkspace() {
+  const workspace = launchWorkspaces.some((item) => item.id === state.launchWorkspace)
+    ? state.launchWorkspace
+    : 'configure';
+  state.launchWorkspace = workspace;
+  document.body.dataset.launchWorkspace = workspace;
+
+  const statuses = launchWorkspaceStatus();
+  $$('.launch-workspace-tab').forEach((button) => {
+    const selected = button.dataset.launchWorkspace === workspace;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-selected', selected ? 'true' : 'false');
+    button.tabIndex = selected ? 0 : -1;
+  });
+  $$('[data-launch-workspace-state]').forEach((label) => {
+    label.textContent = statuses[label.dataset.launchWorkspaceState] || '';
+  });
+  $$('[data-launch-pane]').forEach((panel) => {
+    const workspaces = String(panel.dataset.launchPane || '').split(/\s+/).filter(Boolean);
+    const active = workspaces.includes(workspace);
+    panel.hidden = !active;
+    panel.classList.toggle('is-active-launch-pane', active);
+  });
+  $$('[data-classic-workspace]').forEach((panel) => {
+    panel.hidden = panel.dataset.classicWorkspace !== workspace;
+  });
+
+  const selectedWorkspace = launchWorkspaces.find((item) => item.id === workspace);
+  const viewport = $('#launchWorkspaceViewport');
+  if (viewport && selectedWorkspace) {
+    viewport.setAttribute('aria-label', `${selectedWorkspace.title}: ${selectedWorkspace.detail}`);
+  }
+}
+
+function setLaunchWorkspace(workspace, { focus = false } = {}) {
+  if (!launchWorkspaces.some((item) => item.id === workspace)) return;
+  state.launchWorkspace = workspace;
+  try {
+    window.localStorage?.setItem('trebuchet-v2-launch-workspace', workspace);
+  } catch {
+    // Local storage is optional in file previews and restricted browser contexts.
+  }
+  renderLaunchWorkspace();
+  const viewport = $('#launchWorkspaceViewport');
+  if (viewport) viewport.scrollTop = 0;
+  if (focus) {
+    const tab = $(`.launch-workspace-tab[data-launch-workspace="${workspace}"]`);
+    tab?.focus();
+  }
+}
+
+function restoreLaunchWorkspace() {
+  try {
+    const saved = window.localStorage?.getItem('trebuchet-v2-launch-workspace');
+    if (launchWorkspaces.some((item) => item.id === saved)) state.launchWorkspace = saved;
+  } catch {
+    // Start on Configure when local storage is unavailable.
+  }
 }
 
 function renderGlobalStrip() {
@@ -11091,45 +11136,60 @@ function renderClassicBridge() {
   }).join('');
 
   $('#classicBridge').innerHTML = `
-    <div class="classic-bridge-head">
-      <span>
-        <span class="eyebrow">Classic parity bridge</span>
-        <h2>Production engine surfaces in v2</h2>
-      </span>
-      <span class="risk-badge ${state.apiStatus === 'connected' ? '' : 'warn'}">${state.apiStatus === 'connected' ? 'Local API' : 'Preview'}</span>
-    </div>
-    <div class="classic-stats">
-      <span><small>Pools</small><strong>${poolCount}</strong></span>
-      <span><small>LP slices</small><strong>${sliceCount}</strong></span>
-      <span><small>Ladder</small><strong>${ladderCount}</strong></span>
-      <span><small>Prealloc</small><strong>${topology.preallocation.supplyPercent.toFixed(1)}%</strong></span>
-      <span><small>Reserve</small><strong>${topology.reservePercent.toFixed(1)}%</strong></span>
-      <span><small>Funding</small><strong>${fundingEstimateStatus.stale ? 'Re-estimate' : totalSol ? `${totalSol.toFixed(2)} SOL` : 'Run estimate'}</strong></span>
-    </div>
-    <div class="execution-readiness ${escapeHtml(effectiveReadinessMeta.className)}">
-      <div class="readiness-main">
+    <section class="classic-workspace-section classic-workspace-fund" data-classic-workspace="fund">
+      <div class="classic-bridge-head">
         <span>
-          <span class="eyebrow">Execution readiness</span>
-          <strong>${escapeHtml(readiness?.nextAction || 'Classic endpoint check')}</strong>
-          <small>${escapeHtml(readinessDetail)}</small>
+          <span class="eyebrow">Funding workspace</span>
+          <h2>Cost, balance, and quote readiness</h2>
         </span>
-        <span class="readiness-counts">
-          <strong>${escapeHtml(readiness?.nextEndpoint || 'No endpoint')}</strong>
-          <small>${blockers.length + quoteSafety.blockers.length} blocker${blockers.length + quoteSafety.blockers.length === 1 ? '' : 's'} · ${warnings.length + quoteSafety.warnings.length} warning${warnings.length + quoteSafety.warnings.length === 1 ? '' : 's'}</small>
+        <span class="risk-badge ${state.apiStatus === 'connected' ? '' : 'warn'}">${state.apiStatus === 'connected' ? 'Local API' : 'Preview'}</span>
+      </div>
+      <div class="classic-stats">
+        <span><small>Pools</small><strong>${poolCount}</strong></span>
+        <span><small>LP slices</small><strong>${sliceCount}</strong></span>
+        <span><small>Ladder</small><strong>${ladderCount}</strong></span>
+        <span><small>Prealloc</small><strong>${topology.preallocation.supplyPercent.toFixed(1)}%</strong></span>
+        <span><small>Reserve</small><strong>${topology.reservePercent.toFixed(1)}%</strong></span>
+        <span><small>Funding</small><strong>${fundingEstimateStatus.stale ? 'Re-estimate' : totalSol ? `${totalSol.toFixed(2)} SOL` : 'Run estimate'}</strong></span>
+      </div>
+      ${renderQuoteAcquirePanel()}
+    </section>
+    <section class="classic-workspace-section classic-workspace-execute" data-classic-workspace="execute">
+      <div class="classic-bridge-head">
+        <span>
+          <span class="eyebrow">Execution workspace</span>
+          <h2>Preflight and guarded launch phases</h2>
         </span>
         <span class="risk-badge ${escapeHtml(effectiveReadinessMeta.className)}">${escapeHtml(effectiveReadinessMeta.label)}</span>
-        ${state.demoActive ? `<button class="pill-button" type="button" data-action="run-demo-launch" ${state.demoLaunchRunning ? 'disabled' : ''}>${escapeHtml(demoRunLabel)}</button>` : ''}
-        ${!state.demoActive ? `<button class="pill-button danger" type="button" data-action="run-full-launch" ${!canRunFull ? 'disabled' : ''}>${escapeHtml(fullRunLabel)}</button>` : ''}
-        ${!state.demoActive ? `<button class="pill-button" type="button" data-action="execute-next-run" ${!canExecuteNext || state.realExecutionRunning || state.fullRunRunning ? 'disabled' : ''}>${escapeHtml(executeNextLabel)}</button>` : ''}
-        <button class="pill-button" type="button" data-action="check-readiness" ${state.executionChecking ? 'disabled' : ''}>${state.executionChecking ? 'Checking' : 'Check'}</button>
-    </div>
-    <div class="readiness-phases">${phaseSummary}</div>
-    </div>
-    ${renderQuoteAcquirePanel()}
-    ${renderCancelRefundPanel(config)}
-    ${renderFinalizationPanel()}
-    <div class="classic-phase-grid">${phaseRows}</div>
-    <div class="phase-tree">${renderClassicPhaseTree(topology)}</div>
+      </div>
+      <div class="execution-readiness ${escapeHtml(effectiveReadinessMeta.className)}">
+        <div class="readiness-main">
+          <span>
+            <span class="eyebrow">Execution readiness</span>
+            <strong>${escapeHtml(readiness?.nextAction || 'Classic endpoint check')}</strong>
+            <small>${escapeHtml(readinessDetail)}</small>
+          </span>
+          <span class="readiness-counts">
+            <strong>${escapeHtml(readiness?.nextEndpoint || 'No endpoint')}</strong>
+            <small>${blockers.length + quoteSafety.blockers.length} blocker${blockers.length + quoteSafety.blockers.length === 1 ? '' : 's'} · ${warnings.length + quoteSafety.warnings.length} warning${warnings.length + quoteSafety.warnings.length === 1 ? '' : 's'}</small>
+          </span>
+          <span class="risk-badge ${escapeHtml(effectiveReadinessMeta.className)}">${escapeHtml(effectiveReadinessMeta.label)}</span>
+          ${state.demoActive ? `<button class="pill-button" type="button" data-action="run-demo-launch" ${state.demoLaunchRunning ? 'disabled' : ''}>${escapeHtml(demoRunLabel)}</button>` : ''}
+          ${!state.demoActive ? `<button class="pill-button danger" type="button" data-action="run-full-launch" ${!canRunFull ? 'disabled' : ''}>${escapeHtml(fullRunLabel)}</button>` : ''}
+          ${!state.demoActive ? `<button class="pill-button" type="button" data-action="execute-next-run" ${!canExecuteNext || state.realExecutionRunning || state.fullRunRunning ? 'disabled' : ''}>${escapeHtml(executeNextLabel)}</button>` : ''}
+          <button class="pill-button" type="button" data-action="check-readiness" ${state.executionChecking ? 'disabled' : ''}>${state.executionChecking ? 'Checking' : 'Check'}</button>
+        </div>
+        <div class="readiness-phases">${phaseSummary}</div>
+      </div>
+      <div class="classic-phase-grid">${phaseRows}</div>
+      <div class="phase-tree">${renderClassicPhaseTree(topology)}</div>
+    </section>
+    <section class="classic-workspace-section classic-workspace-verify" data-classic-workspace="verify">
+      ${renderFinalizationPanel()}
+    </section>
+    <section class="classic-workspace-section classic-workspace-recover" data-classic-workspace="recover">
+      ${renderCancelRefundPanel(config)}
+    </section>
   `;
 }
 
@@ -13162,11 +13222,11 @@ function renderWallet() {
   $('.wallet-led').classList.toggle('is-on', state.connected);
   const walletRows = walletAccounts();
   const selectedPublicKey = selectedLaunchWalletPublicKey();
-  const selectedRow = selectedPublicKey
-    ? walletRows.find((item) => item.publicKey === selectedPublicKey || item.id === selectedPublicKey)
-    : null
-    || walletRows[0]
-    || null;
+  const selectedRow = (
+    selectedPublicKey
+      ? walletRows.find((item) => item.publicKey === selectedPublicKey || item.id === selectedPublicKey)
+      : null
+  ) || walletRows[0] || null;
   const rawWallet = selectedManagedWallet();
   const qrCode = rawWallet?.qrCode || (
     state.walletQr.publicKey === selectedPublicKey ? state.walletQr.qrCode : null
@@ -13201,9 +13261,31 @@ function renderWallet() {
       state: journal.status || 'Journal',
     })),
   ];
-  const assetRows = state.apiStatus === 'connected'
-    ? [...recoveryAssets, ...assets]
-    : assets;
+  const proof = currentLaunchProof();
+  const proofMint = proof?.token?.mint || proof?.mint || null;
+  const proofPools = launchProofPoolIds(proof);
+  const proofReportUri = proof?.report?.jsonUri || proof?.reportPublish?.jsonUri || null;
+  const proofAssets = proof ? [
+    proofMint ? {
+      type: 'Token proof',
+      name: proof?.token?.symbol || shortAddress(proofMint),
+      detail: proofMint,
+      state: proof?.demo ? 'Demo' : 'Verified',
+    } : null,
+    proofPools.length ? {
+      type: 'Liquidity proof',
+      name: `${proofPools.length} recorded pool${proofPools.length === 1 ? '' : 's'}`,
+      detail: proofPools.map(shortAddress).join(', '),
+      state: 'Verified',
+    } : null,
+    proofReportUri ? {
+      type: 'Launch report',
+      name: 'Published report artifact',
+      detail: proofReportUri,
+      state: 'Verified',
+    } : null,
+  ].filter(Boolean) : [];
+  const assetRows = [...recoveryAssets, ...proofAssets];
 
   $('#accountList').innerHTML = walletRows.map((item) => `
     <article class="account-row ${item.id === state.accountId ? 'is-active' : ''}">
@@ -13332,10 +13414,17 @@ function renderWallet() {
 
 function renderDiscovery() {
   const selected = selectedDiscovery();
-  const ecosystem = selectedEcosystem();
+  const rows = filteredDiscoveryRecords();
+  const connected = state.apiStatus === 'connected';
+  const queryInput = $('#discoverySearchInput');
+  const mintInput = $('#discoveryMintInput');
+  const inspectButton = $('#discoveryInspectButton');
+
   $('#discoverySourceBanner').innerHTML = `
-    <span class="risk-badge warn">${escapeHtml(discoveryDataNotice.label)}</span>
-    <span>${escapeHtml(discoveryDataNotice.detail)}</span>
+    <span class="risk-badge ${connected ? '' : 'warn'}">${connected ? 'Live RPC' : 'Offline'}</span>
+    <span>${connected
+      ? 'On-demand mint metadata, authority, supply, concentration, and local Trebuchet provenance.'
+      : 'Connect through the local Trebuchet app to inspect live Solana mint evidence.'}</span>
   `;
   $('#standardsStrip').innerHTML = standards.map((item) => `
     <span class="standard-chip">
@@ -13344,92 +13433,162 @@ function renderDiscovery() {
     </span>
   `).join('');
 
-  $('#discoveryTable').innerHTML = discoveryTokens.map((token) => `
-    <button class="discovery-row ${token.id === state.selectedDiscoveryId ? 'is-active' : ''}" type="button" data-action="select-discovery" data-token="${escapeHtml(token.id)}">
-      <span class="token-mark" style="border-color:${token.color}; color:${token.color}; background:color-mix(in srgb, ${token.color} 12%, var(--panel))">${escapeHtml(token.symbol.slice(0, 2))}</span>
-      <span class="discovery-copy">
-        <h3>${escapeHtml(token.name)} <span class="muted">${escapeHtml(token.symbol)}</span></h3>
-        <span class="metric-line">
-          <span>${escapeHtml(token.metrics.liquidity)}</span>
-          <span>${escapeHtml(token.metrics.holders)}</span>
-          <span>${escapeHtml(avatarEcosystems[token.id].collection.supply.toLocaleString())} avatars</span>
-          <span>${escapeHtml(avatarEcosystems[token.id].swarm.activeAvatars.toLocaleString())} active AI</span>
-        </span>
-      </span>
-      <span class="score-block">
-        <strong>${token.score}</strong>
-        <span class="meter"><span style="width:${token.score}%"></span></span>
-      </span>
-      <span class="source-block">
-        <span class="risk-badge ${token.status === 'Watch' ? 'warn' : ''}">${escapeHtml(token.status)}</span>
-        <span class="risk-badge warn">${escapeHtml(token.dataSource || discoveryDataNotice.label)}</span>
-        <span>${escapeHtml(token.confidence)} confidence</span>
-      </span>
-    </button>
-  `).join('');
+  if (queryInput && queryInput.value !== state.discovery.query) queryInput.value = state.discovery.query;
+  if (mintInput && state.discovery.lastInspectedMint && !mintInput.value) mintInput.value = state.discovery.lastInspectedMint;
+  if (inspectButton) {
+    inspectButton.disabled = state.discovery.inspecting || !connected;
+    inspectButton.innerHTML = state.discovery.inspecting
+      ? '<i class="fa-solid fa-spinner fa-spin"></i><span>Inspecting</span>'
+      : '<i class="fa-solid fa-magnifying-glass-chart"></i><span>Inspect mint</span>';
+  }
+  $('#discoveryRegistryCount').textContent = `${state.discovery.records.length} saved`;
+  document.querySelectorAll('[data-discovery-filter]').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.discoveryFilter === state.discovery.filter);
+  });
+  $('#discoveryError').innerHTML = state.discovery.error
+    ? `<span><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(state.discovery.error)}</span>`
+    : '';
 
-  $('#selectedDiscoveryTitle').textContent = selected.symbol;
-  $('#evidencePanel').innerHTML = `
-    <div class="evidence-head">
-      <span class="token-mark" style="border-color:${selected.color}; color:${selected.color}; background:color-mix(in srgb, ${selected.color} 12%, var(--panel))">${escapeHtml(selected.symbol.slice(0, 2))}</span>
-      <span>
-        <h3>${escapeHtml(selected.name)}</h3>
-        <p>${escapeHtml(selected.summary)}</p>
-      </span>
+  $('#discoveryTable').innerHTML = rows.length ? rows.map((token) => {
+    const rawTopTen = token.metrics?.topTenPercent;
+    const topTen = rawTopTen == null ? null : Number(rawTopTen);
+    const supply = token.metrics?.supply
+      ? compactAmount(Number(token.metrics.supply))
+      : 'Supply unavailable';
+    const provenance = discoveryLocalProvenance(token);
+    return `
+      <button class="discovery-row ${token.id === state.selectedDiscoveryId ? 'is-active' : ''}" type="button" data-action="select-discovery" data-token="${escapeHtml(token.id)}">
+        <span class="token-mark">${escapeHtml(token.symbol.slice(0, 2))}</span>
+        <span class="discovery-copy">
+          <h3>${escapeHtml(token.name)} <span class="muted">${escapeHtml(token.symbol)}</span></h3>
+          <span class="metric-line">
+            <span>${escapeHtml(supply)}</span>
+            <span>${topTen != null && Number.isFinite(topTen) ? `${topTen.toFixed(2)}% top 10 accounts` : 'Concentration unavailable'}</span>
+            <span>${escapeHtml(token.metrics?.program || 'Token program unknown')}</span>
+            <span>${provenance.proof || provenance.journal ? 'Local provenance' : 'RPC evidence'}</span>
+          </span>
+        </span>
+        <span class="score-block">
+          <strong>${token.score}</strong>
+          <span class="meter"><span style="width:${token.score}%"></span></span>
+        </span>
+        <span class="source-block">
+          <span class="risk-badge ${token.status === 'Watch' ? 'danger' : token.status === 'Review' ? 'warn' : ''}">${escapeHtml(token.status)}</span>
+          <span>${escapeHtml(token.confidence)} confidence</span>
+          <span>${formatAge(token.inspectedAt)}</span>
+        </span>
+      </button>
+    `;
+  }).join('') : `
+    <div class="discovery-empty">
+      <i class="fa-solid fa-satellite-dish"></i>
+      <strong>${state.discovery.records.length ? 'No saved tokens match this filter' : 'Inspect your first mint'}</strong>
+      <span>${state.discovery.records.length
+        ? 'Change the search or evidence filter.'
+        : 'Paste a Solana mint above. Results stay in this local browser profile.'}</span>
     </div>
-    <div class="evidence-row"><span>Score</span><strong>${selected.score} / 100</strong></div>
-    <div class="evidence-row"><span>Status</span><strong>${escapeHtml(selected.status)}</strong></div>
-    <div class="evidence-row"><span>Confidence</span><strong>${escapeHtml(selected.confidence)}</strong></div>
-    <div class="evidence-row"><span>Data status</span><strong>${escapeHtml(selected.dataSource || discoveryDataNotice.label)}</strong></div>
-    <div class="evidence-row"><span>Source</span><strong>${escapeHtml(selected.source)}</strong></div>
-    <div class="evidence-row"><span>Avatar collection</span><strong>${escapeHtml(ecosystem.collection.name)} / ${escapeHtml(ecosystem.collection.symbol)}</strong></div>
-    <div class="evidence-row"><span>Collection progress</span><strong>${ecosystem.collection.minted.toLocaleString()} / ${ecosystem.collection.supply.toLocaleString()} minted</strong></div>
-    <div class="evidence-row"><span>Runtime gate</span><strong>${escapeHtml(ecosystem.collection.gate)}</strong></div>
-    <div class="evidence-row"><span>Assignment</span><strong>${escapeHtml(ecosystem.collection.assignment)}</strong></div>
-    <div class="evidence-row"><span>AI room</span><strong>${escapeHtml(ecosystem.swarm.room)} / ${ecosystem.swarm.activeAvatars.toLocaleString()} active avatars</strong></div>
-    ${selected.evidence.map(([label, value]) => `
-      <div class="evidence-row">
-        <span>${escapeHtml(label)}</span>
-        <strong>${escapeHtml(value)}</strong>
-      </div>
-    `).join('')}
   `;
 
-  $('#selectedChatTitle').textContent = ecosystem.swarm.room;
-  $('#chatPanel').innerHTML = `
-    <div class="trigger-row">
-      ${ecosystem.swarm.triggers.map((trigger) => `<span>${escapeHtml(trigger)}</span>`).join('')}
+  $('#selectedDiscoveryTitle').textContent = selected?.symbol || '--';
+  if (!selected) {
+    $('#evidencePanel').innerHTML = '<div class="empty-state">Select or inspect a mint to see its evidence report.</div>';
+    return;
+  }
+
+  const provenance = discoveryLocalProvenance(selected);
+  const evidence = Array.isArray(selected.evidence)
+    ? selected.evidence.filter((item) => item.label !== 'Trebuchet provenance')
+    : [];
+  const inspectionSource = String(selected.source || 'Configured RPC')
+    .replace(/\s*\+\s*local Trebuchet journals$/i, '');
+  const warningSummaries = (selected.warnings || []).map(discoveryWarningSummary);
+  const localEvidence = [
+    provenance.journal ? `
+      <div class="audit-line">
+        <span class="evidence-dot pass"></span>
+        <span><strong>Launch journal</strong><small>${escapeHtml(provenance.journal.status || 'recorded')} · ${formatDate(provenance.journal.updatedAt)}</small></span>
+      </div>
+    ` : '',
+    provenance.proof ? `
+      <div class="audit-line">
+        <span class="evidence-dot pass"></span>
+        <span><strong>v2 proof bundle</strong><small>Matching local proof loaded</small></span>
+      </div>
+    ` : '',
+  ].filter(Boolean).join('');
+
+  $('#evidencePanel').innerHTML = `
+    <div class="evidence-head">
+      <span class="token-mark">${escapeHtml(selected.symbol.slice(0, 2))}</span>
+      <span>
+        <h3>${escapeHtml(selected.name)}</h3>
+        <p>${escapeHtml(selected.summary || 'Live token evidence inspection.')}</p>
+      </span>
     </div>
-    <div class="chat-feed">
-      ${ecosystem.swarm.events.map((event) => `
-        <article class="chat-event">
-          <div class="chat-route">
-            <span>${escapeHtml(event.from)}</span>
-            <i class="fa-solid fa-arrow-right"></i>
-            <span>${escapeHtml(event.to)}</span>
-          </div>
-          <p>${escapeHtml(event.line)}</p>
-          <div class="chat-amount">
-            <i class="fa-solid fa-coins"></i>
-            <span>${escapeHtml(event.amount)}</span>
-          </div>
-        </article>
-      `).join('')}
+    <div class="evidence-summary-strip">
+      <span><small>Score</small><strong>${selected.score} · ${escapeHtml(selected.status)}</strong></span>
+      <span><small>Confidence</small><strong>${escapeHtml(selected.confidence)}</strong></span>
+      <span><small>Decimals</small><strong>${selected.decimals ?? '—'}</strong></span>
     </div>
-    <div class="avatar-strip compact">
-      ${ecosystem.avatars.map((avatar) => `
-        <article class="avatar-card">
-          <span class="avatar-mark" style="border-color:${avatar.color}; color:${avatar.color}; background:color-mix(in srgb, ${avatar.color} 12%, var(--panel))">${escapeHtml(avatarInitials(avatar.name))}</span>
-          <span>
-            <h3>${escapeHtml(avatar.name)}</h3>
-            <p>${escapeHtml(avatar.role)}</p>
-          </span>
-        </article>
+    <div class="evidence-mint-line">
+      <small>Mint</small>
+      <code title="${escapeHtml(selected.mint)}">${escapeHtml(selected.mint)}</code>
+    </div>
+    <div class="evidence-facts">
+      ${evidence.map((item) => {
+        const value = item.label === 'Market price' && selected.priceUsd
+          ? formatDiscoveryPrice(selected.priceUsd)
+          : item.value;
+        return `
+          <div class="evidence-fact">
+            <span>${escapeHtml(item.label)}</span>
+            <strong><span class="evidence-dot ${escapeHtml(item.state || 'unknown')}"></span>${escapeHtml(value)}</strong>
+          </div>
+        `;
+      }).join('')}
+    </div>
+    <div class="discovery-actions">
+      <button class="secondary-button compact" type="button" data-action="refresh-discovery" data-token="${escapeHtml(selected.mint)}" ${state.discovery.inspecting ? 'disabled' : ''}>
+        <i class="fa-solid fa-rotate"></i><span>Refresh</span>
+      </button>
+      <button class="secondary-button compact" type="button" data-action="copy-discovery-mint" data-token="${escapeHtml(selected.mint)}">
+        <i class="fa-solid fa-copy"></i><span>Copy mint</span>
+      </button>
+      <button class="secondary-button compact danger-button" type="button" data-action="remove-discovery" data-token="${escapeHtml(selected.mint)}">
+        <i class="fa-solid fa-trash"></i><span>Remove</span>
+      </button>
+    </div>
+    <div class="discovery-audit">
+      <div class="audit-line">
+        <span class="evidence-dot pass"></span>
+        <span><strong>${escapeHtml(inspectionSource)}</strong><small>Inspected ${formatAge(selected.inspectedAt)}</small></span>
+      </div>
+      ${localEvidence || `
+        <div class="audit-line muted">
+          <i class="fa-solid fa-link-slash"></i>
+          <span><strong>RPC only</strong><small>No local launch artifacts linked</small></span>
+        </div>
+      `}
+      ${warningSummaries.map((warning) => `
+        <details class="discovery-warning-line">
+          <summary>
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span><strong>${escapeHtml(warning.title)}</strong><small>${escapeHtml(warning.detail)}</small></span>
+            <i class="fa-solid fa-chevron-down"></i>
+          </summary>
+          <code>${escapeHtml(warning.raw)}</code>
+        </details>
       `).join('')}
+      <details class="discovery-notes" ${selected.notes ? 'open' : ''}>
+        <summary><span>Operator notes</span><small>${selected.notes ? 'Saved locally' : 'Add context'}</small></summary>
+        <label class="discovery-notes-editor">
+          <textarea id="discoveryNotesInput" rows="2" maxlength="500" placeholder="Questions or verification context…">${escapeHtml(selected.notes || '')}</textarea>
+          <small>Stored only in this browser profile.</small>
+        </label>
+      </details>
     </div>
   `;
 }
-
 function approvalTransaction() {
   if (state.activeApprovalId) {
     const tx = state.transactions.find((item) => item.id === state.activeApprovalId);
@@ -13690,9 +13849,7 @@ function renderSettings() {
         <h3>${escapeHtml(setting.title)}</h3>
         <p>${escapeHtml(setting.detail)}</p>
       </span>
-      <button class="toggle ${setting.enabled ? 'is-on' : ''}" type="button" data-action="toggle-setting" data-setting="${escapeHtml(setting.id)}" aria-label="${escapeHtml(setting.title)}">
-        <span></span>
-      </button>
+      <span class="risk-badge">${escapeHtml(setting.status)}</span>
     </article>
   `).join('')}`;
 
@@ -14447,6 +14604,7 @@ function renderAll() {
   renderSettings();
   renderHistory();
   renderActivityLogDrawer();
+  renderLaunchWorkspace();
   drawLaunchCanvas();
 }
 
@@ -18365,6 +18523,20 @@ function drawLaunchCanvas() {
 }
 
 function handleDynamicInput(event) {
+  if (event.target.id === 'discoverySearchInput') {
+    state.discovery.query = event.target.value;
+    renderDiscovery();
+    return;
+  }
+
+  if (event.target.id === 'discoveryNotesInput') {
+    const selected = selectedDiscovery();
+    if (!selected) return;
+    selected.notes = event.target.value.slice(0, 500);
+    persistDiscoveryRegistry();
+    return;
+  }
+
   const customInput = event.target.closest('[data-custom-pool-field]');
   if (customInput) {
     const pool = state.customPools.find((item) => item.id === customInput.dataset.poolId);
@@ -18411,10 +18583,42 @@ function handleClick(event) {
     return;
   }
 
+  const workspaceControl = event.target.closest('[data-launch-workspace]');
+  if (workspaceControl) {
+    setLaunchWorkspace(workspaceControl.dataset.launchWorkspace, {
+      focus: workspaceControl.classList.contains('launch-workspace-tab'),
+    });
+    return;
+  }
+
+  const discoveryFilter = event.target.closest('[data-discovery-filter]');
+  if (discoveryFilter) {
+    state.discovery.filter = discoveryFilter.dataset.discoveryFilter;
+    renderDiscovery();
+    return;
+  }
+
   const actionTarget = event.target.closest('[data-action]');
   if (!actionTarget) return;
 
   const { action } = actionTarget.dataset;
+  if (state.activeView === 'launch') {
+    const actionWorkspace = {
+      'estimate-funding': 'fund',
+      'start-quote-acquire': 'fund',
+      'check-readiness': 'execute',
+      'run-demo-launch': 'execute',
+      'execute-next-run': 'execute',
+      'run-full-launch': 'execute',
+      'publish-launch-report': 'verify',
+      'download-launch-dossier': 'verify',
+      'compare-classic-report': 'verify',
+      'inspect-recovery': 'recover',
+      'cancel-refund-launch': 'recover',
+      'resume-journal': 'recover',
+    }[action];
+    if (actionWorkspace) setLaunchWorkspace(actionWorkspace);
+  }
   if (action === 'review') {
     state.connected = true;
     state.activeApprovalId = actionTarget.dataset.tx;
@@ -18912,16 +19116,23 @@ function handleClick(event) {
 
   if (action === 'select-discovery') {
     state.selectedDiscoveryId = actionTarget.dataset.token;
+    persistDiscoveryRegistry();
     renderDiscovery();
     return;
   }
 
-  if (action === 'toggle-setting') {
-    const setting = settings.find((item) => item.id === actionTarget.dataset.setting);
-    if (!setting) return;
-    setting.enabled = !setting.enabled;
-    renderSettings();
-    notify(`${setting.title} ${setting.enabled ? 'enabled' : 'disabled'}`);
+  if (action === 'refresh-discovery') {
+    inspectDiscoveryMint(actionTarget.dataset.token);
+    return;
+  }
+
+  if (action === 'copy-discovery-mint') {
+    copyText(actionTarget.dataset.token, 'Token mint');
+    return;
+  }
+
+  if (action === 'remove-discovery') {
+    removeDiscoveryRecord(actionTarget.dataset.token);
     return;
   }
 
@@ -18937,6 +19148,33 @@ function bindEvents() {
     if (event.key === 'Escape' && state.activityLog.open) {
       state.activityLog.open = false;
       renderActivityLogDrawer();
+      return;
+    }
+
+    const workspaceTab = event.target.closest?.('.launch-workspace-tab');
+    if (workspaceTab && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      const tabs = $$('.launch-workspace-tab');
+      const currentIndex = tabs.indexOf(workspaceTab);
+      if (currentIndex < 0) return;
+      event.preventDefault();
+      const nextIndex = event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? tabs.length - 1
+          : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      setLaunchWorkspace(tabs[nextIndex].dataset.launchWorkspace, { focus: true });
+      return;
+    }
+
+    const tagName = String(event.target.tagName || '').toLowerCase();
+    const editing = ['input', 'textarea', 'select'].includes(tagName) || event.target.isContentEditable;
+    if (!editing && event.altKey && !event.metaKey && !event.ctrlKey && /^Digit[1-5]$/.test(event.code)) {
+      const index = Number(event.code.slice(-1)) - 1;
+      const workspace = launchWorkspaces[index];
+      if (workspace) {
+        event.preventDefault();
+        setLaunchWorkspace(workspace.id, { focus: true });
+      }
     }
   });
 
@@ -18960,6 +19198,10 @@ function bindEvents() {
 
   $('#stageButton').addEventListener('click', stageTransactions);
   $('#simulateButton').addEventListener('click', simulateLaunch);
+  $('#discoveryInspectForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    inspectDiscoveryMint();
+  });
   $('#tokenLogoFile').addEventListener('change', (event) => {
     selectTokenLogo(event.target.files?.[0] || null);
   });
@@ -19027,6 +19269,8 @@ window.addEventListener?.('solana#initialized', () => {
 restoreExecutionLedger();
 restoreLaunchProof();
 restoreClassicReportComparison();
+restoreDiscoveryRegistry();
+restoreLaunchWorkspace();
 bindEvents();
 initializeSolflareWallet();
 setView('launch');

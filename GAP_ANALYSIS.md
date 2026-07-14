@@ -22,6 +22,7 @@ What v2 has today:
 
 - Modern app shell under `public/v2/`.
 - Sidebar/topbar navigation for Launch, Wallet, Discovery, History, Settings.
+- Fixed-height desktop workspaces with view-owned scrolling; Launch keeps its cockpit fixed while Configure/Fund/Execute/Verify/Recover switch in place, and Discovery keeps its registry and evidence rail independently scrollable.
 - Local API client with static-file fallback.
 - `file://` previews boot the v2 cockpit JavaScript without a local server, do not manufacture fake launch-wallet placeholders, and `npm run test:v2:viewport` smoke-checks desktop and mobile rendering for dynamic charts, funding, parity rows, horizontal overflow, and primary cockpit first-viewport fit while writing a self-describing, check-contract-bearing, hash-bound `public/v2/viewport-smoke-proof.json` artifact.
 - Boot reads local prefs, demo status, RPC config/health, launch journals, and pending wallets when served by the local app.
@@ -63,7 +64,7 @@ What v2 has today:
 - Live operations diagnostics, polling `/api/lp-progress`, `/api/airdrop-progress`, and `/api/server-logs`, plus a larger filterable activity-log drawer.
 - Classic per-position phase tree preview for pool create, slice open/lock, ladder open/lock, support, airdrop, report, and sweep checkpoints.
 - Agent-style launch panel with setup, next move, signatures, and avatar collection preview; the agent status, checkpoint highlight, and compact action rail now derive from the same live/staged progress context as the signature rail.
-- Mock Discovery dataset with token, NFT avatar, and AI swarm concepts, now visibly labeled as sample evidence until real Trebuchet report ingestion and chain/indexer verification are connected.
+- Live Discovery registry backed by `/api/v2/discovery/inspect`: operators can inspect any Solana mint through the configured RPC, persist/filter/refresh/remove records locally, audit mint/freeze authority and Raydium CLMM compatibility, read supply and top-token-account concentration, attach local notes, and cross-check matching Trebuchet journals and the loaded v2 proof. The scripted sample tokens and AI transaction-room events have been removed.
 - Structural tests for navigation, render targets, API fallback, v2 launch plan, and branding.
 
 What remains to prove in field testing:
@@ -73,6 +74,8 @@ What remains to prove in field testing:
 ## No-Scroll Control Panel Target
 
 The no-scroll first screen should be a cockpit, not a wizard and not a document.
+
+As of 2026-07-14, the v2 launch surface uses a fixed-height desktop shell. The cockpit and next action remain visible while Configure, Fund, Execute, Verify, and Recover switch the active workspace below them. Document-level scrolling is disabled on desktop; only the selected workspace pane scrolls. The viewport smoke test now opens every workspace and verifies the complete desktop shell, rather than treating the cockpit card alone as the first-viewport boundary.
 
 Recommended first viewport:
 
@@ -151,7 +154,7 @@ v1 has charts and visual explainers that v2 has not ported.
 | Launch journal recovery | Real | Wired action bridge | P0 | v2 can resume/dismiss journals through classic recovery routes; live LP/airdrop events now feed the main run strip and checkpoint tree. |
 | Activity log | Real | Wired drawer + durable audit strip | P1 | v2 shows recent backend logs plus LP and airdrop progress in a larger filterable activity drawer, plus a reload-safe History audit of guarded v2 operations. |
 | Update/release state | Real | Wired settings bridge | P0 | v2 shows app version/release state, discloses unsigned/not-notarized desktop artifact trust status from the local app endpoint, parses selected-download trust from release notes when the classic Electron update checker finds an update, renders pushed update results, links to releases, and persists the startup auto-check preference. |
-| Discovery | Not v1 main surface | Mock v2 concept | P1 | v2 addition, still hardcoded, with visible mock/sample provenance labels until real local/indexed evidence ingestion is connected. |
+| Discovery | Not v1 main surface | Functional RPC-backed prototype | P1 | v2 inspects real mint metadata, authority posture, supply, largest token-account concentration, price availability, and local Trebuchet provenance on demand. Saved registry state and operator notes stay local; full holder ownership and DEX liquidity-depth indexing remain future work. |
 | NFT avatar collection launch | Not v1 | Concept only | P1 | New v2 feature; should not block v1 parity unless positioned as core. |
 | AI token chat/swarm | Not v1 | Concept only | P2 | Product differentiator, but after launch parity. |
 
@@ -182,7 +185,7 @@ Replacement criteria are now intentionally stricter than preview UI availability
 
 ### 4. Product Expansion After Parity
 
-Discovery, NFT avatar collection launch, and AI token chat/swarm remain v2 product expansion work. They should stay behind launch parity until the Classic replacement gate has passed with live artifacts.
+Discovery now has a functional local/RPC-backed prototype. Full holder ownership indexing, multi-DEX liquidity depth, NFT avatar collection execution, and AI token chat/swarm remain product expansion work and should stay behind launch parity until the Classic replacement gate has passed with live artifacts.
 
 ## Field Verification Sequence
 

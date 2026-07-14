@@ -7,6 +7,7 @@
   const V2_RUN_ARM_PATH = '/api/v2/run-envelope/arm';
   const V2_RUN_EXECUTE_NEXT_PATH = '/api/v2/run-envelope/execute-next';
   const V2_VIEWPORT_SMOKE_PROOF_PATH = '/api/v2/viewport-smoke-proof';
+  const V2_DISCOVERY_INSPECT_PATH = '/api/v2/discovery/inspect';
   const WALLET_QR_PATH = '/api/wallet-qr';
   const PENDING_WALLETS_PATH = '/api/pending-wallets';
   const SECRET_PIN_PATH = '/api/secret-pin';
@@ -317,8 +318,10 @@
         throw new V2ApiError('Fetch is unavailable in this runtime.', { code: 'NO_FETCH' });
       }
 
-      const headers = copyHeaders(init.headers);
-      let body = init.body;
+      const { timeoutMs: timeoutOverride, ...requestInit } = init;
+      const effectiveTimeoutMs = Number.isFinite(timeoutOverride) ? timeoutOverride : timeoutMs;
+      const headers = copyHeaders(requestInit.headers);
+      let body = requestInit.body;
       if (isPlainObject(body)) {
         headers['Content-Type'] = headers['Content-Type'] || 'application/json';
         body = JSON.stringify(body);
@@ -326,15 +329,15 @@
       headers.Accept = headers.Accept || 'application/json';
 
       const AbortControllerCtor = global.AbortController;
-      const controller = timeoutMs > 0 && AbortControllerCtor ? new AbortControllerCtor() : null;
+      const controller = effectiveTimeoutMs > 0 && AbortControllerCtor ? new AbortControllerCtor() : null;
       const timeoutId = controller
-        ? global.setTimeout(() => controller.abort(), timeoutMs)
+        ? global.setTimeout(() => controller.abort(), effectiveTimeoutMs)
         : null;
 
       try {
         const response = await fetchImpl(resolvePath(path), {
           credentials: 'same-origin',
-          ...init,
+          ...requestInit,
           headers,
           body,
           signal: init.signal || controller?.signal,
@@ -418,6 +421,18 @@
         throw new V2ApiError('Execution readiness response missing readiness.', { code: 'BAD_EXECUTION_READINESS' });
       }
       return data.readiness;
+    }
+
+    async function inspectDiscoveryToken(mint) {
+      const data = await request(V2_DISCOVERY_INSPECT_PATH, {
+        method: 'POST',
+        body: { mint: String(mint || '').trim() },
+        timeoutMs: 20000,
+      });
+      if (!data?.record) {
+        throw new V2ApiError('Discovery response missing token record.', { code: 'BAD_DISCOVERY_RECORD' });
+      }
+      return data.record;
     }
 
     async function runDemoLaunch({ walletPublicKey, config, fundingEstimate, airdropRecipients } = {}) {
@@ -869,6 +884,7 @@
       armRunEnvelope,
       generateManagedWallet,
       importManagedWallet,
+      inspectDiscoveryToken,
       listLaunchJournals,
       listVanityCandidates,
       listManagedWallets,
@@ -918,6 +934,7 @@
     SECRET_PIN_PATH,
     V2_DEMO_LAUNCH_RUN_PATH,
     V2_EXECUTION_READINESS_PATH,
+    V2_DISCOVERY_INSPECT_PATH,
     V2_RUN_ARM_PATH,
     V2_WALLETS_PATH,
     V2ApiError,

@@ -57,6 +57,7 @@ import * as userPrefs from './userPrefs.js';
 import * as updateCheckBridge from './updateCheckBridge.js';
 import * as demoChainService from './demoChainService.js';
 import {
+  Connection,
   Keypair,
   PublicKey,
 } from '@solana/web3.js';
@@ -75,6 +76,7 @@ import {
 import { normalizeDistribution } from './lpDistribution.js';
 import { isWalletEffectivelyEmpty } from './walletRecovery.js';
 import { buildV2ExecutionReadiness, buildV2LaunchPlan } from './v2LaunchPlan.js';
+import { buildDiscoveryRecord } from './discoveryService.js';
 
 // In-flight airdrop guard. Maps wallet public key → boolean (currently
 // running). Used to reject concurrent /api/transfer-assets and
@@ -817,6 +819,65 @@ app.get('/api/v2/viewport-smoke-proof', (_req, res) => {
         state: 'error',
         detail: `Viewport smoke proof could not be verified: ${error.message}`,
       },
+    });
+  }
+});
+
+app.post('/api/v2/discovery/inspect', async (req, res) => {
+  const mint = String(req.body?.mint || '').trim();
+  let mintPublicKey;
+  try {
+    mintPublicKey = new PublicKey(mint);
+  } catch {
+    return res.status(400).json({
+      success: false,
+      code: 'INVALID_MINT',
+      error: 'Enter a valid Solana token mint address.',
+    });
+  }
+
+  try {
+    const connection = new Connection(getRpcUrl(), 'confirmed');
+    const [metadataResult, compatibilityResult, supplyResult, largestResult] = await Promise.allSettled([
+      getTokenMetadata(mint),
+      getMintCompatibilityWithRaydiumClmm(connection, mintPublicKey),
+      connection.getTokenSupply(mintPublicKey, 'confirmed'),
+      connection.getTokenLargestAccounts(mintPublicKey, 'confirmed'),
+    ]);
+
+    if (supplyResult.status === 'rejected') {
+      throw new Error(supplyResult.reason?.message || 'Token supply could not be read from the configured RPC.');
+    }
+
+    const warnings = [];
+    if (metadataResult.status === 'rejected') warnings.push(`Metadata: ${metadataResult.reason?.message || 'lookup failed'}`);
+    if (compatibilityResult.status === 'rejected') warnings.push(`Authority audit: ${compatibilityResult.reason?.message || 'lookup failed'}`);
+    if (largestResult.status === 'rejected') warnings.push(`Concentration: ${largestResult.reason?.message || 'lookup failed'}`);
+
+    const matchingJournal = launchJournal
+      .list({ includeCompleted: true, includeArchived: true })
+      .filter((journal) => String(journal?.token?.mint || '') === mint)
+      .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0))[0] || null;
+
+    const rpcConfig = getRpcConfig();
+    const record = buildDiscoveryRecord({
+      mint,
+      metadata: metadataResult.status === 'fulfilled' ? metadataResult.value : null,
+      compatibility: compatibilityResult.status === 'fulfilled' ? compatibilityResult.value : null,
+      supply: supplyResult.value?.value || null,
+      largestAccounts: largestResult.status === 'fulfilled' ? largestResult.value?.value : null,
+      journal: matchingJournal,
+      rpcName: rpcConfig.saved?.find((entry) => entry.url === rpcConfig.active)?.name || 'Configured RPC',
+      warnings,
+    });
+
+    res.json({ success: true, record });
+  } catch (error) {
+    console.error(`Discovery inspection failed for ${mint}:`, error);
+    res.status(502).json({
+      success: false,
+      code: 'DISCOVERY_INSPECTION_FAILED',
+      error: error.message || 'Token inspection failed.',
     });
   }
 });

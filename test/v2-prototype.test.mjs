@@ -1878,18 +1878,31 @@ test('v2 concrete data-action controls have delegated handlers', () => {
   assert.deepEqual(missing, []);
 });
 
-test('v2 Discovery remains evidence-first without social mechanics', () => {
+test('v2 Discovery is a live, locally persisted evidence registry without social mechanics', () => {
   const combined = `${html}\n${css}\n${js}`;
 
-  assert.match(combined, /Ecosystem discovery/);
-  assert.match(combined, /Mock dataset/);
-  assert.match(combined, /Sample evidence only/);
-  assert.match(combined, /Real Trebuchet report ingestion and chain\/indexer verification are not connected yet/);
-  assert.match(combined, /Mock chain \+ indexer sample/);
-  assert.match(combined, /Data status/);
+  assert.match(combined, /Live Solana evidence/);
+  assert.match(combined, /Token registry/);
+  assert.match(combined, /inspectDiscoveryToken/);
+  assert.match(combined, /Live RPC/);
+  assert.match(combined, /top 10 accounts/i);
+  assert.match(combined, /local launch journal/i);
+  assert.match(combined, /DISCOVERY_STORAGE_KEY/);
   assert.match(combined, /confidence/i);
   assert.match(combined, /provenance/i);
-  assert.match(combined, /No Trebuchet report; chain evidence only/);
+  assert.match(js, /discoveryWarningSummary/);
+  assert.match(js, /Concentration check delayed/);
+  assert.match(js, /No local launch artifacts linked/);
+  assert.match(js, /discovery-warning-line/);
+  assert.match(js, /evidence-summary-strip/);
+  assert.match(js, /evidence-facts/);
+  assert.match(js, /Stored only in this browser profile/);
+  assert.doesNotMatch(html, /selectedChatTitle|id="chatPanel"/);
+  assert.match(js, /rawTopTen == null \? null : Number\(rawTopTen\)/);
+  assert.match(js, /topTen != null && Number\.isFinite\(topTen\)/);
+  assert.doesNotMatch(combined, /Mock dataset/);
+  assert.doesNotMatch(combined, /Mock sample/);
+  assert.doesNotMatch(combined, /Transaction Room/);
   assert.doesNotMatch(combined, /\bMy rating\b/i);
   assert.doesNotMatch(combined, /\bdata-rate\b/i);
   assert.doesNotMatch(combined, /\brenderRating\b/i);
@@ -1897,17 +1910,17 @@ test('v2 Discovery remains evidence-first without social mechanics', () => {
   assert.doesNotMatch(combined, /\bsocial vote/i);
 });
 
-test('v2 models avatar NFTs and AI chat as launchable token ecosystem primitives', () => {
+test('v2 keeps avatar NFTs as a configured launch primitive without fake AI runtime evidence', () => {
   const combined = `${html}\n${js}`;
 
   assert.match(combined, /Avatar Collection/);
   assert.match(combined, /NFT avatar collection/);
-  assert.match(combined, /Transaction Room/);
-  assert.match(combined, /avatarEcosystems/);
-  assert.match(combined, /wallet \+ token mint seed/);
   assert.match(combined, /NFT holder/);
-  assert.match(combined, /local avatar DB/);
+  assert.match(combined, /source: 'local-db'/);
   assert.match(combined, /data-action="select-discovery"/);
+  assert.doesNotMatch(combined, /avatarEcosystems/);
+  assert.doesNotMatch(combined, /active AI/);
+  assert.doesNotMatch(combined, /Transaction Room/);
 });
 
 test('v2 applies Trebuchet branding from the v1 launch site', () => {
@@ -2029,6 +2042,11 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(html, /id="classicBridge"/);
   assert.match(html, /id="liveOpsPanel"/);
   assert.match(html, /id="activityLogDrawer"/);
+  assert.match(html, /id="launchWorkspaceTabs"/);
+  assert.match(html, /id="launchWorkspaceViewport"/);
+  for (const workspace of ['configure', 'fund', 'execute', 'verify', 'recover']) {
+    assert.match(html, new RegExp(`data-launch-workspace="${workspace}"`));
+  }
   assert.match(html, /id="poolEditorPanel"/);
   assert.match(html, /id="airdropCsvText"/);
   assert.match(html, /id="preallocationSupplyPercent"/);
@@ -2059,6 +2077,9 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(css, /live-ops-panel/);
   assert.match(css, /activity-drawer/);
   assert.match(css, /activity-filter-tabs/);
+  assert.match(css, /body\[data-active-view="launch"\][\s\S]*overflow: hidden/);
+  assert.match(css, /launch-workspace-viewport[\s\S]*overflow: hidden auto/);
+  assert.match(css, /launch-workspace-tab\.is-selected/);
   assert.match(css, /journal-resume-plan/);
   assert.match(css, /token-logo-preview/);
   assert.match(css, /asset-mark\.has-logo/);
@@ -2066,6 +2087,9 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(css, /manual-prefund-status/);
   assert.match(css, /quote-info-panel/);
   assert.match(combined, /duplicatePoolRouteIssues/);
+  assert.match(js, /function setLaunchWorkspace/);
+  assert.match(js, /function renderLaunchWorkspace/);
+  assert.match(js, /trebuchet-v2-launch-workspace/);
   assert.match(combined, /Raydium uses both to identify a pool/);
   assert.match(combined, /classicSimpleLadderConfig/);
   assert.match(combined, /CLASSIC_LADDER_DEFAULT_CEILING_MULTIPLIER/);
@@ -6118,10 +6142,10 @@ test('v2 launch mechanism stages one Trebuchet-managed local wallet run', () => 
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=51/);
-  assert.match(html, /api-client\.js\?v=30/);
-  assert.match(html, /app\.js\?v=135/);
-  assert.doesNotMatch(html, /app\.js\?v=135" type="module"/);
+  assert.match(html, /styles\.css\?v=55/);
+  assert.match(html, /api-client\.js\?v=32/);
+  assert.match(html, /app\.js\?v=141/);
+  assert.doesNotMatch(html, /app\.js\?v=141" type="module"/);
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
   assert.doesNotMatch(`${html}\n${js}\n${apiClientJs}`, /\bon(?:click|load|error)=["']/i);
@@ -9561,7 +9585,7 @@ test('v2 persisted Classic comparison keeps structured evidence for reload-safe 
   ];
   const normalized = persistence.normalizeClassicReportComparison({
     input: JSON.stringify({ source: 'classic' }),
-    comparedAt: '2026-06-30T00:00:00.000Z',
+    comparedAt: new Date().toISOString(),
     result: {
       status: 'pass',
       artifactKind: 'json',
@@ -9655,7 +9679,7 @@ test('v2 persisted Classic comparison keeps required rows beyond legacy cutoff',
   const rows = [...fillerRows, ...requiredRows];
   const normalized = persistence.normalizeClassicReportComparison({
     input: JSON.stringify({ source: 'classic', rows: rows.length }),
-    comparedAt: '2026-06-30T00:00:00.000Z',
+    comparedAt: new Date().toISOString(),
     result: {
       status: 'pass',
       artifactKind: 'json',
@@ -10203,6 +10227,34 @@ test('v2 API client stages launch plans through the authenticated local API', as
   assert.equal(plan.v2LaunchWalletFingerprint, 'StageWallet111111111111111111111111111111');
   assert.equal(calls.filter((call) => call.url === '/api/session').length, 1);
   assert.equal(calls.filter((call) => call.url === '/api/v2/launch-plan').length, 1);
+});
+
+test('v2 API client inspects discovery mints through the authenticated local API', async () => {
+  const calls = [];
+  const api = loadApiClient();
+  const mint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const client = api.createV2ApiClient({
+    locationLike: { protocol: 'http:' },
+    timeoutMs: 0,
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url, init });
+      if (url === '/api/session') return jsonResponse({ success: true, token: 'discovery-token' });
+      if (url === '/api/v2/discovery/inspect') {
+        assert.equal(init.method, 'POST');
+        assert.equal(init.headers['x-trebuchet-session'], 'discovery-token');
+        assert.deepEqual(JSON.parse(init.body), { mint });
+        return jsonResponse({
+          success: true,
+          record: { id: mint, mint, name: 'USD Coin', symbol: 'USDC', score: 96 },
+        });
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    },
+  });
+
+  const record = await client.inspectDiscoveryToken(mint);
+  assert.equal(record.symbol, 'USDC');
+  assert.equal(calls.filter((call) => call.url === '/api/v2/discovery/inspect').length, 1);
 });
 
 test('v2 API client manages Trebuchet local wallets and run envelopes', async () => {

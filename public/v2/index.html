@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TREBUCHET · makesometokens</title>
   <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="./styles.css?v=51">
+  <link rel="stylesheet" href="./styles.css?v=55">
 </head>
 <body>
   <div class="app-shell">
@@ -103,10 +103,10 @@
                   <span id="agentNextDetail">Trebuchet holds the launch key locally and signs the run after you arm it.</span>
                 </div>
                 <div class="agent-checks" aria-label="Launch checkpoints">
-                  <span class="is-active" data-agent-check="setup">Setup</span>
-                  <span data-agent-check="fund">Fund</span>
-                  <span data-agent-check="run">Run</span>
-                  <span data-agent-check="recover">Recover</span>
+                  <button class="is-active" type="button" data-agent-check="setup" data-launch-workspace="configure">Setup</button>
+                  <button type="button" data-agent-check="fund" data-launch-workspace="fund">Fund</button>
+                  <button type="button" data-agent-check="run" data-launch-workspace="execute">Run</button>
+                  <button type="button" data-agent-check="recover" data-launch-workspace="recover">Recover</button>
                 </div>
                 <p class="agent-footnote">Launch Solana tokens. No middleman. Your machine / your keys / your launch.</p>
               </section>
@@ -171,7 +171,31 @@
               </aside>
             </section>
 
-            <section class="setup-dock" aria-label="Launch setup dock">
+            <nav class="launch-workspace-tabs" id="launchWorkspaceTabs" role="tablist" aria-label="Launch workspace">
+              <button class="launch-workspace-tab is-selected" id="launchWorkspaceTabConfigure" type="button" role="tab" aria-selected="true" aria-controls="launchWorkspaceViewport" data-launch-workspace="configure">
+                <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+                <span><strong>Configure</strong><small data-launch-workspace-state="configure">Token &amp; pools</small></span>
+              </button>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabFund" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="fund">
+                <i class="fa-solid fa-coins" aria-hidden="true"></i>
+                <span><strong>Fund</strong><small data-launch-workspace-state="fund">Estimate</small></span>
+              </button>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabExecute" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="execute">
+                <i class="fa-solid fa-bolt" aria-hidden="true"></i>
+                <span><strong>Execute</strong><small data-launch-workspace-state="execute">Preflight</small></span>
+              </button>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabVerify" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="verify">
+                <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+                <span><strong>Verify</strong><small data-launch-workspace-state="verify">Proof</small></span>
+              </button>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabRecover" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="recover">
+                <i class="fa-solid fa-life-ring" aria-hidden="true"></i>
+                <span><strong>Recover</strong><small data-launch-workspace-state="recover">Clear</small></span>
+              </button>
+            </nav>
+
+            <div class="launch-workspace-viewport" id="launchWorkspaceViewport" role="tabpanel" tabindex="0" aria-live="polite">
+            <section class="setup-dock" data-launch-pane="configure" aria-label="Launch setup dock">
               <div class="setup-dock-head">
                 <span>
                   <span class="eyebrow">Setup dock</span>
@@ -361,9 +385,9 @@
               </details>
             </section>
 
-            <section class="classic-bridge" id="classicBridge" aria-label="Classic launch parity bridge"></section>
+            <section class="classic-bridge" id="classicBridge" data-launch-pane="fund execute verify recover" aria-label="Classic parity bridge"></section>
 
-            <section class="launch-console" id="launchConsole" aria-label="Launch readout">
+            <section class="launch-console" id="launchConsole" data-launch-pane="execute" aria-label="Launch readout">
               <div class="asset-lockup">
                 <span class="asset-mark" id="assetMark">MK</span>
                 <span>
@@ -374,7 +398,7 @@
               <div class="launch-readout" id="launchReadout"></div>
             </section>
 
-            <details class="drawer">
+            <details class="drawer" data-launch-pane="execute">
               <summary>
                 <span>2. Launch steps</span>
                 <strong id="runbookSummary">6 phases</strong>
@@ -382,9 +406,9 @@
               <div class="stage-list" id="stageList"></div>
             </details>
 
-            <section class="signature-panel" id="signaturePanel" aria-label="Launch run progress"></section>
+            <section class="signature-panel" id="signaturePanel" data-launch-pane="execute" aria-label="Launch run progress"></section>
 
-            <details class="drawer diagnostics-drawer">
+            <details class="drawer diagnostics-drawer" data-launch-pane="verify recover">
               <summary>
                 <span>Diagnostics</span>
                 <strong id="preflightSummary">2 warnings</strong>
@@ -403,6 +427,7 @@
               <div class="parity-list" id="parityPanel"></div>
               <div class="guardrail-list" id="guardrailList"></div>
             </details>
+            </div>
           </section>
         </div>
       </section>
@@ -446,13 +471,34 @@
           <section class="surface surface-main">
             <div class="section-heading">
               <div>
-                <span class="eyebrow">Ecosystem discovery</span>
-                <h2>Tokens, avatar NFTs, and AI rooms</h2>
+                <span class="eyebrow">Live Solana evidence</span>
+                <h2>Token registry</h2>
               </div>
-              <span class="badge">Evidence</span>
+              <span class="badge" id="discoveryRegistryCount">0 saved</span>
             </div>
+            <form class="discovery-inspect-bar" id="discoveryInspectForm">
+              <label for="discoveryMintInput">Token mint</label>
+              <input id="discoveryMintInput" name="mint" type="text" placeholder="Paste a Solana token mint" autocomplete="off" spellcheck="false">
+              <button class="primary-button" id="discoveryInspectButton" type="submit">
+                <i class="fa-solid fa-magnifying-glass-chart"></i>
+                <span>Inspect mint</span>
+              </button>
+            </form>
+            <div class="discovery-error" id="discoveryError" aria-live="polite"></div>
             <div class="discovery-source-banner" id="discoverySourceBanner"></div>
             <div class="standards-strip" id="standardsStrip"></div>
+            <div class="discovery-toolbar">
+              <label>
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input id="discoverySearchInput" type="search" placeholder="Filter saved tokens" autocomplete="off">
+              </label>
+              <div class="filter-row" aria-label="Evidence status filter">
+                <button class="pill-button is-active" type="button" data-discovery-filter="all">All</button>
+                <button class="pill-button" type="button" data-discovery-filter="ready">Ready</button>
+                <button class="pill-button" type="button" data-discovery-filter="review">Review</button>
+                <button class="pill-button" type="button" data-discovery-filter="watch">Watch</button>
+              </div>
+            </div>
             <div class="discovery-table" id="discoveryTable"></div>
           </section>
           <aside class="rail">
@@ -464,15 +510,6 @@
                 </div>
               </div>
               <div class="evidence-panel" id="evidencePanel"></div>
-            </section>
-            <section class="surface">
-              <div class="section-heading">
-                <div>
-                  <span class="eyebrow">Transaction Room</span>
-                  <h2 id="selectedChatTitle">--</h2>
-                </div>
-              </div>
-              <div class="chat-panel" id="chatPanel"></div>
             </section>
           </aside>
         </div>
@@ -522,7 +559,7 @@
   <div class="activity-drawer" id="activityLogDrawer" aria-hidden="true"></div>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
-  <script src="./api-client.js?v=30"></script>
-  <script src="./app.js?v=135"></script>
+  <script src="./api-client.js?v=32"></script>
+  <script src="./app.js?v=141"></script>
 </body>
 </html>
