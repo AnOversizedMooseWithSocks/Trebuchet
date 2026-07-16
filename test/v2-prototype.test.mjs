@@ -1907,6 +1907,22 @@ test('v2 recovery sweep uses an in-app typed confirmation instead of native prom
   assert.match(css, /\.sweep-confirm-field input\[aria-invalid="true"\]/);
 });
 
+test('v2 renderer uses an in-app operator dialog instead of unsupported native prompts', () => {
+  assert.doesNotMatch(js, /window\.prompt\s*\(/);
+  assert.match(html, /id="operatorPromptGate"[^>]*role="dialog"[^>]*aria-modal="true"/);
+  assert.match(html, /id="operatorPromptInput"[^>]*type="text"/);
+  assert.match(html, /data-action="cancel-operator-prompt"/);
+  assert.match(html, /data-action="submit-operator-prompt"/);
+  assert.match(js, /function openOperatorPrompt/);
+  assert.match(js, /function submitOperatorPrompt/);
+  assert.match(js, /control\.value = '';/);
+  assert.match(js, /async function importManagedWallet\([\s\S]*?await openOperatorPrompt/);
+  assert.match(js, /async function resetSecretPin\([\s\S]*?await openOperatorPrompt/);
+  assert.match(js, /async function discardSelectedWallet\([\s\S]*?await openOperatorPrompt/);
+  assert.match(js, /async function cancelRefundLaunch\([\s\S]*?await openOperatorPrompt/);
+  assert.match(css, /\.operator-prompt-gate\s*\{[\s\S]*?z-index:\s*1150/);
+});
+
 test('v2 concrete data-action controls have delegated handlers', () => {
   const actions = [...new Set(concreteDataActions(`${html}\n${js}`))].sort();
   const handled = handledClickActions(js);
@@ -6354,10 +6370,10 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=64/);
+  assert.match(html, /styles\.css\?v=65/);
   assert.match(html, /api-client\.js\?v=32/);
-  assert.match(html, /app\.js\?v=150/);
-  assert.doesNotMatch(html, /app\.js\?v=150" type="module"/);
+  assert.match(html, /app\.js\?v=151/);
+  assert.doesNotMatch(html, /app\.js\?v=151" type="module"/);
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
   assert.doesNotMatch(`${html}\n${js}\n${apiClientJs}`, /\bon(?:click|load|error)=["']/i);

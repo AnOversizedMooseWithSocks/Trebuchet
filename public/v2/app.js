@@ -497,6 +497,8 @@ let quoteAcquireTimer = null;
 let recoveryPinGatePromise = null;
 let recoveryPinGateResolve = null;
 let recoveryPinGateTimer = null;
+let operatorPromptResolver = null;
+let operatorPromptConfig = null;
 let solflareWalletProvider = null;
 let solflareStandardProvider = null;
 let solflareWalletStandardListenersStarted = false;
@@ -2894,18 +2896,142 @@ function secretPinMeta() {
   };
 }
 
-function promptRecoveryPin(label) {
-  if (typeof window.prompt !== 'function') {
-    notify('PIN prompt is unavailable');
-    return null;
+function operatorPromptControl() {
+  return operatorPromptConfig?.multiline ? $('#operatorPromptTextarea') : $('#operatorPromptInput');
+}
+
+function setOperatorPromptMessage(message, { error = false } = {}) {
+  const messageNode = $('#operatorPromptMessage');
+  if (messageNode) {
+    messageNode.textContent = message || 'This action stays inside the local Trebuchet app.';
+    messageNode.classList.toggle('is-error', error);
   }
-  const pin = window.prompt(`${label} Recovery PIN (4 digits)`);
-  if (!pin) return null;
-  if (!/^\d{4}$/.test(pin)) {
-    notify('Recovery PIN must be exactly 4 digits');
-    return null;
+  const control = operatorPromptControl();
+  if (error) control?.setAttribute('aria-invalid', 'true');
+  else control?.removeAttribute('aria-invalid');
+}
+
+function closeOperatorPrompt(value = null) {
+  const gate = $('#operatorPromptGate');
+  if (gate) {
+    gate.hidden = true;
+    gate.setAttribute('aria-hidden', 'true');
+    gate.removeAttribute('data-danger');
+    gate.removeAttribute('data-readonly');
   }
-  return pin;
+  ['#operatorPromptInput', '#operatorPromptTextarea'].forEach((selector) => {
+    const control = $(selector);
+    if (!control) return;
+    control.value = '';
+    control.removeAttribute('aria-invalid');
+  });
+  document.body.classList.remove('operator-prompt-open');
+  const resolve = operatorPromptResolver;
+  operatorPromptResolver = null;
+  operatorPromptConfig = null;
+  if (resolve) resolve(value);
+}
+
+function submitOperatorPrompt() {
+  const gate = $('#operatorPromptGate');
+  if (!gate || gate.hidden || !operatorPromptConfig) return;
+  const control = operatorPromptControl();
+  const rawValue = String(control?.value || '');
+  const value = operatorPromptConfig.trim === false ? rawValue : rawValue.trim();
+  if (operatorPromptConfig.required !== false && !value) {
+    setOperatorPromptMessage(operatorPromptConfig.emptyMessage || 'Enter a value to continue.', { error: true });
+    control?.focus();
+    return;
+  }
+  const validationMessage = typeof operatorPromptConfig.validate === 'function'
+    ? operatorPromptConfig.validate(value)
+    : null;
+  if (validationMessage) {
+    setOperatorPromptMessage(validationMessage, { error: true });
+    control?.focus();
+    return;
+  }
+  closeOperatorPrompt(value);
+}
+
+function openOperatorPrompt(options = {}) {
+  const gate = $('#operatorPromptGate');
+  if (!gate) return Promise.resolve(null);
+  if (operatorPromptResolver) closeOperatorPrompt(null);
+
+  operatorPromptConfig = {
+    multiline: options.multiline === true,
+    readOnly: options.readOnly === true,
+    required: options.required !== false,
+    trim: options.trim !== false,
+    validate: options.validate,
+    emptyMessage: options.emptyMessage,
+    message: options.message || 'This action stays inside the local Trebuchet app.',
+  };
+
+  $('#operatorPromptEyebrow').textContent = options.eyebrow || 'Operator confirmation';
+  $('#operatorPromptTitle').textContent = options.title || 'Confirm action';
+  $('#operatorPromptDetail').textContent = options.detail || 'Enter the requested value to continue.';
+  $('#operatorPromptLabel').textContent = options.label || 'Value';
+  $('#operatorPromptSubmitLabel').textContent = options.confirmLabel || (options.readOnly ? 'Done' : 'Continue');
+  $('#operatorPromptCancel').textContent = options.cancelLabel || 'Cancel';
+
+  const input = $('#operatorPromptInput');
+  const textarea = $('#operatorPromptTextarea');
+  const control = operatorPromptConfig.multiline ? textarea : input;
+  $('.operator-prompt-field').htmlFor = control.id;
+  input.hidden = operatorPromptConfig.multiline;
+  textarea.hidden = !operatorPromptConfig.multiline;
+  input.type = options.type === 'password' ? 'password' : 'text';
+  input.inputMode = options.inputMode || 'text';
+  input.removeAttribute('maxlength');
+  if (Number(options.maxLength) > 0) input.maxLength = Number(options.maxLength);
+  control.value = String(options.value || '');
+  control.placeholder = options.placeholder || '';
+  control.readOnly = operatorPromptConfig.readOnly;
+  control.setAttribute('aria-label', options.label || 'Value');
+  control.removeAttribute('aria-invalid');
+
+  const submit = $('#operatorPromptSubmit');
+  submit.classList.toggle('danger', options.danger === true);
+  gate.dataset.danger = options.danger === true ? 'true' : 'false';
+  gate.dataset.readonly = operatorPromptConfig.readOnly ? 'true' : 'false';
+  setOperatorPromptMessage(operatorPromptConfig.message);
+  gate.hidden = false;
+  gate.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('operator-prompt-open');
+
+  return new Promise((resolve) => {
+    operatorPromptResolver = resolve;
+    window.requestAnimationFrame(() => {
+      control.focus();
+      if (operatorPromptConfig?.readOnly) control.select();
+    });
+  });
+}
+
+function handleOperatorPromptInput(event) {
+  if (!['operatorPromptInput', 'operatorPromptTextarea'].includes(event.target.id)) return false;
+  if (!operatorPromptResolver) return true;
+  setOperatorPromptMessage(operatorPromptConfig?.message);
+  return true;
+}
+
+function requestRecoveryPin({ title, detail } = {}) {
+  return openOperatorPrompt({
+    eyebrow: 'Trebuchet security',
+    title: title || 'Enter Recovery PIN',
+    detail: detail || 'Enter the four-digit PIN that protects local launch wallets and saved secrets.',
+    label: 'Four-digit Recovery PIN',
+    type: 'password',
+    inputMode: 'numeric',
+    maxLength: 4,
+    placeholder: '••••',
+    confirmLabel: 'Continue',
+    message: 'Verified locally. Never sent off this device.',
+    emptyMessage: 'Enter all four Recovery PIN digits.',
+    validate: (value) => /^\d{4}$/.test(value) ? null : 'Recovery PIN must be exactly four digits.',
+  });
 }
 
 function recoveryPinGateCopy() {
@@ -3365,11 +3491,18 @@ async function copyText(value, label = 'Value') {
     await navigator.clipboard.writeText(text);
     notify(`${label} copied`);
   } catch {
-    if (typeof window.prompt === 'function') {
-      window.prompt(`Copy ${label}`, text);
-    } else {
-      notify('Clipboard unavailable');
-    }
+    await openOperatorPrompt({
+      eyebrow: 'Clipboard fallback',
+      title: `Copy ${label}`,
+      detail: 'Automatic clipboard access is unavailable. Select the value below and copy it manually.',
+      label,
+      value: text,
+      multiline: true,
+      readOnly: true,
+      required: false,
+      confirmLabel: 'Done',
+      message: 'Select and copy the value manually.',
+    });
   }
 }
 
@@ -16761,7 +16894,17 @@ async function importManagedWallet() {
     notify('Import requires the local Trebuchet app');
     return;
   }
-  const secret = window.prompt('Paste a Solana mnemonic, base58 secret key, or JSON secret-key array. It stays on this machine.');
+  const secret = await openOperatorPrompt({
+    eyebrow: 'Local wallet import',
+    title: 'Import Solana wallet',
+    detail: 'Paste a mnemonic, base58 secret key, or JSON secret-key array. Trebuchet handles it locally and never sends it to a remote service.',
+    label: 'Wallet secret',
+    type: 'password',
+    placeholder: 'Mnemonic, base58 secret, or JSON array',
+    confirmLabel: 'Import wallet',
+    message: 'Secret input is masked and handled only by the local Trebuchet API.',
+    emptyMessage: 'Paste the wallet secret to continue.',
+  });
   if (!secret) return;
   const wallet = await state.apiClient.importManagedWallet(secret);
   addManagedWallet(wallet);
@@ -16788,9 +16931,15 @@ async function setupSecretPin() {
     notify('Recovery PIN is already configured');
     return false;
   }
-  const pin = promptRecoveryPin('Set');
+  const pin = await requestRecoveryPin({
+    title: 'Set Recovery PIN',
+    detail: 'Choose four digits to protect local launch wallets and saved Vanity CAs.',
+  });
   if (!pin) return false;
-  const confirmPin = promptRecoveryPin('Confirm');
+  const confirmPin = await requestRecoveryPin({
+    title: 'Confirm Recovery PIN',
+    detail: 'Enter the same four digits again before Trebuchet encrypts local recovery secrets.',
+  });
   if (!confirmPin) return false;
   if (pin !== confirmPin) {
     notify('Recovery PIN entries did not match');
@@ -16839,11 +16988,20 @@ async function changeSecretPin() {
     notify('Set a Recovery PIN first');
     return;
   }
-  const currentPin = promptRecoveryPin('Current');
+  const currentPin = await requestRecoveryPin({
+    title: 'Verify current PIN',
+    detail: 'Enter the current four-digit Recovery PIN before changing it.',
+  });
   if (!currentPin) return;
-  const newPin = promptRecoveryPin('New');
+  const newPin = await requestRecoveryPin({
+    title: 'Choose a new PIN',
+    detail: 'Enter the new four-digit Recovery PIN for local recovery secrets.',
+  });
   if (!newPin) return;
-  const confirmPin = promptRecoveryPin('Confirm new');
+  const confirmPin = await requestRecoveryPin({
+    title: 'Confirm the new PIN',
+    detail: 'Enter the new four digits once more to finish the rotation.',
+  });
   if (!confirmPin) return;
   if (newPin !== confirmPin) {
     notify('New Recovery PIN entries did not match');
@@ -16899,21 +17057,18 @@ async function resetSecretPin() {
     notify('No Recovery PIN is configured');
     return;
   }
-  if (typeof window.confirm === 'function') {
-    const ok = window.confirm(
-      'Reset Recovery PIN?\n\nThis deletes the PIN wrapper and permanently discards locally saved launch wallets and Vanity CAs that are encrypted by that PIN. Use this only if the PIN is lost and you have no recoverable launch in progress.',
-    );
-    if (!ok) return;
-  }
-  if (typeof window.prompt !== 'function') {
-    notify('Reset confirmation prompt is unavailable');
-    return;
-  }
-  const phrase = window.prompt('Type RESET RECOVERY PIN to discard PIN-encrypted local secrets.');
-  if (phrase !== 'RESET RECOVERY PIN') {
-    notify('Recovery PIN reset cancelled');
-    return;
-  }
+  const phrase = await openOperatorPrompt({
+    eyebrow: 'Destructive local reset',
+    title: 'Reset Recovery PIN',
+    detail: 'This deletes the PIN wrapper and permanently discards locally saved launch wallets and Vanity CAs encrypted by that PIN. Use it only if the PIN is lost and no recoverable launch is in progress.',
+    label: 'Type RESET RECOVERY PIN',
+    placeholder: 'RESET RECOVERY PIN',
+    confirmLabel: 'Reset local secrets',
+    danger: true,
+    message: 'This local deletion cannot be undone.',
+    validate: (value) => value === 'RESET RECOVERY PIN' ? null : 'Confirmation phrase does not match.',
+  });
+  if (!phrase) return;
 
   state.secretPin.busy = 'Resetting';
   renderAll();
@@ -17045,21 +17200,18 @@ async function discardSelectedWallet(publicKey = selectedLaunchWalletPublicKey()
     notify('Wallet discard requires the local Trebuchet app');
     return;
   }
-  if (typeof window.confirm === 'function') {
-    const ok = window.confirm(
-      `Discard local recovery entry for ${shortAddress(publicKey)}?\n\nThis deletes Trebuchet's local copy of the launch wallet secret. Only continue if the wallet is empty, intentionally abandoned, or backed up elsewhere.`,
-    );
-    if (!ok) return;
-  }
-  if (typeof window.prompt !== 'function') {
-    notify('Wallet discard confirmation prompt is unavailable');
-    return;
-  }
-  const typed = window.prompt('Type the full wallet address to discard its local recovery entry.');
-  if (typed !== publicKey) {
-    notify('Wallet discard cancelled');
-    return;
-  }
+  const typed = await openOperatorPrompt({
+    eyebrow: 'Destructive wallet operation',
+    title: 'Discard local recovery entry',
+    detail: `This deletes Trebuchet's local secret for ${shortAddress(publicKey)}. Continue only if the wallet is empty, intentionally abandoned, or backed up elsewhere.`,
+    label: 'Type the full wallet address',
+    placeholder: publicKey,
+    confirmLabel: 'Discard local secret',
+    danger: true,
+    message: 'The wallet address must match exactly. This deletion cannot be undone.',
+    validate: (value) => value === publicKey ? null : 'Full wallet address does not match.',
+  });
+  if (!typed) return;
 
   state.discardingWalletPublicKey = publicKey;
   renderAll();
@@ -17341,19 +17493,18 @@ async function cancelRefundLaunch() {
     notify('Destination must be different from the launch wallet');
     return;
   }
-  if (typeof window.confirm === 'function') {
-    const ok = window.confirm(
-      `Cancel and refund this launch?\n\nFrom: ${walletPublicKey}\nTo: ${destinationWallet}\n\nTrebuchet will sweep tokens, SOL, and Fee Key NFTs from the selected launch wallet. Token mints and pools already created on-chain cannot be undone.`,
-    );
-    if (!ok) return;
-  }
-  if (typeof window.prompt === 'function') {
-    const typed = window.prompt('Type the full launch wallet address to confirm Cancel & Refund.');
-    if (typed !== walletPublicKey) {
-      notify('Cancel & Refund cancelled');
-      return;
-    }
-  }
+  const typed = await openOperatorPrompt({
+    eyebrow: 'Launch recovery operation',
+    title: 'Cancel and refund launch',
+    detail: `Trebuchet will sweep tokens, SOL, and Fee Key NFTs from ${shortAddress(walletPublicKey)} to ${shortAddress(destinationWallet)}. Token mints and pools already created on-chain cannot be undone.`,
+    label: 'Type the full launch wallet address',
+    placeholder: walletPublicKey,
+    confirmLabel: 'Cancel and refund',
+    danger: true,
+    message: 'The source wallet address must match exactly before Trebuchet signs the sweep.',
+    validate: (value) => value === walletPublicKey ? null : 'Full launch wallet address does not match.',
+  });
+  if (!typed) return;
 
   state.cancelRefund = {
     running: true,
@@ -19022,6 +19173,7 @@ function drawLaunchCanvas() {
 }
 
 function handleDynamicInput(event) {
+  if (handleOperatorPromptInput(event)) return;
   if (handleRecoveryPinInput(event)) return;
 
   if (event.target.id === 'discoverySearchInput') {
@@ -19110,6 +19262,14 @@ function handleClick(event) {
   if (!actionTarget) return;
 
   const { action } = actionTarget.dataset;
+  if (action === 'cancel-operator-prompt') {
+    closeOperatorPrompt(null);
+    return;
+  }
+  if (action === 'submit-operator-prompt') {
+    submitOperatorPrompt();
+    return;
+  }
   if (action === 'cancel-sweep-confirm') {
     closeSweepConfirmation(null);
     return;
@@ -19700,6 +19860,21 @@ function bindEvents() {
   document.addEventListener('click', handleClick);
   document.addEventListener('input', handleDynamicInput);
   document.addEventListener('keydown', (event) => {
+    const operatorPromptGate = $('#operatorPromptGate');
+    if (operatorPromptGate && !operatorPromptGate.hidden) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeOperatorPrompt(null);
+      } else if (
+        event.key === 'Enter'
+        && (!operatorPromptConfig?.multiline || event.metaKey || event.ctrlKey)
+      ) {
+        event.preventDefault();
+        submitOperatorPrompt();
+      }
+      return;
+    }
+
     const sweepConfirmGate = $('#sweepConfirmGate');
     if (sweepConfirmGate && !sweepConfirmGate.hidden) {
       if (event.key === 'Escape') {

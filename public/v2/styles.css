@@ -7535,6 +7535,10 @@ body.sweep-confirm-open {
   overflow: hidden !important;
 }
 
+body.operator-prompt-open {
+  overflow: hidden !important;
+}
+
 .sweep-confirm-gate {
   position: fixed;
   inset: 0;
@@ -7554,6 +7558,18 @@ body.sweep-confirm-open {
   z-index: -1;
   background:
     radial-gradient(circle at 50% 44%, rgba(255, 93, 101, .055), transparent 34%),
+    linear-gradient(rgba(255, 255, 255, .016) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .016) 1px, transparent 1px);
+  background-size: auto, 48px 48px, 48px 48px;
+}
+
+.operator-prompt-gate {
+  z-index: 1150;
+}
+
+.operator-prompt-gate::before {
+  background:
+    radial-gradient(circle at 50% 44%, rgba(111, 238, 169, .06), transparent 34%),
     linear-gradient(rgba(255, 255, 255, .016) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, .016) 1px, transparent 1px);
   background-size: auto, 48px 48px, 48px 48px;
@@ -7648,15 +7664,45 @@ body.sweep-confirm-open {
   padding: 0 10px;
 }
 
-.sweep-confirm-field input:focus {
+.operator-prompt-field textarea {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 0;
+  background: #010202;
+  color: #f4f7f5;
+  font: 500 10px/1.5 var(--font-mono);
+  padding: 10px;
+}
+
+.sweep-confirm-field input:focus,
+.operator-prompt-field textarea:focus {
   border-color: rgba(111, 238, 169, .62);
   outline: none;
   box-shadow: inset 2px 0 0 var(--green);
 }
 
-.sweep-confirm-field input[aria-invalid="true"] {
+.sweep-confirm-field input[aria-invalid="true"],
+.operator-prompt-field textarea[aria-invalid="true"] {
   border-color: rgba(255, 93, 101, .68);
   box-shadow: inset 2px 0 0 var(--red);
+}
+
+.operator-prompt-gate[data-danger="true"] .operator-prompt-head .eyebrow,
+.operator-prompt-gate[data-danger="true"] .operator-prompt-message {
+  color: #ff878d;
+}
+
+.operator-prompt-gate[data-danger="true"] .operator-prompt-message {
+  border-left-color: var(--red);
+  background: rgba(255, 93, 101, .045);
+}
+
+.operator-prompt-gate[data-readonly="true"] .operator-prompt-field textarea {
+  min-height: 150px;
+  color: #dfe8e3;
+  user-select: text;
 }
 
 .sweep-confirm-message {

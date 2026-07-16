@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TREBUCHET · makesometokens</title>
   <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="./styles.css?v=64">
+  <link rel="stylesheet" href="./styles.css?v=65">
 </head>
 <body>
   <div class="app-shell">
@@ -621,6 +621,28 @@
     </div>
   </section>
 
+  <section class="sweep-confirm-gate operator-prompt-gate" id="operatorPromptGate" role="dialog" aria-modal="true" aria-labelledby="operatorPromptTitle" aria-describedby="operatorPromptDetail operatorPromptMessage" aria-hidden="true" hidden>
+    <div class="sweep-confirm-shell operator-prompt-shell">
+      <header class="sweep-confirm-head operator-prompt-head">
+        <span class="eyebrow" id="operatorPromptEyebrow">Operator confirmation</span>
+        <h2 id="operatorPromptTitle">Confirm action</h2>
+        <p id="operatorPromptDetail">Enter the requested value to continue.</p>
+      </header>
+      <label class="sweep-confirm-field operator-prompt-field" for="operatorPromptInput">
+        <span id="operatorPromptLabel">Value</span>
+        <input id="operatorPromptInput" type="text" autocomplete="off" spellcheck="false">
+        <textarea id="operatorPromptTextarea" rows="5" autocomplete="off" spellcheck="false" hidden></textarea>
+      </label>
+      <p class="sweep-confirm-message operator-prompt-message" id="operatorPromptMessage" role="status" aria-live="assertive">This action stays inside the local Trebuchet app.</p>
+      <div class="sweep-confirm-actions operator-prompt-actions">
+        <button class="pill-button" id="operatorPromptCancel" type="button" data-action="cancel-operator-prompt">Cancel</button>
+        <button class="pill-button" id="operatorPromptSubmit" type="button" data-action="submit-operator-prompt">
+          <span id="operatorPromptSubmitLabel">Continue</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
   <section class="sweep-confirm-gate" id="sweepConfirmGate" role="dialog" aria-modal="true" aria-labelledby="sweepConfirmTitle" aria-describedby="sweepConfirmDetail sweepConfirmMessage" aria-hidden="true" hidden>
     <div class="sweep-confirm-shell">
       <header class="sweep-confirm-head">
@@ -656,6 +678,6 @@
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
   <script src="./api-client.js?v=32"></script>
-  <script src="./app.js?v=150"></script>
+  <script src="./app.js?v=151"></script>
 </body>
 </html>
