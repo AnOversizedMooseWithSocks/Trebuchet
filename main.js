@@ -35,6 +35,9 @@ import {
 
 // __dirname equivalent in ESM. Used to resolve sibling files like README.md.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const desktopUiPath = process.argv.includes('--v2') || process.env.TREBUCHET_UI === 'v2'
+  ? '/v2/'
+  : '/';
 
 // ---------------------------------------------------------------------------
 // Right-click context menu.
@@ -848,7 +851,7 @@ function createWindow() {
     win.webContents.focus();
   });
 
-  win.loadURL(`http://127.0.0.1:${serverPort}/`);
+  win.loadURL(`http://127.0.0.1:${serverPort}${desktopUiPath}`);
 }
 
 app.whenReady().then(async () => {

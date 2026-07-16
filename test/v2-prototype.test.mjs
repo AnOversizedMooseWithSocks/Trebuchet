@@ -12,6 +12,8 @@ const css = read('public/v2/styles.css');
 const js = read('public/v2/app.js');
 const apiClientJs = read('public/v2/api-client.js');
 const viewportSmokeJs = read('test/v2-viewport-smoke.mjs');
+const electronMainJs = read('main.js');
+const packageJson = JSON.parse(read('package.json'));
 
 function attrValues(source, attr) {
   return [...source.matchAll(new RegExp(`${attr}="([^"]+)"`, 'g'))].map((match) => match[1]);
@@ -1865,8 +1867,44 @@ test('v2 JavaScript render targets exist in the HTML shell', () => {
 test('v2 delegated clicks do not confuse body state for navigation', () => {
   assert.doesNotMatch(js, /body\.dataset\.view/);
   assert.match(js, /body\.dataset\.activeView/);
+  assert.match(js, /closest\('button\[data-launch-workspace\]'\)/);
+  assert.doesNotMatch(js, /closest\('\[data-launch-workspace\]'\)/);
   assert.match(css, /body\[data-active-view="launch"\]/);
   assert.doesNotMatch(css, /body\[data-view=/);
+});
+
+test('v2 Recovery PIN unlock is a full-screen four-box security gate', () => {
+  const gateHtml = html.match(/<section class="recovery-pin-gate"[\s\S]*?<\/section>/)?.[0] || '';
+  const unlockSource = js.match(/async function unlockSecretPin\([\s\S]*?\n\}\n\nasync function changeSecretPin/)?.[0] || '';
+
+  assert.ok(gateHtml, 'Recovery PIN gate should exist in the v2 shell');
+  assert.equal((gateHtml.match(/<span><\/span>/g) || []).length, 4);
+  assert.match(gateHtml, /id="recoveryPinInput"[^>]*maxlength="4"/);
+  assert.match(gateHtml, /aria-modal="true"/);
+  assert.match(css, /\.recovery-pin-gate\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;/);
+  assert.match(css, /data-status="success"[\s\S]*?#6feea9/);
+  assert.match(css, /data-status="error"[\s\S]*?#ff5d65/);
+  assert.match(js, /function openRecoveryPinGate/);
+  assert.match(js, /function submitRecoveryPinGate/);
+  assert.match(js, /Try again\. All four digits were cleared\./);
+  assert.match(unlockSource, /return openRecoveryPinGate\(\{ reason \}\)/);
+  assert.doesNotMatch(unlockSource, /promptRecoveryPin/);
+});
+
+test('v2 recovery sweep uses an in-app typed confirmation instead of native prompt', () => {
+  const sweepSource = js.match(/async function sweepRecoveryWallet\([\s\S]*?\n\}\n\nasync function cancelRefundLaunch/)?.[0] || '';
+
+  assert.match(html, /id="sweepConfirmGate"[^>]*role="dialog"[^>]*aria-modal="true"/);
+  assert.match(html, /id="sweepConfirmDestination"/);
+  assert.match(html, /id="sweepConfirmTypedAddress"/);
+  assert.match(html, /data-action="cancel-sweep-confirm"/);
+  assert.match(html, /data-action="submit-sweep-confirm"/);
+  assert.match(js, /function openSweepConfirmation/);
+  assert.match(js, /function submitSweepConfirmation/);
+  assert.match(sweepSource, /await openSweepConfirmation\(\{ publicKey, defaultDestination \}\)/);
+  assert.doesNotMatch(sweepSource, /window\.prompt|window\.confirm/);
+  assert.match(css, /\.sweep-confirm-gate\s*\{[\s\S]*?position:\s*fixed;/);
+  assert.match(css, /\.sweep-confirm-field input\[aria-invalid="true"\]/);
 });
 
 test('v2 concrete data-action controls have delegated handlers', () => {
@@ -1876,6 +1914,13 @@ test('v2 concrete data-action controls have delegated handlers', () => {
 
   assert.ok(actions.length > 70, 'expected the v2 action audit to cover rendered controls');
   assert.deepEqual(missing, []);
+});
+
+test('v2 has a native Electron launcher that selects the v2 route', () => {
+  assert.equal(packageJson.scripts['start:v2'], 'electron . --v2');
+  assert.match(electronMainJs, /process\.argv\.includes\('--v2'\)/);
+  assert.match(electronMainJs, /process\.env\.TREBUCHET_UI === 'v2'/);
+  assert.match(electronMainJs, /win\.loadURL\(`http:\/\/127\.0\.0\.1:\$\{serverPort\}\$\{desktopUiPath\}`\)/);
 });
 
 test('v2 Discovery is a live, locally persisted evidence registry without social mechanics', () => {
@@ -1911,11 +1956,19 @@ test('v2 Discovery is a live, locally persisted evidence registry without social
 });
 
 test('v2 keeps avatar NFTs as a configured launch primitive without fake AI runtime evidence', () => {
-  const combined = `${html}\n${js}`;
+  const combined = `${html}\n${css}\n${js}`;
 
-  assert.match(combined, /Avatar Collection/);
-  assert.match(combined, /NFT avatar collection/);
-  assert.match(combined, /NFT holder/);
+  assert.match(combined, /NFT collection \/ holder runtime/);
+  assert.match(combined, /Collection name/);
+  assert.match(combined, /Edition supply/);
+  assert.match(html, /class="avatar-collection-terminal"/);
+  assert.match(html, /id="avatarCollectionReadout"/);
+  assert.match(html, /id="avatarCollectionPipeline"/);
+  assert.match(js, /Wallet \+ mint/);
+  assert.match(js, /Holder gate/);
+  assert.match(js, /Persona metadata|Metadata/);
+  assert.match(css, /#view-launch \.avatar-collection-terminal/);
+  assert.match(css, /\.avatar-collection-pipeline/);
   assert.match(combined, /source: 'local-db'/);
   assert.match(combined, /data-action="select-discovery"/);
   assert.doesNotMatch(combined, /avatarEcosystems/);
@@ -1949,7 +2002,16 @@ test('v2 launch page presents an agentic control panel instead of instruction wa
   assert.match(html, /data-agent-check="recover"/);
   assert.match(combined, /Trebuchet wallet/);
   assert.match(combined, /App-managed wallets/);
-  assert.match(combined, /Funding and recovery/);
+  assert.match(combined, /Custody workspace/);
+  assert.match(combined, /Wallet operations/);
+  assert.match(combined, /Active signer/);
+  assert.match(combined, /Recovery inventory/);
+  assert.match(combined, /Separate recovery queue/);
+  assert.match(html, /id="walletRecoveryInventory"/);
+  assert.match(js, /data-action="inspect-recovery-record"/);
+  assert.match(js, /data-recovery-pane=/);
+  assert.match(css, /\.wallet-inventory-drawer\s*\{/);
+  assert.match(css, /\.wallet-inventory-drawer\[open\]/);
   assert.match(combined, /External funding wallet/);
   assert.match(combined, /Solflare/);
   assert.match(combined, /Does not sign launch execution/);
@@ -2113,7 +2175,7 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(css, /airdrop-budget-meter/);
   assert.match(css, /funding-wallet-hint/);
   assert.match(css, /vanity-status/);
-  assert.match(css, /vanity-candidate-grid/);
+  assert.match(css, /vanity-candidate-list/);
   assert.match(css, /finalize-panel/);
   assert.match(css, /finalize-grid/);
   assert.match(css, /parity-row/);
@@ -2382,13 +2444,34 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(js, /Prune hidden/);
   assert.match(js, /Native grinder ready/);
   assert.match(js, /Grinder unavailable/);
+  assert.match(js, /Unlock to grind/);
+  assert.match(js, /const unlocked = await unlockSecretPin\(\{ reason: 'vanity' \}\)/);
+  assert.match(js, /state\.vanityInputError/);
   assert.match(js, /renderTokenLogoPreview/);
   assert.match(js, /selectTokenLogo/);
   assert.match(js, /validateLogoFile/);
+  assert.match(js, /compressLogoFile/);
+  assert.match(js, /logoCanvasBlob/);
   assert.match(js, /CLASSIC_LOGO_MAX_BYTES/);
   assert.match(js, /CLASSIC_LOGO_MAX_DIMENSION/);
+  assert.match(js, /LOGO_SOURCE_MAX_BYTES/);
+  assert.match(js, /AUTO-COMPRESSED/);
+  assert.match(js, /Token logo auto-compressed and attached/);
   assert.match(js, /Logo must be a PNG or JPG image/);
   assert.match(html, /id="tokenLogoFile" type="file" accept="image\/png,image\/jpeg"/);
+  assert.match(html, /Token logo \/ auto-compress/);
+  assert.match(html, /class="logo-upload-control" for="tokenLogoFile"/);
+  assert.match(html, /class="logo-upload-command"/);
+  assert.match(html, /PNG\/JPG · ≤10MB/);
+  assert.match(css, /\.logo-upload-control/);
+  assert.match(css, /\.logo-upload-command/);
+  assert.match(js, /enhanceNumberSteppers/);
+  assert.match(js, /stepNumberInput/);
+  assert.match(js, /dataset\.action = 'step-number'/);
+  assert.match(js, /input\.stepUp\(\)/);
+  assert.match(js, /input\.stepDown\(\)/);
+  assert.match(css, /\.number-stepper/);
+  assert.match(css, /\.number-stepper-button/);
   assert.match(js, /clear-token-logo/);
   assert.match(js, /renderClassicBridge/);
   assert.match(js, /renderLiveOpsPanel/);
@@ -2644,6 +2727,93 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(js, /applySolflareDestinationWallet/);
   assert.match(js, /runFullLaunch/);
   assert.match(js, /renderParityPanel/);
+});
+
+test('v2 auto-compresses oversized logos into the Classic upload envelope', async () => {
+  const start = js.indexOf('function loadLogoImage');
+  const end = js.indexOf('\nfunction validateProofFile', start);
+  assert.ok(start >= 0 && end > start, 'logo optimizer should be extractable');
+
+  class FakeFile {
+    constructor(parts, name, options = {}) {
+      this.size = parts.reduce((total, part) => total + Number(part?.size || 0), 0);
+      this.name = name;
+      this.type = options.type || '';
+      this.lastModified = options.lastModified || 0;
+    }
+  }
+
+  const sandbox = {
+    Date,
+    File: FakeFile,
+    CLASSIC_LOGO_MAX_BYTES: 100 * 1024,
+    CLASSIC_LOGO_MAX_DIMENSION: 1024,
+    CLASSIC_LOGO_MIN_DIMENSION: 64,
+    LOGO_SOURCE_MAX_BYTES: 10 * 1024 * 1024,
+    LOGO_SOURCE_MAX_DIMENSION: 8192,
+    LOGO_JPEG_QUALITY_STEPS: [0.9, 0.82, 0.74, 0.66, 0.58, 0.5, 0.42],
+    nextImageWidth: 1400,
+    nextImageHeight: 1400,
+    URL: {
+      createObjectURL: () => 'blob:test-logo',
+      revokeObjectURL: () => {},
+    },
+  };
+  sandbox.Image = class {
+    set src(_value) {
+      this.naturalWidth = sandbox.nextImageWidth;
+      this.naturalHeight = sandbox.nextImageHeight;
+      queueMicrotask(() => this.onload());
+    }
+  };
+  sandbox.document = {
+    createElement: (tagName) => {
+      assert.equal(tagName, 'canvas');
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => {},
+          imageSmoothingEnabled: false,
+          imageSmoothingQuality: 'low',
+        }),
+        toBlob(callback, mimeType, quality = 1) {
+          const encodedSize = Math.ceil(this.width * this.height * 0.45 * quality);
+          callback({ size: encodedSize, type: mimeType });
+        },
+      };
+    },
+  };
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(
+    `${js.slice(start, end)}\nglobalThis.validateLogoFile = validateLogoFile;`,
+    sandbox,
+    { filename: 'public/v2/app.js logo optimizer harness' },
+  );
+
+  const source = new FakeFile([{ size: 2 * 1024 * 1024 }], 'oversized-logo.jpg', {
+    type: 'image/jpeg',
+    lastModified: 123,
+  });
+  const optimized = await sandbox.validateLogoFile(source);
+  assert.equal(optimized.compressed, true);
+  assert.equal(optimized.originalSizeBytes, source.size);
+  assert.ok(optimized.file.size <= sandbox.CLASSIC_LOGO_MAX_BYTES);
+  assert.ok(optimized.width <= sandbox.CLASSIC_LOGO_MAX_DIMENSION);
+  assert.ok(optimized.height <= sandbox.CLASSIC_LOGO_MAX_DIMENSION);
+  assert.ok(optimized.width >= sandbox.CLASSIC_LOGO_MIN_DIMENSION);
+  assert.ok(optimized.height >= sandbox.CLASSIC_LOGO_MIN_DIMENSION);
+
+  sandbox.nextImageWidth = 512;
+  sandbox.nextImageHeight = 512;
+  const alreadySafe = new FakeFile([{ size: 48 * 1024 }], 'safe-logo.png', {
+    type: 'image/png',
+  });
+  const untouched = await sandbox.validateLogoFile(alreadySafe);
+  assert.equal(untouched.compressed, false);
+  assert.equal(untouched.file, alreadySafe);
+  assert.equal(untouched.width, 512);
+  assert.equal(untouched.height, 512);
 });
 
 test('v2 launch-plan fingerprints match the server builder for staged config', () => {
@@ -6140,12 +6310,54 @@ test('v2 launch mechanism stages one Trebuchet-managed local wallet run', () => 
   assert.match(js, /tx-funding/);
 });
 
+test('v2 Vanity CA candidates use a compact terminal list and Signal grade colors', () => {
+  const renderStart = js.indexOf('function renderVanityCandidates()');
+  const renderEnd = js.indexOf('function poolLadderCount', renderStart);
+  const renderSource = js.slice(renderStart, renderEnd);
+
+  assert.ok(renderStart >= 0 && renderEnd > renderStart);
+  assert.match(js, /const VANITY_VISIBLE_CANDIDATE_LIMIT = 4/);
+  assert.match(js, /function vanityRarityGrade/);
+  assert.match(renderSource, /vanity-candidate-list/);
+  assert.doesNotMatch(renderSource, /vanity-candidate-grid/);
+  assert.match(renderSource, /vanity-ca-address[^\n]+\$\{escapeHtml\(shortAddress\(candidate\.publicKey\)\)\}/);
+  assert.match(js, /return `\$\{text\.slice\(0, 4\)\}\.\.\.\$\{text\.slice\(-4\)\}`/);
+  assert.match(renderSource, /vanity-candidate-meta/);
+  assert.match(renderSource, /aria-pressed/);
+  assert.match(renderSource, /aria-label="Select random CA"/);
+  assert.match(css, /--rarity-common: #c8dce6/);
+  assert.match(css, /--rarity-fine: #8cdcff/);
+  assert.match(css, /--rarity-rare: #be82ff/);
+  assert.match(css, /--rarity-rati: #ffc85a/);
+  assert.match(css, /--rarity-commissioned: #fff082/);
+  assert.match(css, /\.vanity-candidate-list\s*\{[\s\S]*?display: flex;[\s\S]*?flex-direction: column;/);
+  assert.match(css, /#view-launch \.vanity-candidate\s*\{[\s\S]*?font-family: inherit;/);
+});
+
+test('v2 primary views share framed terminal workspaces and tabbed History panes', () => {
+  for (const pane of ['recovery', 'wallets', 'audit', 'journal']) {
+    assert.match(html, new RegExp(`data-history-pane="${pane}"`));
+    assert.match(html, new RegExp(`data-history-pane-panel="${pane}"`));
+  }
+  assert.match(html, /id="historyPaneTabs" role="tablist"/);
+  assert.match(js, /activeHistoryPane: 'recovery'/);
+  assert.match(js, /function renderHistoryPanes/);
+  assert.match(js, /action === 'select-history-pane'/);
+  assert.match(js, /panel\.hidden = !selected/);
+  assert.match(css, /\.history-pane-tabs\s*\{[\s\S]*?display: flex;/);
+  assert.match(css, /\.history-pane-stage\s*\{[\s\S]*?overflow: hidden;/);
+  assert.match(css, /#view-history \.surface-main\s*\{[\s\S]*?grid-template-rows: auto auto minmax\(0, 1fr\)/);
+  assert.match(css, /#view-wallet \.surface,[\s\S]*?#view-settings \.surface[\s\S]*?border: 1px solid var\(--line-strong\)/);
+  assert.match(css, /#view-settings \.release-panel \.secret-pin-actions\s*\{[\s\S]*?grid-column: 1 \/ -1/);
+  assert.match(css, /body:not\(\[data-active-view="launch"\]\) \.view\.is-active,[\s\S]*?overflow: hidden/);
+});
+
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=55/);
+  assert.match(html, /styles\.css\?v=64/);
   assert.match(html, /api-client\.js\?v=32/);
-  assert.match(html, /app\.js\?v=141/);
-  assert.doesNotMatch(html, /app\.js\?v=141" type="module"/);
+  assert.match(html, /app\.js\?v=150/);
+  assert.doesNotMatch(html, /app\.js\?v=150" type="module"/);
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
   assert.doesNotMatch(`${html}\n${js}\n${apiClientJs}`, /\bon(?:click|load|error)=["']/i);

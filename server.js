@@ -76,7 +76,11 @@ import {
 import { normalizeDistribution } from './lpDistribution.js';
 import { isWalletEffectivelyEmpty } from './walletRecovery.js';
 import { buildV2ExecutionReadiness, buildV2LaunchPlan } from './v2LaunchPlan.js';
-import { buildDiscoveryRecord } from './discoveryService.js';
+import {
+  buildDiscoveryRecord,
+  discoveryRpcCandidates,
+  isMissingMintRpcError,
+} from './discoveryService.js';
 
 // In-flight airdrop guard. Maps wallet public key → boolean (currently
 // running). Used to reject concurrent /api/transfer-assets and
@@ -837,37 +841,67 @@ app.post('/api/v2/discovery/inspect', async (req, res) => {
   }
 
   try {
-    const connection = new Connection(getRpcUrl(), 'confirmed');
-    const [metadataResult, compatibilityResult, supplyResult, largestResult] = await Promise.allSettled([
-      getTokenMetadata(mint),
+    const rpcConfig = getRpcConfig();
+    const candidates = discoveryRpcCandidates(rpcConfig);
+    let inspectionRpc = null;
+    let supply = null;
+    const candidateFailures = [];
+
+    for (const candidate of candidates) {
+      try {
+        const connection = new Connection(candidate.url, 'confirmed');
+        const supplyResult = await connection.getTokenSupply(mintPublicKey, 'confirmed');
+        inspectionRpc = { ...candidate, connection };
+        supply = supplyResult.value;
+        break;
+      } catch (error) {
+        candidateFailures.push({ candidate, error, missing: isMissingMintRpcError(error) });
+      }
+    }
+
+    if (!inspectionRpc) {
+      const allMissing = candidateFailures.length > 0 && candidateFailures.every((failure) => failure.missing);
+      const checkedNames = candidateFailures.map((failure) => failure.candidate.name).join(', ');
+      const lastError = candidateFailures.at(-1)?.error;
+      if (allMissing) {
+        return res.status(404).json({
+          success: false,
+          code: 'MINT_NOT_FOUND',
+          error: `Mint was not found on ${checkedNames || 'the available Solana networks'}. Check the address or select the correct network.`,
+        });
+      }
+      throw new Error(lastError?.message || 'Available RPC endpoints could not inspect this mint.');
+    }
+
+    const { connection } = inspectionRpc;
+    const [metadataResult, compatibilityResult, largestResult] = await Promise.allSettled([
+      getTokenMetadata(mint, { rpcUrl: inspectionRpc.url }),
       getMintCompatibilityWithRaydiumClmm(connection, mintPublicKey),
-      connection.getTokenSupply(mintPublicKey, 'confirmed'),
       connection.getTokenLargestAccounts(mintPublicKey, 'confirmed'),
     ]);
-
-    if (supplyResult.status === 'rejected') {
-      throw new Error(supplyResult.reason?.message || 'Token supply could not be read from the configured RPC.');
-    }
 
     const warnings = [];
     if (metadataResult.status === 'rejected') warnings.push(`Metadata: ${metadataResult.reason?.message || 'lookup failed'}`);
     if (compatibilityResult.status === 'rejected') warnings.push(`Authority audit: ${compatibilityResult.reason?.message || 'lookup failed'}`);
     if (largestResult.status === 'rejected') warnings.push(`Concentration: ${largestResult.reason?.message || 'lookup failed'}`);
+    if (inspectionRpc.url !== rpcConfig.active) {
+      const activeName = rpcConfig.saved?.find((entry) => entry.url === rpcConfig.active)?.name || 'active RPC';
+      warnings.push(`Read-only inspection used ${inspectionRpc.name} because ${activeName} is on another network or did not contain the mint.`);
+    }
 
     const matchingJournal = launchJournal
       .list({ includeCompleted: true, includeArchived: true })
       .filter((journal) => String(journal?.token?.mint || '') === mint)
       .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0))[0] || null;
 
-    const rpcConfig = getRpcConfig();
     const record = buildDiscoveryRecord({
       mint,
       metadata: metadataResult.status === 'fulfilled' ? metadataResult.value : null,
       compatibility: compatibilityResult.status === 'fulfilled' ? compatibilityResult.value : null,
-      supply: supplyResult.value?.value || null,
+      supply,
       largestAccounts: largestResult.status === 'fulfilled' ? largestResult.value?.value : null,
       journal: matchingJournal,
-      rpcName: rpcConfig.saved?.find((entry) => entry.url === rpcConfig.active)?.name || 'Configured RPC',
+      rpcName: inspectionRpc.name,
       warnings,
     });
 

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TREBUCHET · makesometokens</title>
   <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="./styles.css?v=55">
+  <link rel="stylesheet" href="./styles.css?v=64">
 </head>
 <body>
   <div class="app-shell">
@@ -19,23 +19,23 @@
       </a>
 
       <nav class="nav-list" id="primaryNav" aria-label="Primary">
-        <button class="nav-item is-active" type="button" data-view="launch">
+        <button class="nav-item is-active" type="button" data-view="launch" data-key="01">
           <i class="fa-solid fa-crosshairs"></i>
           <span>Launch</span>
         </button>
-        <button class="nav-item" type="button" data-view="wallet">
+        <button class="nav-item" type="button" data-view="wallet" data-key="02">
           <i class="fa-solid fa-wallet"></i>
           <span>Wallet</span>
         </button>
-        <button class="nav-item" type="button" data-view="discovery">
+        <button class="nav-item" type="button" data-view="discovery" data-key="03">
           <i class="fa-solid fa-compass"></i>
           <span>Discovery</span>
         </button>
-        <button class="nav-item" type="button" data-view="history">
+        <button class="nav-item" type="button" data-view="history" data-key="04">
           <i class="fa-solid fa-clock-rotate-left"></i>
           <span>History</span>
         </button>
-        <button class="nav-item" type="button" data-view="settings">
+        <button class="nav-item" type="button" data-view="settings" data-key="05">
           <i class="fa-solid fa-sliders"></i>
           <span>Settings</span>
         </button>
@@ -52,6 +52,14 @@
     </aside>
 
     <main class="workspace">
+      <section class="terminal-tape" aria-label="Trebuchet terminal status">
+        <span class="terminal-ident"><i aria-hidden="true"></i><strong>TBCHT // OPS</strong><small>V2.0</small></span>
+        <span><small>CHAIN</small><strong>SOLANA</strong></span>
+        <span><small>ENV</small><strong>MAINNET</strong></span>
+        <span><small>SIGNER</small><strong>LOCAL</strong></span>
+        <span class="terminal-tape-wide"><small>POLICY</small><strong>GUARDED EXECUTION</strong></span>
+        <span class="terminal-tape-end"><small>KEY CUSTODY</small><strong>ON DEVICE</strong></span>
+      </section>
       <header class="topbar">
         <div class="topbar-copy">
           <span class="topbar-brand" aria-hidden="true">
@@ -62,7 +70,7 @@
             </span>
           </span>
           <span class="eyebrow" id="viewEyebrow">Step 1 of 6 · Setup</span>
-          <h1 id="viewTitle">Launch your token</h1>
+          <h1 id="viewTitle">Launch console</h1>
         </div>
         <div class="topbar-actions">
           <button class="icon-button" type="button" id="themeButton" aria-label="Toggle contrast">
@@ -235,10 +243,14 @@
                     <span>Description</span>
                     <input id="tokenDescription" type="text" value="AI avatar swarm launch" autocomplete="off">
                   </label>
-                  <label class="logo-input-row">
-                    <span>Token logo</span>
-                    <input id="tokenLogoFile" type="file" accept="image/png,image/jpeg">
-                  </label>
+                  <div class="logo-input-row">
+                    <span class="logo-input-label">Token logo / auto-compress</span>
+                    <label class="logo-upload-control" for="tokenLogoFile">
+                      <input id="tokenLogoFile" type="file" accept="image/png,image/jpeg">
+                      <span class="logo-upload-command"><i class="fa-solid fa-arrow-up-from-bracket"></i> Select image</span>
+                      <span class="logo-upload-meta">PNG/JPG · ≤10MB</span>
+                    </label>
+                  </div>
                   <div class="token-logo-preview" id="tokenLogoPreview"></div>
                   <label>
                     <span>Target market cap</span>
@@ -247,14 +259,6 @@
                   <label>
                     <span>SOL to spend</span>
                     <input id="launchSol" type="number" value="3.5" min="0" step="0.1">
-                  </label>
-                  <label>
-                    <span>AI Avatar Collection</span>
-                    <input id="avatarCollectionName" type="text" value="MoonKit Avatars" autocomplete="off">
-                  </label>
-                  <label>
-                    <span>Number of avatars</span>
-                    <input id="avatarSupply" type="number" value="777" min="1" step="1">
                   </label>
                 </form>
                 <section class="vanity-panel" aria-label="Vanity CA grinder">
@@ -268,11 +272,11 @@
                   <div class="vanity-inputs">
                     <label>
                       <span>Start</span>
-                      <input id="vanityStart" type="text" value="" placeholder="eg MKT" autocomplete="off">
+                      <input id="vanityStart" type="text" value="" placeholder="eg MKT" autocomplete="off" aria-describedby="vanityFeedback">
                     </label>
                     <label>
                       <span>End</span>
-                      <input id="vanityEnd" type="text" value="" placeholder="eg K1T" autocomplete="off">
+                      <input id="vanityEnd" type="text" value="" placeholder="eg K1T" autocomplete="off" aria-describedby="vanityFeedback">
                     </label>
                   </div>
                   <div class="candidate-strip" id="vanityCandidates">
@@ -280,7 +284,33 @@
                     <button class="pill-button" type="button" data-action="start-vanity">Grind CA</button>
                   </div>
                 </section>
-                <section class="manifest-panel" id="avatarCollectionPanel" aria-label="Avatar collection launch"></section>
+                <section class="avatar-collection-terminal" id="avatarCollectionPanel" aria-label="NFT collection launch">
+                  <header class="avatar-collection-command">
+                    <span class="avatar-collection-mark" id="avatarCollectionMark" aria-hidden="true">MA</span>
+                    <span class="avatar-collection-identity">
+                      <span class="eyebrow">NFT collection / holder runtime</span>
+                      <h3 id="avatarCollectionTitle">MoonKit Avatars</h3>
+                      <code id="avatarCollectionSymbol">MKT-AI</code>
+                    </span>
+                    <span class="risk-badge warn" id="avatarCollectionState">Draft</span>
+                  </header>
+                  <div class="avatar-collection-controls">
+                    <label>
+                      <span>Collection name</span>
+                      <input id="avatarCollectionName" type="text" value="MoonKit Avatars" autocomplete="off">
+                    </label>
+                    <label>
+                      <span>Edition supply</span>
+                      <input id="avatarSupply" type="number" value="777" min="1" step="1">
+                    </label>
+                  </div>
+                  <div class="avatar-collection-readout" id="avatarCollectionReadout"></div>
+                  <div class="avatar-manifest-line">
+                    <span>Manifest</span>
+                    <code id="avatarCollectionManifest">db://avatars/mkt-draft</code>
+                  </div>
+                  <div class="avatar-collection-pipeline" id="avatarCollectionPipeline" aria-label="NFT collection pipeline"></div>
+                </section>
               </div>
 
               <details class="drawer classic-controls">
@@ -408,7 +438,7 @@
 
             <section class="signature-panel" id="signaturePanel" data-launch-pane="execute" aria-label="Launch run progress"></section>
 
-            <details class="drawer diagnostics-drawer" data-launch-pane="verify recover">
+            <details class="drawer diagnostics-drawer" data-launch-pane="recover">
               <summary>
                 <span>Diagnostics</span>
                 <strong id="preflightSummary">2 warnings</strong>
@@ -456,9 +486,17 @@
           <section class="surface">
             <div class="section-heading">
               <div>
-                <span class="eyebrow">Funding and recovery</span>
-                <h2>Selected launch wallet</h2>
+                <span class="eyebrow">Custody workspace</span>
+                <h2>Wallet operations</h2>
               </div>
+            </div>
+            <div class="wallet-recovery-inventory-slot" id="walletRecoveryInventory"></div>
+            <div class="wallet-module-heading">
+              <span>
+                <small>Active signer</small>
+                <strong>Selected launch wallet</strong>
+              </span>
+              <span class="risk-badge">Execution custody</span>
             </div>
             <div class="wallet-detail-panel" id="walletDetailPanel"></div>
             <div class="asset-table" id="assetTable"></div>
@@ -523,10 +561,18 @@
               <h2>Recent sessions</h2>
             </div>
           </div>
-          <div class="recovery-wizard" id="recoveryWizard"></div>
-          <div class="recovery-wallet-workspace" id="recoveryWalletWorkspace"></div>
-          <div class="history-execution-audit" id="historyExecutionAudit"></div>
-          <div class="timeline" id="timeline"></div>
+          <div class="history-pane-tabs" id="historyPaneTabs" role="tablist" aria-label="History workspace">
+            <button class="history-pane-tab is-selected" type="button" role="tab" aria-selected="true" data-action="select-history-pane" data-history-pane="recovery"><small>01</small><strong>Recovery</strong><span>Safe resume</span></button>
+            <button class="history-pane-tab" type="button" role="tab" aria-selected="false" data-action="select-history-pane" data-history-pane="wallets"><small>02</small><strong>Wallets</strong><span>Local custody</span></button>
+            <button class="history-pane-tab" type="button" role="tab" aria-selected="false" data-action="select-history-pane" data-history-pane="audit"><small>03</small><strong>Audit</strong><span>Guarded ops</span></button>
+            <button class="history-pane-tab" type="button" role="tab" aria-selected="false" data-action="select-history-pane" data-history-pane="journal"><small>04</small><strong>Journal</strong><span>Checkpoints</span></button>
+          </div>
+          <div class="history-pane-stage">
+            <section class="history-pane is-active" data-history-pane-panel="recovery" role="tabpanel"><div class="recovery-wizard" id="recoveryWizard"></div></section>
+            <section class="history-pane" data-history-pane-panel="wallets" role="tabpanel" hidden><div class="recovery-wallet-workspace" id="recoveryWalletWorkspace"></div></section>
+            <section class="history-pane" data-history-pane-panel="audit" role="tabpanel" hidden><div class="history-execution-audit" id="historyExecutionAudit"></div></section>
+            <section class="history-pane" data-history-pane-panel="journal" role="tabpanel" hidden><div class="timeline" id="timeline"></div></section>
+          </div>
         </section>
       </section>
 
@@ -555,11 +601,61 @@
     </main>
   </div>
 
+  <section class="recovery-pin-gate" id="recoveryPinGate" role="dialog" aria-modal="true" aria-labelledby="recoveryPinTitle" aria-describedby="recoveryPinDetail recoveryPinMessage" aria-hidden="true" data-status="idle" hidden>
+    <button class="recovery-pin-cancel" id="recoveryPinCancel" type="button" data-action="cancel-recovery-pin" aria-label="Cancel PIN entry">
+      <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+    </button>
+    <div class="recovery-pin-shell">
+      <span class="recovery-pin-lock" aria-hidden="true"><i class="fa-solid fa-lock"></i></span>
+      <header class="recovery-pin-head">
+        <span class="eyebrow" id="recoveryPinEyebrow">Trebuchet security</span>
+        <h2 id="recoveryPinTitle">Unlock Recovery PIN</h2>
+        <p id="recoveryPinDetail">Enter the four-digit PIN that protects local launch wallets and saved secrets.</p>
+      </header>
+      <button class="recovery-pin-boxes" id="recoveryPinBoxes" type="button" data-action="focus-recovery-pin" aria-label="Enter four-digit Recovery PIN">
+        <span></span><span></span><span></span><span></span>
+      </button>
+      <input class="recovery-pin-capture" id="recoveryPinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" aria-label="Recovery PIN digits">
+      <p class="recovery-pin-message" id="recoveryPinMessage" role="status" aria-live="assertive">Enter your four-digit Recovery PIN.</p>
+      <p class="recovery-pin-local"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Verified locally. Never sent off this Mac.</p>
+    </div>
+  </section>
+
+  <section class="sweep-confirm-gate" id="sweepConfirmGate" role="dialog" aria-modal="true" aria-labelledby="sweepConfirmTitle" aria-describedby="sweepConfirmDetail sweepConfirmMessage" aria-hidden="true" hidden>
+    <div class="sweep-confirm-shell">
+      <header class="sweep-confirm-head">
+        <span class="eyebrow">Recovery operation</span>
+        <h2 id="sweepConfirmTitle">Sweep recovery wallet</h2>
+        <p id="sweepConfirmDetail">Choose the destination, then type the full source address to authorize the sweep.</p>
+      </header>
+      <div class="sweep-confirm-route" aria-label="Sweep route">
+        <span><small>From recovery wallet</small><code id="sweepConfirmSource"></code></span>
+        <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+        <span><small>To destination</small><strong>Validated before signing</strong></span>
+      </div>
+      <label class="sweep-confirm-field" for="sweepConfirmDestination">
+        <span>Destination wallet</span>
+        <input id="sweepConfirmDestination" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Solana destination address">
+      </label>
+      <label class="sweep-confirm-field" for="sweepConfirmTypedAddress">
+        <span>Type the full recovery wallet address</span>
+        <input id="sweepConfirmTypedAddress" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Exact source address required">
+      </label>
+      <p class="sweep-confirm-message" id="sweepConfirmMessage" role="status" aria-live="assertive">The local recovery entry is removed only after Trebuchet verifies the source wallet is empty.</p>
+      <div class="sweep-confirm-actions">
+        <button class="pill-button" type="button" data-action="cancel-sweep-confirm">Cancel</button>
+        <button class="pill-button danger" type="button" data-action="submit-sweep-confirm">
+          <i class="fa-solid fa-broom-ball" aria-hidden="true"></i><span>Sweep assets</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
   <div class="approval-window floating" id="approvalFloating" aria-live="polite"></div>
   <div class="activity-drawer" id="activityLogDrawer" aria-hidden="true"></div>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
   <script src="./api-client.js?v=32"></script>
-  <script src="./app.js?v=141"></script>
+  <script src="./app.js?v=150"></script>
 </body>
 </html>

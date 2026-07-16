@@ -190,8 +190,8 @@ function singleflight(key, fn) {
 // Fetch the mint account and the Metaplex metadata account in a single
 // RPC call. Returns { decimals, symbol, programId } where symbol is null
 // if no Metaplex metadata exists for the mint.
-async function readOnChainBasics(mintAddress) {
-  const connection = new Connection(getRpcUrl(), 'confirmed');
+async function readOnChainBasics(mintAddress, rpcUrl = getRpcUrl()) {
+  const connection = new Connection(rpcUrl, 'confirmed');
   const mintPubkey = new PublicKey(mintAddress);
 
   const [metadataPDA] = PublicKey.findProgramAddressSync(
@@ -819,8 +819,11 @@ async function _resolvePriceUsdUncached(mintAddress) {
  * Token-2022 not handled, etc.). A missing price/name/image is NOT a
  * hard failure — the caller surfaces it as "enter manually" in the UI.
  */
-export async function getTokenInfo(mintAddress) {
-  const cached = readCache(mintAddress);
+export async function getTokenInfo(mintAddress, { rpcUrl = null } = {}) {
+  const configuredRpcUrl = getRpcUrl();
+  const selectedRpcUrl = rpcUrl || configuredRpcUrl;
+  const useConfiguredRpcCache = selectedRpcUrl === configuredRpcUrl;
+  const cached = useConfiguredRpcCache ? readCache(mintAddress) : null;
 
   // Static fields: read on-chain only when we don't have them in cache.
   // We track the on-chain Metaplex name and uri here as inputs to display
@@ -839,19 +842,21 @@ export async function getTokenInfo(mintAddress) {
     onChainName = cached.name ?? null;
     onChainUri = cached.uri ?? null;
   } else {
-    const onChain = await readOnChainBasics(mintAddress);
+    const onChain = await readOnChainBasics(mintAddress, selectedRpcUrl);
     symbol = onChain.symbol;
     decimals = onChain.decimals;
     programId = onChain.programId;
     onChainName = onChain.name;
     onChainUri = onChain.uri;
-    writeCacheStatic(mintAddress, {
-      symbol,
-      decimals,
-      programId,
-      name: onChainName,
-      uri: onChainUri,
-    });
+    if (useConfiguredRpcCache) {
+      writeCacheStatic(mintAddress, {
+        symbol,
+        decimals,
+        programId,
+        name: onChainName,
+        uri: onChainUri,
+      });
+    }
   }
 
   // Symbol fallback: if Metaplex metadata is missing, show a truncated
@@ -952,9 +957,9 @@ export async function getUsdPrice(mintAddress) {
  * working unchanged. Now also exposes name and imageUrl, which existing
  * callers ignore (they cherry-pick fields).
  */
-export async function getTokenMetadata(mintAddress) {
+export async function getTokenMetadata(mintAddress, options = {}) {
   try {
-    const info = await getTokenInfo(mintAddress);
+    const info = await getTokenInfo(mintAddress, options);
     return {
       symbol: info.symbol,
       decimals: info.decimals,

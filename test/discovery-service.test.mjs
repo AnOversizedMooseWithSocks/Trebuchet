@@ -1,9 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildDiscoveryRecord } from '../discoveryService.js';
+import {
+  buildDiscoveryRecord,
+  discoveryRpcCandidates,
+  isMissingMintRpcError,
+} from '../discoveryService.js';
 
 const MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+test('discovery prefers a saved mainnet RPC when the active launch RPC is devnet', () => {
+  const candidates = discoveryRpcCandidates({
+    active: 'https://api.devnet.solana.com',
+    saved: [
+      { name: 'Public devnet', url: 'https://api.devnet.solana.com' },
+      { name: 'Dedicated mainnet', url: 'https://mainnet.example.test' },
+    ],
+  });
+
+  assert.equal(candidates[0].name, 'Dedicated mainnet');
+  assert.equal(candidates[1].name, 'Public devnet');
+});
+
+test('discovery classifies missing mint RPC failures separately from upstream outages', () => {
+  assert.equal(isMissingMintRpcError(new Error('Invalid param: could not find account')), true);
+  assert.equal(isMissingMintRpcError(new Error(`Mint ${MINT} not found on-chain`)), true);
+  assert.equal(isMissingMintRpcError(new Error('429 Too Many Requests')), false);
+});
 
 test('buildDiscoveryRecord turns live RPC facts into a ready evidence record', () => {
   const record = buildDiscoveryRecord({

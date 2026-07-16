@@ -2,11 +2,11 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
 const views = {
-  launch: { eyebrow: 'Step 1 of 6 · Setup', title: 'Launch your token' },
-  wallet: { eyebrow: 'Wallet', title: 'Trebuchet wallets and launch assets' },
-  discovery: { eyebrow: 'Discovery', title: 'Token ecosystem discovery' },
-  history: { eyebrow: 'History', title: 'Launch journal' },
-  settings: { eyebrow: 'Settings', title: 'Security defaults' },
+  launch: { eyebrow: 'Step 1 of 6 · Setup', title: 'Launch console' },
+  wallet: { eyebrow: 'Wallet', title: 'Signer & asset custody' },
+  discovery: { eyebrow: 'Discovery', title: 'Token intelligence' },
+  history: { eyebrow: 'History', title: 'Execution journal' },
+  settings: { eyebrow: 'Settings', title: 'Runtime policy' },
 };
 
 const launchWorkspaces = [
@@ -203,6 +203,9 @@ const CLASSIC_MAX_WHOLE_TOKEN_SUPPLY = 10_000_000_000n;
 const CLASSIC_LOGO_MAX_BYTES = 100 * 1024;
 const CLASSIC_LOGO_MAX_DIMENSION = 1024;
 const CLASSIC_LOGO_MIN_DIMENSION = 64;
+const LOGO_SOURCE_MAX_BYTES = 10 * 1024 * 1024;
+const LOGO_SOURCE_MAX_DIMENSION = 8192;
+const LOGO_JPEG_QUALITY_STEPS = Object.freeze([0.9, 0.82, 0.74, 0.66, 0.58, 0.5, 0.42]);
 const V2_REQUIRED_LAUNCH_PLAN_OPERATION_IDS = Object.freeze([
   'v2-wallet-and-ca',
   'v2-funding-check',
@@ -282,7 +285,9 @@ const history = [];
 
 const state = {
   activeView: 'launch',
+  activeHistoryPane: 'recovery',
   launchWorkspace: 'configure',
+  verifyPanel: 'proof',
   network: 'Mainnet',
   connected: false,
   accountId: null,
@@ -346,6 +351,13 @@ const state = {
     deviceSecretAvailable: true,
     busy: null,
   },
+  recoveryPinGate: {
+    open: false,
+    value: '',
+    status: 'idle',
+    message: 'Enter your four-digit Recovery PIN.',
+    reason: 'unlock',
+  },
   prefs: {
     publishLaunchReport: true,
     checkForUpdatesOnStartup: true,
@@ -382,6 +394,7 @@ const state = {
   vanityProgress: null,
   vanityProgressStats: null,
   vanitySource: null,
+  vanityInputError: null,
   classicFundingEstimate: null,
   quoteAcquire: {
     jobId: null,
@@ -481,6 +494,9 @@ const state = {
 
 let liveOpsTimer = null;
 let quoteAcquireTimer = null;
+let recoveryPinGatePromise = null;
+let recoveryPinGateResolve = null;
+let recoveryPinGateTimer = null;
 let solflareWalletProvider = null;
 let solflareStandardProvider = null;
 let solflareWalletStandardListenersStarted = false;
@@ -2892,23 +2908,179 @@ function promptRecoveryPin(label) {
   return pin;
 }
 
+function recoveryPinGateCopy() {
+  if (state.recoveryPinGate.reason === 'vanity') {
+    return {
+      eyebrow: 'Vanity CA security',
+      title: 'Unlock to grind',
+      detail: 'Your Vanity CA secret stays encrypted locally. Enter the Recovery PIN to continue the grind.',
+    };
+  }
+  return {
+    eyebrow: 'Trebuchet security',
+    title: 'Unlock Recovery PIN',
+    detail: 'Enter the four-digit PIN that protects local launch wallets and saved secrets.',
+  };
+}
+
+function renderRecoveryPinGate() {
+  const gate = $('#recoveryPinGate');
+  if (!gate) return;
+  const open = state.recoveryPinGate.open === true;
+  const status = state.recoveryPinGate.status || 'idle';
+  const value = String(state.recoveryPinGate.value || '').slice(0, 4);
+  const copy = recoveryPinGateCopy();
+
+  gate.hidden = !open;
+  gate.setAttribute('aria-hidden', open ? 'false' : 'true');
+  gate.dataset.status = status;
+  document.body.classList.toggle('recovery-pin-open', open);
+  $('#recoveryPinEyebrow').textContent = copy.eyebrow;
+  $('#recoveryPinTitle').textContent = status === 'success' ? 'PIN verified' : copy.title;
+  $('#recoveryPinDetail').textContent = copy.detail;
+  $('#recoveryPinMessage').textContent = state.recoveryPinGate.message || 'Enter your four-digit Recovery PIN.';
+
+  $$('#recoveryPinBoxes span').forEach((box, index) => {
+    const filled = index < value.length;
+    box.classList.toggle('is-filled', filled);
+    box.textContent = filled ? '•' : '';
+  });
+
+  const input = $('#recoveryPinInput');
+  if (input) {
+    if (input.value !== value) input.value = value;
+    input.disabled = ['checking', 'success', 'error'].includes(status);
+  }
+  const cancel = $('#recoveryPinCancel');
+  if (cancel) cancel.disabled = ['checking', 'success'].includes(status);
+}
+
+function focusRecoveryPinGate() {
+  window.requestAnimationFrame?.(() => {
+    const input = $('#recoveryPinInput');
+    if (state.recoveryPinGate.open && input && !input.disabled) input.focus();
+  });
+}
+
+function openRecoveryPinGate({ reason = 'unlock' } = {}) {
+  if (recoveryPinGatePromise) {
+    focusRecoveryPinGate();
+    return recoveryPinGatePromise;
+  }
+  state.recoveryPinGate = {
+    open: true,
+    value: '',
+    status: 'idle',
+    message: 'Enter your four-digit Recovery PIN.',
+    reason,
+  };
+  recoveryPinGatePromise = new Promise((resolve) => {
+    recoveryPinGateResolve = resolve;
+  });
+  renderRecoveryPinGate();
+  focusRecoveryPinGate();
+  return recoveryPinGatePromise;
+}
+
+function settleRecoveryPinGate(unlocked) {
+  if (recoveryPinGateTimer) {
+    window.clearTimeout(recoveryPinGateTimer);
+    recoveryPinGateTimer = null;
+  }
+  const resolve = recoveryPinGateResolve;
+  recoveryPinGateResolve = null;
+  recoveryPinGatePromise = null;
+  state.recoveryPinGate = {
+    open: false,
+    value: '',
+    status: 'idle',
+    message: 'Enter your four-digit Recovery PIN.',
+    reason: 'unlock',
+  };
+  renderAll();
+  if (resolve) resolve(unlocked === true);
+}
+
+function cancelRecoveryPinGate() {
+  if (!state.recoveryPinGate.open || ['checking', 'success'].includes(state.recoveryPinGate.status)) return;
+  settleRecoveryPinGate(false);
+}
+
+async function submitRecoveryPinGate() {
+  if (!state.recoveryPinGate.open || state.recoveryPinGate.status !== 'idle') return;
+  const pin = String(state.recoveryPinGate.value || '');
+  if (!/^\d{4}$/.test(pin)) return;
+
+  state.recoveryPinGate.status = 'checking';
+  state.recoveryPinGate.message = 'Checking locally…';
+  state.secretPin.busy = 'Unlocking';
+  renderRecoveryPinGate();
+  try {
+    const status = await state.apiClient.unlockSecretPin(pin);
+    applySecretPinStatus(status);
+    await refreshSecretPinStatus({ reloadBoot: true });
+    state.secretPin.busy = null;
+    state.recoveryPinGate.status = 'success';
+    state.recoveryPinGate.message = state.recoveryPinGate.reason === 'vanity'
+      ? 'PIN verified. Starting the grinder…'
+      : 'PIN verified. Trebuchet is unlocked.';
+    renderRecoveryPinGate();
+    recoveryPinGateTimer = window.setTimeout(() => settleRecoveryPinGate(true), 520);
+  } catch (error) {
+    state.secretPin.busy = null;
+    state.recoveryPinGate.status = 'error';
+    state.recoveryPinGate.message = error?.code === 'BAD_SECRET_PIN'
+      ? 'Incorrect PIN'
+      : error?.message || 'PIN check failed';
+    renderRecoveryPinGate();
+    recoveryPinGateTimer = window.setTimeout(() => {
+      recoveryPinGateTimer = null;
+      if (!state.recoveryPinGate.open || state.recoveryPinGate.status !== 'error') return;
+      state.recoveryPinGate.value = '';
+      state.recoveryPinGate.status = 'idle';
+      state.recoveryPinGate.message = 'Try again. All four digits were cleared.';
+      renderRecoveryPinGate();
+      focusRecoveryPinGate();
+    }, 720);
+  }
+}
+
+function handleRecoveryPinInput(event) {
+  if (event.target.id !== 'recoveryPinInput') return false;
+  if (!state.recoveryPinGate.open || state.recoveryPinGate.status !== 'idle') return true;
+  const digits = String(event.target.value || '').replace(/\D/g, '').slice(0, 4);
+  state.recoveryPinGate.value = digits;
+  event.target.value = digits;
+  renderRecoveryPinGate();
+  if (digits.length === 4) submitRecoveryPinGate().catch(() => null);
+  return true;
+}
+
 function logoSummary(logo = state.tokenLogo) {
   if (!logo) return 'No logo selected';
   const kb = Math.max(1, Math.ceil(Number(logo.sizeBytes || 0) / 1024));
-  return `${logo.name || 'token-logo'} / ${kb}KB`;
+  const dimensions = Number(logo.width) > 0 && Number(logo.height) > 0
+    ? ` / ${logo.width}x${logo.height}`
+    : '';
+  const optimized = logo.compressed ? ' / AUTO-COMPRESSED' : '';
+  return `${logo.name || 'token-logo'} / ${kb}KB${dimensions}${optimized}`;
 }
 
-function readImageDimensions(file) {
+function loadLogoImage(file) {
   return new Promise((resolve, reject) => {
     if (typeof URL === 'undefined' || typeof Image === 'undefined') {
-      reject(new Error('Logo dimension check is unavailable in this runtime'));
+      reject(new Error('Logo image processing is unavailable in this runtime'));
       return;
     }
     const url = URL.createObjectURL(file);
     const image = new Image();
     image.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve({ width: image.naturalWidth, height: image.naturalHeight });
+      resolve({
+        image,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        release: () => URL.revokeObjectURL(url),
+      });
     };
     image.onerror = () => {
       URL.revokeObjectURL(url);
@@ -2918,24 +3090,113 @@ function readImageDimensions(file) {
   });
 }
 
+function logoCanvasBlob(image, width, height, mimeType, quality) {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { alpha: mimeType === 'image/png' });
+    if (!context) {
+      reject(new Error('Logo compression is unavailable in this runtime'));
+      return;
+    }
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(image, 0, 0, width, height);
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('Logo compression failed'));
+        return;
+      }
+      resolve(blob);
+    }, mimeType, quality);
+  });
+}
+
+function nextLogoScale(scale, encodedBytes) {
+  const estimated = Math.sqrt(CLASSIC_LOGO_MAX_BYTES / Math.max(1, encodedBytes)) * 0.94;
+  return scale * Math.max(0.55, Math.min(0.86, estimated));
+}
+
+async function compressLogoFile(file, source) {
+  const sourceScale = Math.min(1, CLASSIC_LOGO_MAX_DIMENSION / Math.max(source.width, source.height));
+  const minimumScale = CLASSIC_LOGO_MIN_DIMENSION / Math.min(source.width, source.height);
+  let scale = sourceScale;
+  let lastAttemptScale = null;
+
+  while (scale >= minimumScale) {
+    const width = Math.max(1, Math.round(source.width * scale));
+    const height = Math.max(1, Math.round(source.height * scale));
+    const qualities = file.type === 'image/jpeg' ? LOGO_JPEG_QUALITY_STEPS : [undefined];
+    let smallestBlob = null;
+
+    for (const quality of qualities) {
+      const blob = await logoCanvasBlob(source.image, width, height, file.type, quality);
+      if (!smallestBlob || blob.size < smallestBlob.size) smallestBlob = blob;
+      if (blob.size <= CLASSIC_LOGO_MAX_BYTES) {
+        const optimizedFile = new File([blob], file.name || 'token-logo', {
+          type: file.type,
+          lastModified: Number(file.lastModified) || Date.now(),
+        });
+        return {
+          file: optimizedFile,
+          width,
+          height,
+          compressed: true,
+          originalSizeBytes: file.size,
+        };
+      }
+    }
+
+    lastAttemptScale = scale;
+    const reducedScale = nextLogoScale(scale, smallestBlob?.size || file.size);
+    if (reducedScale < minimumScale && lastAttemptScale !== minimumScale) {
+      scale = minimumScale;
+    } else if (Math.abs(reducedScale - scale) < 0.0001) {
+      break;
+    } else {
+      scale = reducedScale;
+    }
+  }
+
+  throw new Error('Logo could not be compressed below 100KB without becoming too small');
+}
+
 async function validateLogoFile(file) {
   if (!file) return null;
   const allowedTypes = new Set(['image/png', 'image/jpeg']);
   if (!allowedTypes.has(file.type)) {
     throw new Error('Logo must be a PNG or JPG image');
   }
-  if (file.size <= 0 || file.size > CLASSIC_LOGO_MAX_BYTES) {
-    const kb = Math.max(1, Math.ceil(Number(file.size || 0) / 1024));
-    throw new Error(`Logo is ${kb}KB; max is 100KB`);
+  if (file.size <= 0 || file.size > LOGO_SOURCE_MAX_BYTES) {
+    const mb = Math.max(1, Math.ceil(Number(file.size || 0) / (1024 * 1024)));
+    throw new Error(`Logo is ${mb}MB; source max is 10MB`);
   }
-  const dimensions = await readImageDimensions(file);
-  if (dimensions.width > CLASSIC_LOGO_MAX_DIMENSION || dimensions.height > CLASSIC_LOGO_MAX_DIMENSION) {
-    throw new Error(`Logo is ${dimensions.width}x${dimensions.height}px; max is ${CLASSIC_LOGO_MAX_DIMENSION}x${CLASSIC_LOGO_MAX_DIMENSION}px`);
+
+  const source = await loadLogoImage(file);
+  try {
+    if (source.width > LOGO_SOURCE_MAX_DIMENSION || source.height > LOGO_SOURCE_MAX_DIMENSION) {
+      throw new Error(`Logo dimensions must be ${LOGO_SOURCE_MAX_DIMENSION}x${LOGO_SOURCE_MAX_DIMENSION}px or smaller before compression`);
+    }
+    if (source.width < CLASSIC_LOGO_MIN_DIMENSION || source.height < CLASSIC_LOGO_MIN_DIMENSION) {
+      throw new Error(`Logo is ${source.width}x${source.height}px; minimum is ${CLASSIC_LOGO_MIN_DIMENSION}x${CLASSIC_LOGO_MIN_DIMENSION}px`);
+    }
+    const requiresCompression = file.size > CLASSIC_LOGO_MAX_BYTES
+      || source.width > CLASSIC_LOGO_MAX_DIMENSION
+      || source.height > CLASSIC_LOGO_MAX_DIMENSION;
+    if (!requiresCompression) {
+      return {
+        file,
+        width: source.width,
+        height: source.height,
+        compressed: false,
+        originalSizeBytes: file.size,
+      };
+    }
+    return await compressLogoFile(file, source);
+  } finally {
+    source.release();
   }
-  if (dimensions.width < CLASSIC_LOGO_MIN_DIMENSION || dimensions.height < CLASSIC_LOGO_MIN_DIMENSION) {
-    throw new Error(`Logo is ${dimensions.width}x${dimensions.height}px; minimum is ${CLASSIC_LOGO_MIN_DIMENSION}x${CLASSIC_LOGO_MIN_DIMENSION}px`);
-  }
-  return file;
 }
 
 function validateProofFile(file) {
@@ -3005,19 +3266,24 @@ function readFileAsText(file, label = 'File') {
 
 async function selectTokenLogo(file) {
   try {
-    const safeFile = await validateLogoFile(file);
-    if (!safeFile) return;
+    const prepared = await validateLogoFile(file);
+    if (!prepared) return;
+    const safeFile = prepared.file;
     const dataUrl = await readFileAsDataUrl(safeFile);
     state.tokenLogo = {
       name: safeFile.name || 'token-logo',
       mimeType: safeFile.type,
       sizeBytes: safeFile.size,
+      width: prepared.width,
+      height: prepared.height,
+      compressed: prepared.compressed,
+      originalSizeBytes: prepared.originalSizeBytes,
       dataUrl,
     };
     state.tokenLogoError = null;
     invalidateClassicOutputs();
     refreshClassicPreview({ includePoolEditor: true });
-    notify('Token logo attached');
+    notify(prepared.compressed ? 'Token logo auto-compressed and attached' : 'Token logo attached');
   } catch (error) {
     state.tokenLogo = null;
     state.tokenLogoError = error.message || 'Token logo failed validation';
@@ -3037,6 +3303,55 @@ function clearTokenLogo() {
   invalidateClassicOutputs();
   refreshClassicPreview({ includePoolEditor: true });
   notify('Token logo cleared');
+}
+
+function numberStepperLabel(input) {
+  const label = input.closest('label');
+  const labelText = label?.querySelector(':scope > span')?.textContent?.trim();
+  return labelText || input.getAttribute('aria-label') || input.name || input.id || 'value';
+}
+
+function enhanceNumberSteppers(root = document) {
+  root.querySelectorAll('input[type="number"]:not([data-number-stepper])').forEach((input) => {
+    input.dataset.numberStepper = 'ready';
+    const label = numberStepperLabel(input);
+    const shell = document.createElement('span');
+    shell.className = 'number-stepper';
+
+    const decrement = document.createElement('button');
+    decrement.type = 'button';
+    decrement.className = 'number-stepper-button';
+    decrement.dataset.action = 'step-number';
+    decrement.dataset.direction = '-1';
+    decrement.setAttribute('aria-label', `Decrease ${label}`);
+    decrement.textContent = '−';
+
+    const increment = document.createElement('button');
+    increment.type = 'button';
+    increment.className = 'number-stepper-button';
+    increment.dataset.action = 'step-number';
+    increment.dataset.direction = '1';
+    increment.setAttribute('aria-label', `Increase ${label}`);
+    increment.textContent = '+';
+
+    input.parentNode.insertBefore(shell, input);
+    shell.append(decrement, input, increment);
+  });
+}
+
+function stepNumberInput(input, direction) {
+  if (!input || input.disabled || input.readOnly) return false;
+  const previousValue = input.value;
+  try {
+    if (direction > 0) input.stepUp();
+    else input.stepDown();
+  } catch (_) {
+    return false;
+  }
+  if (input.value === previousValue) return false;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.focus({ preventScroll: true });
+  return true;
 }
 
 async function copyText(value, label = 'Value') {
@@ -4142,21 +4457,38 @@ function renderChartDeck() {
 function renderAvatarCollectionPanel() {
   const config = currentLaunchConfig();
   const collection = config.avatarCollection;
+  const collectionTx = state.transactions.find((item) => item.id === 'tx-avatar-collection') || null;
+  const txState = String(collectionTx?.state || 'pending').toLowerCase();
+  const completed = ['complete', 'completed', 'success', 'done'].includes(txState);
+  const running = ['running', 'active', 'processing'].includes(txState);
+  const staged = Boolean(state.launchPlan || state.transactions.length);
+  const status = completed ? 'Minted' : running ? 'Running' : staged ? 'Staged' : 'Draft';
+  const statusClass = completed ? '' : 'warn';
+  const pipeline = [
+    { index: '01', label: 'Manifest', detail: 'Local draft', state: 'ready' },
+    { index: '02', label: 'Mint', detail: completed ? 'Created' : running ? 'Running' : 'Queued', state: completed ? 'ready' : running ? 'active' : '' },
+    { index: '03', label: 'Metadata', detail: completed ? 'Pinned' : 'On mint', state: completed ? 'ready' : '' },
+    { index: '04', label: 'Claim', detail: 'Holder gate', state: completed ? 'ready' : '' },
+  ];
 
-  $('#avatarCollectionPanel').innerHTML = `
-    <div class="manifest-head">
-      <span>
-        <span class="eyebrow">NFT avatar collection</span>
-        <h3>${escapeHtml(collection.name)}</h3>
-      </span>
-      <span class="risk-badge">Ready</span>
-    </div>
-    <div class="manifest-grid compact-manifest">
-      <span><small>Supply</small><strong>${collection.supply.toLocaleString()}</strong></span>
-      <span><small>Runtime</small><strong>NFT holder claim</strong></span>
-      <span><small>Source</small><strong>${escapeHtml(collection.source)}</strong></span>
-    </div>
+  $('#avatarCollectionMark').textContent = avatarInitials(collection.name);
+  $('#avatarCollectionTitle').textContent = collection.name;
+  $('#avatarCollectionSymbol').textContent = collection.symbol;
+  $('#avatarCollectionManifest').textContent = collection.manifest;
+  $('#avatarCollectionState').textContent = status;
+  $('#avatarCollectionState').className = `risk-badge ${statusClass}`;
+  $('#avatarCollectionReadout').innerHTML = `
+    <span><small>Symbol</small><strong>${escapeHtml(collection.symbol)}</strong></span>
+    <span><small>Custody</small><strong>${escapeHtml(collection.source === 'local-db' ? 'Local DB' : collection.source)}</strong></span>
+    <span><small>Assignment</small><strong>Wallet + mint</strong></span>
   `;
+  $('#avatarCollectionPipeline').innerHTML = pipeline.map((step) => `
+    <span class="avatar-pipeline-step ${escapeHtml(step.state)}">
+      <small>${escapeHtml(step.index)}</small>
+      <strong>${escapeHtml(step.label)}</strong>
+      <em>${escapeHtml(step.detail)}</em>
+    </span>
+  `).join('');
 }
 
 function vanityCandidateTarget(candidate) {
@@ -4181,6 +4513,16 @@ function vanityCandidateDetail(candidate) {
 
 const VANITY_BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const VANITY_PLANNING_RATE = 50000;
+const VANITY_VISIBLE_CANDIDATE_LIMIT = 4;
+
+function vanityRarityGrade(rarity) {
+  const normalized = String(rarity || 'Common').trim().toLowerCase();
+  if (['mythic', 'commissioned'].includes(normalized)) return 'commissioned';
+  if (['legendary', 'rati', 'rati-grade'].includes(normalized)) return 'rati';
+  if (['rare', 'epic'].includes(normalized)) return 'rare';
+  if (['fine', 'uncommon'].includes(normalized)) return 'fine';
+  return 'common';
+}
 
 function formatVanityAttempts(value) {
   const number = Number(value);
@@ -4279,6 +4621,14 @@ function vanityAvailabilityMeta() {
       icon: 'fa-triangle-exclamation',
     };
   }
+  if (state.apiStatus === 'connected' && state.secretPin.locked) {
+    return {
+      label: 'Unlock to grind',
+      detail: 'Grind will ask for the Recovery PIN, then save the Vanity CA locally.',
+      className: 'warn',
+      icon: 'fa-lock',
+    };
+  }
   if (state.apiStatus === 'connected') {
     return { label: 'Native grinder ready', detail: 'Saved Vanity CA options stay selectable across runs.', className: '', icon: 'fa-wand-magic-sparkles' };
   }
@@ -4291,47 +4641,67 @@ function renderVanityCandidates() {
   const vanity = currentVanityConfig();
   const rawEstimate = vanityPatternEstimate(vanity.prefix, vanity.suffix);
   const estimate = vanityEstimateSummary(vanity.prefix, vanity.suffix);
-  const candidates = state.vanityCandidates.slice(-4).reverse();
+  const candidates = state.vanityCandidates.slice(-VANITY_VISIBLE_CANDIDATE_LIMIT).reverse();
   const hiddenCount = Math.max(0, state.vanityCandidates.length - candidates.length);
   const canGrind = state.vanityRunning || (!rawEstimate.invalid.length && (state.apiStatus !== 'connected' || state.vanityAvailable));
   const canRemoveSelected = Boolean(selected?.publicKey);
-  const candidateButtons = candidates.map((candidate) => `
-    <button class="vanity-candidate ${candidate.publicKey === state.selectedVanityPublicKey ? 'is-active' : ''}" type="button" data-action="select-vanity" data-public-key="${escapeHtml(candidate.publicKey)}" title="${escapeHtml(candidate.publicKey)}">
-      <strong>${escapeHtml(shortAddress(candidate.publicKey))}</strong>
-      <small>${escapeHtml(vanityCandidateDetail(candidate))}</small>
-      <em>${escapeHtml(candidate.mode || (candidate.prefix && candidate.suffix ? 'both' : candidate.prefix ? 'prefix' : candidate.suffix ? 'suffix' : 'saved'))}</em>
+  const candidateButtons = candidates.map((candidate, index) => {
+    const isActive = candidate.publicKey === state.selectedVanityPublicKey;
+    const rarity = String(candidate.rarity || 'Common').trim();
+    const grade = vanityRarityGrade(rarity);
+    const attempts = Number(candidate.attempts);
+    const epochs = Number(candidate.epochs);
+    const mode = candidate.mode || (candidate.prefix && candidate.suffix ? 'both' : candidate.prefix ? 'prefix' : candidate.suffix ? 'suffix' : 'saved');
+    const details = [
+      vanityCandidateTarget(candidate),
+      Number.isFinite(attempts) && attempts > 0 ? `${formatVanityAttempts(attempts)} tries` : null,
+      Number.isFinite(epochs) && epochs >= 0 ? `${epochs.toFixed(2)} epochs` : null,
+      mode,
+    ].filter(Boolean);
+    return `
+    <button class="vanity-candidate grade-${escapeHtml(grade)} ${isActive ? 'is-active' : ''}" type="button" data-action="select-vanity" data-public-key="${escapeHtml(candidate.publicKey)}" title="${escapeHtml(candidate.publicKey)}" aria-pressed="${isActive ? 'true' : 'false'}">
+      <span class="vanity-candidate-slot">${String(index + 1).padStart(2, '0')}</span>
+      <span class="vanity-candidate-main">
+        <code class="vanity-ca-address" aria-label="Contract address ${escapeHtml(candidate.publicKey)}">${escapeHtml(shortAddress(candidate.publicKey))}</code>
+        <small class="vanity-candidate-meta">
+          <b class="vanity-grade grade-${escapeHtml(grade)}">${escapeHtml(rarity)}</b>
+          ${details.map((detail) => `<span>${escapeHtml(detail)}</span>`).join('')}
+        </small>
+      </span>
+      <span class="vanity-candidate-state">${isActive ? 'selected' : 'saved'}</span>
     </button>
-  `).join('');
+  `;
+  }).join('');
   $('#vanityCandidates').innerHTML = `
-    <div class="vanity-status ${escapeHtml(meta.className)}">
-      <i class="fa-solid ${escapeHtml(meta.icon)}"></i>
-      <span>
+    <div class="vanity-terminal-status" aria-label="Vanity grinder status">
+      <div class="vanity-status ${escapeHtml(meta.className)}">
+        <i class="fa-solid ${escapeHtml(meta.icon)}"></i>
         <strong>${escapeHtml(meta.label)}</strong>
         <small>${escapeHtml(meta.detail)}</small>
-      </span>
-    </div>
-    <div class="vanity-status vanity-estimate ${escapeHtml(estimate.className)}">
-      <i class="fa-solid fa-gauge-high"></i>
-      <span>
+      </div>
+      <div class="vanity-status vanity-estimate ${escapeHtml(estimate.className)}">
+        <i class="fa-solid fa-gauge-high"></i>
         <strong>${escapeHtml(estimate.label)}</strong>
         <small>${escapeHtml(estimate.detail)}</small>
-      </span>
+      </div>
     </div>
-    <div class="vanity-candidate-grid">
-      <button class="vanity-candidate ${selected ? '' : 'is-active'}" type="button" data-action="select-vanity" data-public-key="">
-        <strong>Random CA</strong>
-        <small>${escapeHtml(vanityCandidateDetail(null))}</small>
-        <em>default</em>
-      </button>
-      ${candidateButtons || '<button class="vanity-candidate" type="button" data-action="noop" data-message="No saved Vanity CA options yet"><strong>Saved options</strong><small>No retained Vanity CAs yet</small><em>empty</em></button>'}
+    ${state.vanityInputError ? `<p class="vanity-feedback" id="vanityFeedback" role="alert">${escapeHtml(state.vanityInputError)}</p>` : '<p class="vanity-feedback" id="vanityFeedback">Enter a start, an end, or both. Base58 only.</p>'}
+    <div class="vanity-candidate-list" aria-label="Saved contract addresses">
+      <div class="vanity-list-head" aria-hidden="true">
+        <span>Slot</span>
+        <span>Contract address / grade / grind proof</span>
+        <span>State</span>
+      </div>
+      ${candidateButtons || '<div class="vanity-empty"><span>--</span><code>NO SAVED CONTRACT ADDRESSES</code><small>Run the grinder to retain a local CA.</small></div>'}
     </div>
     <div class="vanity-actions">
+      <button class="pill-button ${selected ? '' : 'is-active'}" type="button" data-action="select-vanity" data-public-key="" aria-label="Select random CA" aria-pressed="${selected ? 'false' : 'true'}"><span aria-hidden="true">$</span> random</button>
       <button class="pill-button" type="button" data-action="start-vanity" ${canGrind ? '' : 'disabled'}>
-        ${state.vanityRunning ? 'Cancel' : 'Grind CA'}
+        <span aria-hidden="true">$</span> ${state.vanityRunning ? 'cancel' : 'grind'}
       </button>
-      <button class="pill-button" type="button" data-action="remove-selected-vanity" ${canRemoveSelected ? '' : 'disabled'}>Remove selected</button>
-      <button class="pill-button" type="button" data-action="prune-hidden-vanity" ${hiddenCount ? '' : 'disabled'}>Prune hidden</button>
-      <span class="vanity-progress">${escapeHtml(hiddenCount ? `${hiddenCount} more saved / ${vanityCandidateDetail(selected)}` : vanityCandidateDetail(selected))}</span>
+      <button class="pill-button" type="button" data-action="remove-selected-vanity" aria-label="Remove selected" ${canRemoveSelected ? '' : 'disabled'}><span aria-hidden="true">$</span> remove</button>
+      <button class="pill-button" type="button" data-action="prune-hidden-vanity" aria-label="Prune hidden" ${hiddenCount ? '' : 'disabled'}><span aria-hidden="true">$</span> prune${hiddenCount ? ` ${hiddenCount}` : ''}</button>
+      <span class="vanity-progress">${state.vanityCandidates.length} saved${hiddenCount ? ` · ${hiddenCount} hidden` : ''}</span>
     </div>
   `;
 }
@@ -4483,6 +4853,7 @@ function renderPoolEditorPanel() {
     ` : ''}
     ${customRows || '<div class="empty-state">Add a quote pool for flywheel or custom liquidity venues.</div>'}
   `;
+  enhanceNumberSteppers($('#poolEditorPanel'));
 }
 
 function phaseEventDone(stage, allocationIndex, indexKey = null, indexValue = null) {
@@ -10930,7 +11301,12 @@ function renderFinalizationPanel() {
           <em>${finalDestination ? escapeHtml(shortAddress(finalDestination)) : 'no destination'}</em>
         </span>
       </div>
-      <div class="proof-review-panel">
+      <nav class="verify-panel-tabs" role="tablist" aria-label="Verify workspace detail">
+        <button class="${state.verifyPanel === 'proof' ? 'is-selected' : ''}" type="button" role="tab" aria-selected="${state.verifyPanel === 'proof' ? 'true' : 'false'}" data-action="select-verify-panel" data-verify-panel="proof">Proof bundle</button>
+        <button class="${state.verifyPanel === 'audit' ? 'is-selected' : ''}" type="button" role="tab" aria-selected="${state.verifyPanel === 'audit' ? 'true' : 'false'}" data-action="select-verify-panel" data-verify-panel="audit">Parity audit</button>
+      </nav>
+      <div class="verify-panel-stage">
+      <div class="proof-review-panel" data-verify-panel-view="proof" ${state.verifyPanel === 'proof' ? '' : 'hidden'}>
         <div class="proof-review-head">
           <span>
             <span class="eyebrow">Proof review</span>
@@ -10954,7 +11330,10 @@ function renderFinalizationPanel() {
           ${fieldHandoffRemaining ? `<p>+${fieldHandoffRemaining} more blocker${fieldHandoffRemaining === 1 ? '' : 's'} in the field parity packet.</p>` : ''}
         </div>` : ''}
       </div>
-      ${renderReportParityAuditPanel(reportParityAudit)}
+      <div class="verify-panel-audit" data-verify-panel-view="audit" ${state.verifyPanel === 'audit' ? '' : 'hidden'}>
+        ${renderReportParityAuditPanel(reportParityAudit)}
+      </div>
+      </div>
       <div class="operator-toolbar compact">
         <button class="pill-button" type="button" data-action="publish-v2-report" ${canPublish ? '' : 'disabled'}>${escapeHtml(reportLabel)}</button>
         <button class="pill-button" type="button" data-action="run-v2-airdrop" ${canRunAirdrop ? '' : 'disabled'}>${escapeHtml(airdropLabel)}</button>
@@ -11182,7 +11561,10 @@ function renderClassicBridge() {
         <div class="readiness-phases">${phaseSummary}</div>
       </div>
       <div class="classic-phase-grid">${phaseRows}</div>
-      <div class="phase-tree">${renderClassicPhaseTree(topology)}</div>
+      <details class="drawer phase-tree-drawer">
+        <summary><span>Phase topology</span><strong>${poolCount} pool${poolCount === 1 ? '' : 's'} / ${sliceCount} slice${sliceCount === 1 ? '' : 's'}</strong></summary>
+        <div class="phase-tree">${renderClassicPhaseTree(topology)}</div>
+      </details>
     </section>
     <section class="classic-workspace-section classic-workspace-verify" data-classic-workspace="verify">
       ${renderFinalizationPanel()}
@@ -11579,7 +11961,7 @@ function fieldRunbookActionControl(action = '', stage = {}) {
     return { dataAction: walletPublicKey ? 'import-wallet' : 'generate-wallet', label: walletPublicKey ? 'Import wallet' : 'Generate wallet' };
   }
   if (action === 'grind-or-select-vanity-ca') {
-    return { dataAction: 'start-vanity', label: state.vanityGrinding ? 'Grinding' : 'Grind CA', disabled: state.vanityGrinding === true };
+    return { dataAction: 'start-vanity', label: state.vanityRunning ? 'Cancel grind' : 'Grind CA', disabled: false };
   }
   if (['stage-launch-plan', 'fix-pool-topology'].includes(action)) {
     return { dataAction: 'review-plan', label: 'Stage plan' };
@@ -13253,12 +13635,14 @@ function renderWallet() {
         ? 'Secret material unavailable on this machine'
         : 'Recoverable launch wallet metadata from local API',
       state: 'Recovery',
+      pane: 'wallets',
     })),
-    ...state.recovery.journals.slice(0, 4).map((journal) => ({
+    ...state.recovery.journals.map((journal) => ({
       type: 'Launch journal',
       name: journal.token?.symbol || shortAddress(journal.walletPublicKey),
       detail: `${humanizeStage(journal.stage)} / updated ${formatDate(journal.updatedAt || journal.createdAt)}`,
       state: journal.status || 'Journal',
+      pane: 'journal',
     })),
   ];
   const proof = currentLaunchProof();
@@ -13285,8 +13669,6 @@ function renderWallet() {
       state: 'Verified',
     } : null,
   ].filter(Boolean) : [];
-  const assetRows = [...recoveryAssets, ...proofAssets];
-
   $('#accountList').innerHTML = walletRows.map((item) => `
     <article class="account-row ${item.id === state.accountId ? 'is-active' : ''}">
       <span class="ident" style="border-color:${item.color}; color:${item.color}">${escapeHtml(item.name.slice(0, 1))}</span>
@@ -13398,18 +13780,60 @@ function renderWallet() {
     </div>
   ` : '<div class="empty-state">Generate or import a Trebuchet-managed wallet to see funding and recovery controls.</div>';
 
-  $('#assetTable').innerHTML = assetRows.length
-    ? assetRows.map((item) => `
-    <article class="asset-row">
-      <span>
-        <h3>${escapeHtml(item.name)}</h3>
-        <p>${escapeHtml(item.type)} / ${escapeHtml(item.detail)}</p>
-      </span>
-      <span class="risk-badge ${stateClass(item.state)}">${escapeHtml(item.state)}</span>
-      <button class="pill-button" type="button" data-action="noop" data-message="${escapeHtml(item.name)} selected">Inspect</button>
-    </article>
-  `).join('')
-    : '<div class="empty-state">No local wallet or launch assets found.</div>';
+  const recoveryWalletCount = state.recovery.pendingWallets.length;
+  const recoveryJournalCount = state.recovery.journals.length;
+  $('#walletRecoveryInventory').innerHTML = `
+    <details class="wallet-inventory-drawer">
+      <summary>
+        <span class="wallet-inventory-summary-copy">
+          <small>Recovery inventory</small>
+          <strong>Pending wallets &amp; launch journals</strong>
+        </span>
+        <span class="wallet-inventory-summary-meta">
+          <span>${recoveryWalletCount} wallet${recoveryWalletCount === 1 ? '' : 's'} / ${recoveryJournalCount} journal${recoveryJournalCount === 1 ? '' : 's'}</span>
+          <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+        </span>
+      </summary>
+      <div class="wallet-inventory-body">
+        <div class="wallet-inventory-note">
+          <span>
+            <strong>Separate recovery queue</strong>
+            <small>These records are not children of the selected signer.</small>
+          </span>
+          <button class="pill-button" type="button" data-action="inspect-recovery">Open recovery center</button>
+        </div>
+        <div class="asset-table wallet-recovery-table">
+          ${recoveryAssets.length ? recoveryAssets.map((item) => `
+            <article class="asset-row">
+              <span>
+                <h3>${escapeHtml(item.name)}</h3>
+                <p>${escapeHtml(item.type)} / ${escapeHtml(item.detail)}</p>
+              </span>
+              <span class="risk-badge ${stateClass(item.state)}">${escapeHtml(item.state)}</span>
+              <button class="pill-button" type="button" data-action="inspect-recovery-record" data-recovery-pane="${escapeHtml(item.pane)}">Inspect</button>
+            </article>
+          `).join('') : '<div class="empty-state">No recovery wallets or launch journals need attention.</div>'}
+        </div>
+      </div>
+    </details>
+  `;
+
+  $('#assetTable').innerHTML = proofAssets.length ? `
+    <div class="wallet-proof-heading">
+      <small>Verified launch assets</small>
+      <strong>Proof inventory</strong>
+    </div>
+    ${proofAssets.map((item) => `
+      <article class="asset-row">
+        <span>
+          <h3>${escapeHtml(item.name)}</h3>
+          <p>${escapeHtml(item.type)} / ${escapeHtml(item.detail)}</p>
+        </span>
+        <span class="risk-badge ${stateClass(item.state)}">${escapeHtml(item.state)}</span>
+        <button class="pill-button" type="button" data-action="noop" data-message="${escapeHtml(item.name)} selected">Inspect</button>
+      </article>
+    `).join('')}
+  ` : '';
 }
 
 function renderDiscovery() {
@@ -14579,6 +15003,22 @@ function renderHistory() {
       ` : ''}
     </article>
   `).join('');
+  renderHistoryPanes();
+}
+
+function renderHistoryPanes() {
+  const panes = ['recovery', 'wallets', 'audit', 'journal'];
+  if (!panes.includes(state.activeHistoryPane)) state.activeHistoryPane = 'recovery';
+  $$('[data-history-pane]').forEach((button) => {
+    const selected = button.dataset.historyPane === state.activeHistoryPane;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-selected', String(selected));
+  });
+  $$('[data-history-pane-panel]').forEach((panel) => {
+    const selected = panel.dataset.historyPanePanel === state.activeHistoryPane;
+    panel.classList.toggle('is-active', selected);
+    panel.hidden = !selected;
+  });
 }
 
 function renderAll() {
@@ -14604,7 +15044,9 @@ function renderAll() {
   renderSettings();
   renderHistory();
   renderActivityLogDrawer();
+  renderRecoveryPinGate();
   renderLaunchWorkspace();
+  enhanceNumberSteppers();
   drawLaunchCanvas();
 }
 
@@ -16340,19 +16782,19 @@ async function refreshSecretPinStatus({ reloadBoot = false } = {}) {
 async function setupSecretPin() {
   if (state.apiStatus !== 'connected' || !state.apiClient?.setupSecretPin) {
     notify('Recovery PIN requires the local Trebuchet app');
-    return;
+    return false;
   }
   if (state.secretPin.configured) {
     notify('Recovery PIN is already configured');
-    return;
+    return false;
   }
   const pin = promptRecoveryPin('Set');
-  if (!pin) return;
+  if (!pin) return false;
   const confirmPin = promptRecoveryPin('Confirm');
-  if (!confirmPin) return;
+  if (!confirmPin) return false;
   if (pin !== confirmPin) {
     notify('Recovery PIN entries did not match');
-    return;
+    return false;
   }
 
   state.secretPin.busy = 'Setting';
@@ -16362,45 +16804,30 @@ async function setupSecretPin() {
     applySecretPinStatus(status);
     await refreshSecretPinStatus({ reloadBoot: true });
     notify('Recovery PIN set');
+    return true;
   } catch (error) {
     state.secretPin.busy = null;
     notify(error.message || 'Recovery PIN setup failed');
+    return false;
   } finally {
     state.secretPin.busy = null;
     renderAll();
   }
 }
 
-async function unlockSecretPin() {
+async function unlockSecretPin({ reason = 'unlock' } = {}) {
   if (state.apiStatus !== 'connected' || !state.apiClient?.unlockSecretPin) {
     notify('Recovery PIN requires the local Trebuchet app');
-    return;
+    return false;
   }
   if (!state.secretPin.configured) {
-    setupSecretPin();
-    return;
+    return setupSecretPin();
   }
   if (state.secretPin.unlocked) {
     notify('Recovery PIN already unlocked');
-    return;
+    return true;
   }
-  const pin = promptRecoveryPin('Unlock');
-  if (!pin) return;
-
-  state.secretPin.busy = 'Unlocking';
-  renderAll();
-  try {
-    const status = await state.apiClient.unlockSecretPin(pin);
-    applySecretPinStatus(status);
-    await refreshSecretPinStatus({ reloadBoot: true });
-    notify('Recovery PIN unlocked');
-  } catch (error) {
-    state.secretPin.busy = null;
-    notify(error.message || 'Recovery PIN unlock failed');
-  } finally {
-    state.secretPin.busy = null;
-    renderAll();
-  }
+  return openRecoveryPinGate({ reason });
 }
 
 async function changeSecretPin() {
@@ -16733,6 +17160,88 @@ function renderRecoverySweepResult(sweep) {
   `;
 }
 
+let sweepConfirmationResolver = null;
+
+function setSweepConfirmationMessage(message, { error = false, input = null } = {}) {
+  const messageNode = $('#sweepConfirmMessage');
+  if (messageNode) {
+    messageNode.textContent = message;
+    messageNode.classList.toggle('is-error', error);
+  }
+  ['#sweepConfirmDestination', '#sweepConfirmTypedAddress'].forEach((selector) => {
+    $(selector)?.removeAttribute('aria-invalid');
+  });
+  if (input) input.setAttribute('aria-invalid', 'true');
+}
+
+function closeSweepConfirmation(result = null) {
+  const gate = $('#sweepConfirmGate');
+  if (gate) {
+    gate.hidden = true;
+    gate.setAttribute('aria-hidden', 'true');
+    gate.removeAttribute('data-public-key');
+  }
+  document.body.classList.remove('sweep-confirm-open');
+  const resolve = sweepConfirmationResolver;
+  sweepConfirmationResolver = null;
+  if (resolve) resolve(result);
+}
+
+function submitSweepConfirmation() {
+  const gate = $('#sweepConfirmGate');
+  if (!gate || gate.hidden) return;
+  const publicKey = gate.dataset.publicKey || '';
+  const destinationInput = $('#sweepConfirmDestination');
+  const typedInput = $('#sweepConfirmTypedAddress');
+  const destinationWallet = String(destinationInput?.value || '').trim();
+  const typedAddress = String(typedInput?.value || '').trim();
+
+  if (!destinationWallet) {
+    setSweepConfirmationMessage('Enter the destination wallet for recovered assets.', { error: true, input: destinationInput });
+    destinationInput?.focus();
+    return;
+  }
+  if (!isProbablySolanaAddress(destinationWallet)) {
+    setSweepConfirmationMessage('Destination wallet does not look like a Solana address.', { error: true, input: destinationInput });
+    destinationInput?.focus();
+    return;
+  }
+  if (destinationWallet === publicKey) {
+    setSweepConfirmationMessage('Destination must be different from the recovery wallet.', { error: true, input: destinationInput });
+    destinationInput?.focus();
+    return;
+  }
+  if (typedAddress !== publicKey) {
+    setSweepConfirmationMessage('Full recovery wallet address does not match.', { error: true, input: typedInput });
+    typedInput?.focus();
+    return;
+  }
+
+  closeSweepConfirmation({ destinationWallet });
+}
+
+function openSweepConfirmation({ publicKey, defaultDestination = '' } = {}) {
+  const gate = $('#sweepConfirmGate');
+  if (!gate || !publicKey) return Promise.resolve(null);
+  if (sweepConfirmationResolver) closeSweepConfirmation(null);
+
+  gate.dataset.publicKey = publicKey;
+  $('#sweepConfirmSource').textContent = publicKey;
+  $('#sweepConfirmDestination').value = defaultDestination;
+  $('#sweepConfirmTypedAddress').value = '';
+  setSweepConfirmationMessage('The local recovery entry is removed only after Trebuchet verifies the source wallet is empty.');
+  gate.hidden = false;
+  gate.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('sweep-confirm-open');
+
+  return new Promise((resolve) => {
+    sweepConfirmationResolver = resolve;
+    window.requestAnimationFrame(() => {
+      (defaultDestination ? $('#sweepConfirmTypedAddress') : $('#sweepConfirmDestination'))?.focus();
+    });
+  });
+}
+
 async function sweepRecoveryWallet(publicKey) {
   if (!publicKey) {
     notify('Select a recovery wallet first');
@@ -16759,38 +17268,13 @@ async function sweepRecoveryWallet(publicKey) {
     notify('Recovery sweep requires the local Trebuchet app');
     return;
   }
-  if (typeof window.prompt !== 'function') {
-    notify('Recovery sweep destination prompt is unavailable');
-    return;
-  }
-
   const defaultDestination = currentLaunchConfig().poolTopology.sweepDestination || '';
-  const destinationWallet = String(
-    window.prompt('Destination wallet for recovered assets', defaultDestination) || '',
-  ).trim();
-  if (!destinationWallet) {
+  const confirmation = await openSweepConfirmation({ publicKey, defaultDestination });
+  if (!confirmation) {
     notify('Recovery sweep cancelled');
     return;
   }
-  if (!isProbablySolanaAddress(destinationWallet)) {
-    notify('Destination wallet does not look like a Solana address');
-    return;
-  }
-  if (destinationWallet === publicKey) {
-    notify('Destination must be different from the recovery wallet');
-    return;
-  }
-  if (typeof window.confirm === 'function') {
-    const ok = window.confirm(
-      `Sweep recovered assets?\n\nFrom: ${publicKey}\nTo: ${destinationWallet}\n\nTrebuchet will sign from the locally saved launch wallet and will only remove the recovery entry if the wallet verifies empty after the sweep.`,
-    );
-    if (!ok) return;
-  }
-  const typed = window.prompt('Type the full recovery wallet address to sweep it.');
-  if (typed !== publicKey) {
-    notify('Recovery sweep cancelled');
-    return;
-  }
+  const { destinationWallet } = confirmation;
 
   state.sweepingWalletPublicKey = publicKey;
   state.lastRecoverySweep = null;
@@ -16964,7 +17448,7 @@ async function removeVanityCandidateByPublicKey(publicKey, { confirm = true } = 
 }
 
 async function pruneHiddenVanityCandidates() {
-  const visible = new Set(state.vanityCandidates.slice(-4).map((candidate) => candidate.publicKey));
+  const visible = new Set(state.vanityCandidates.slice(-VANITY_VISIBLE_CANDIDATE_LIMIT).map((candidate) => candidate.publicKey));
   if (state.selectedVanityPublicKey) visible.add(state.selectedVanityPublicKey);
   const hidden = state.vanityCandidates.filter((candidate) => !visible.has(candidate.publicKey));
   if (!hidden.length) {
@@ -17002,14 +17486,29 @@ async function startVanityGrind() {
 
   const vanity = currentVanityConfig();
   if (!vanity.prefix && !vanity.suffix) {
-    notify('Enter a vanity start or end target');
+    setLaunchWorkspace('configure');
+    state.vanityInputError = 'Enter a Vanity CA start or end before grinding.';
+    renderVanityCandidates();
+    const input = $('#vanityStart');
+    input?.setAttribute('aria-invalid', 'true');
+    window.requestAnimationFrame?.(() => input?.focus());
+    notify(state.vanityInputError);
     return;
   }
+  state.vanityInputError = null;
+  $('#vanityStart')?.removeAttribute('aria-invalid');
+  $('#vanityEnd')?.removeAttribute('aria-invalid');
   const estimate = vanityPatternEstimate(vanity.prefix, vanity.suffix);
   if (estimate.invalid.length) {
     notify(`Vanity target contains invalid Base58 character${estimate.invalid.length === 1 ? '' : 's'}: ${estimate.invalid.join(', ')}`);
     renderVanityCandidates();
     return;
+  }
+
+  if (state.apiStatus === 'connected' && state.secretPin.locked) {
+    notify('Unlock the Recovery PIN to save this Vanity CA');
+    const unlocked = await unlockSecretPin({ reason: 'vanity' });
+    if (!unlocked) return;
   }
 
   if (state.apiStatus !== 'connected' || typeof EventSource !== 'function') {
@@ -18523,6 +19022,8 @@ function drawLaunchCanvas() {
 }
 
 function handleDynamicInput(event) {
+  if (handleRecoveryPinInput(event)) return;
+
   if (event.target.id === 'discoverySearchInput') {
     state.discovery.query = event.target.value;
     renderDiscovery();
@@ -18569,6 +19070,13 @@ function handleDynamicInput(event) {
     return;
   }
 
+  if (event.target.id === 'vanityStart' || event.target.id === 'vanityEnd') {
+    state.vanityInputError = null;
+    $('#vanityStart')?.removeAttribute('aria-invalid');
+    $('#vanityEnd')?.removeAttribute('aria-invalid');
+    renderVanityCandidates();
+  }
+
   if (event.target.classList?.contains('classic-artifact-text')) {
     state.classicReportComparison.input = event.target.value;
     state.classicReportComparison.error = null;
@@ -18583,7 +19091,7 @@ function handleClick(event) {
     return;
   }
 
-  const workspaceControl = event.target.closest('[data-launch-workspace]');
+  const workspaceControl = event.target.closest('button[data-launch-workspace]');
   if (workspaceControl) {
     setLaunchWorkspace(workspaceControl.dataset.launchWorkspace, {
       focus: workspaceControl.classList.contains('launch-workspace-tab'),
@@ -18602,8 +19110,30 @@ function handleClick(event) {
   if (!actionTarget) return;
 
   const { action } = actionTarget.dataset;
+  if (action === 'cancel-sweep-confirm') {
+    closeSweepConfirmation(null);
+    return;
+  }
+  if (action === 'submit-sweep-confirm') {
+    submitSweepConfirmation();
+    return;
+  }
+  if (action === 'step-number') {
+    const input = actionTarget.closest('.number-stepper')?.querySelector('input[type="number"]');
+    stepNumberInput(input, Number(actionTarget.dataset.direction));
+    return;
+  }
+  if (action === 'select-history-pane') {
+    const pane = actionTarget.dataset.historyPane;
+    if (['recovery', 'wallets', 'audit', 'journal'].includes(pane)) {
+      state.activeHistoryPane = pane;
+      renderHistoryPanes();
+    }
+    return;
+  }
   if (state.activeView === 'launch') {
     const actionWorkspace = {
+      'start-vanity': 'configure',
       'estimate-funding': 'fund',
       'start-quote-acquire': 'fund',
       'check-readiness': 'execute',
@@ -18639,6 +19169,23 @@ function handleClick(event) {
 
   if (action === 'start-vanity') {
     startVanityGrind().catch((error) => notify(error.message || 'Vanity grind failed'));
+    return;
+  }
+
+  if (action === 'focus-recovery-pin') {
+    focusRecoveryPinGate();
+    return;
+  }
+
+  if (action === 'cancel-recovery-pin') {
+    cancelRecoveryPinGate();
+    return;
+  }
+
+  if (action === 'select-verify-panel') {
+    state.verifyPanel = actionTarget.dataset.verifyPanel === 'audit' ? 'audit' : 'proof';
+    renderClassicBridge();
+    renderLaunchWorkspace();
     return;
   }
 
@@ -18869,6 +19416,14 @@ function handleClick(event) {
   if (action === 'inspect-recovery') {
     setView('history');
     notify('Recovery journal opened');
+    return;
+  }
+
+  if (action === 'inspect-recovery-record') {
+    state.activeHistoryPane = actionTarget.dataset.recoveryPane === 'journal' ? 'journal' : 'wallets';
+    renderHistoryPanes();
+    setView('history');
+    notify(state.activeHistoryPane === 'journal' ? 'Launch journal opened' : 'Recovery wallet inventory opened');
     return;
   }
 
@@ -19145,6 +19700,26 @@ function bindEvents() {
   document.addEventListener('click', handleClick);
   document.addEventListener('input', handleDynamicInput);
   document.addEventListener('keydown', (event) => {
+    const sweepConfirmGate = $('#sweepConfirmGate');
+    if (sweepConfirmGate && !sweepConfirmGate.hidden) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeSweepConfirmation(null);
+      } else if (event.key === 'Enter' && event.target.closest?.('.sweep-confirm-shell')) {
+        event.preventDefault();
+        submitSweepConfirmation();
+      }
+      return;
+    }
+
+    if (state.recoveryPinGate.open) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelRecoveryPinGate();
+      }
+      return;
+    }
+
     if (event.key === 'Escape' && state.activityLog.open) {
       state.activityLog.open = false;
       renderActivityLogDrawer();

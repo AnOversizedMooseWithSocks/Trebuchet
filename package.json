@@ -23,6 +23,7 @@
   },
   "scripts": {
     "start": "electron .",
+    "start:v2": "electron . --v2",
     "web": "npm run build:c && npm run build:js && node server.js",
     "web:dev": "node --watch server.js",
     "check:syntax": "node scripts/check-syntax.mjs",

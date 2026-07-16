@@ -1,4 +1,51 @@
 const DEFAULT_COLOR = '#6be2a2';
+const PUBLIC_MAINNET_RPC = Object.freeze({
+  name: 'Public mainnet',
+  url: 'https://api.mainnet-beta.solana.com',
+});
+
+function rpcClusterHint(entry = {}) {
+  const hint = `${entry.name || ''} ${entry.url || ''}`.toLowerCase();
+  if (/\b(devnet|testnet)\b/.test(hint)) return 'non-mainnet';
+  if (/\b(mainnet|mainnet-beta)\b/.test(hint)) return 'mainnet';
+  return 'unknown';
+}
+
+function uniqueRpcEntries(entries = []) {
+  const seen = new Set();
+  return entries.filter((entry) => {
+    const url = String(entry?.url || '').trim();
+    if (!url || seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
+}
+
+export function discoveryRpcCandidates(config = {}) {
+  const saved = Array.isArray(config.saved)
+    ? config.saved
+      .map((entry) => ({ name: String(entry?.name || 'Saved RPC'), url: String(entry?.url || '').trim() }))
+      .filter((entry) => entry.url)
+    : [];
+  const activeUrl = String(config.active || '').trim();
+  const active = saved.find((entry) => entry.url === activeUrl)
+    || (activeUrl ? { name: 'Configured RPC', url: activeUrl } : null);
+  const activeCluster = rpcClusterHint(active);
+  const savedMainnet = saved.filter((entry) => rpcClusterHint(entry) === 'mainnet');
+  const savedUnknown = saved.filter((entry) => rpcClusterHint(entry) === 'unknown');
+
+  if (active && activeCluster !== 'non-mainnet') {
+    return uniqueRpcEntries([active, ...savedMainnet, ...savedUnknown]);
+  }
+
+  const mainnetCandidates = savedMainnet.length ? savedMainnet : [PUBLIC_MAINNET_RPC];
+  return uniqueRpcEntries([...mainnetCandidates, ...savedUnknown, active]);
+}
+
+export function isMissingMintRpcError(error) {
+  const message = String(error?.message || error || '');
+  return /could not find account|not found on-chain|does not exist on chain|account[^.]*not found|mint[^.]*not found/i.test(message);
+}
 
 function safeBigInt(value) {
   try {
