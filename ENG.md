@@ -451,6 +451,9 @@ npm test
 npm run build:js
 npm run build:c
 npm run test:e2e
+npm run test:e2e:v2
+npm run test:v2:viewport
+npm run test:electron:v2
 npm run test:visual
 npm run check:package
 ```
@@ -472,7 +475,7 @@ npm run check:package
 - Pending wallet and journal recovery.
 - Update checks and release asset selection.
 - Security regressions.
-- UI/e2e flows and visual golden checks.
+- Classic and authenticated v2 UI/e2e flows, packaged Electron route smoke, and visual golden checks.
 
 ### Add Tests For New Work
 

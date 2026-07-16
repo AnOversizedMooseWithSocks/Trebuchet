@@ -35,9 +35,11 @@ import {
 
 // __dirname equivalent in ESM. Used to resolve sibling files like README.md.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const desktopUiPath = process.argv.includes('--v2') || process.env.TREBUCHET_UI === 'v2'
-  ? '/v2/'
-  : '/';
+const requestedDesktopUi = String(process.env.TREBUCHET_UI || '').trim().toLowerCase();
+const classicUiRequested = process.argv.includes('--classic')
+  || requestedDesktopUi === 'classic'
+  || requestedDesktopUi === 'v1';
+const desktopUiPath = classicUiRequested ? '/' : '/v2/';
 
 // ---------------------------------------------------------------------------
 // Right-click context menu.

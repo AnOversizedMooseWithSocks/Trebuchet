@@ -688,7 +688,8 @@ standalone:
 ```bash
 npm install
 npm run web        # standalone web server on port 3000
-npm start          # Electron desktop app
+npm start          # Electron desktop app (v2 terminal)
+npm run start:classic # explicit Classic fallback
 npm run build:win  # build Windows installer and portable EXE
 ```
 

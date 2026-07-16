@@ -29,7 +29,7 @@ test('release workflow is tag-driven and publishes checksums', () => {
   assert.match(workflow, /mirror -R --only-newer --no-perms --verbose=2 website/);
 });
 
-test('ci only runs package smoke builds before release', () => {
+test('ci runs package smoke builds and the packaged v2 runtime before release', () => {
   const workflow = read('.github/workflows/ci.yml');
 
   assert.match(workflow, /on:\s*\n\s+pull_request:\s*\n\s+workflow_dispatch:/);
@@ -38,6 +38,10 @@ test('ci only runs package smoke builds before release', () => {
   assert.doesNotMatch(workflow, /macos-15-intel/);
   assert.doesNotMatch(workflow, /Install Linux packaging dependencies/);
   assert.match(workflow, /Build package smoke/);
+  assert.match(workflow, /Run packaged v2 Electron smoke/);
+  assert.match(workflow, /xvfb-run -a npm run test:electron:v2:packaged/);
+  assert.match(workflow, /Run v2 API-backed E2E test/);
+  assert.match(workflow, /Run v2 desktop and mobile viewport smoke/);
   assert.doesNotMatch(workflow, /Build release package/);
   assert.doesNotMatch(workflow, /Upload build artifact/);
 });

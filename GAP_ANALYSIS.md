@@ -200,7 +200,7 @@ Discovery now has a functional local/RPC-backed prototype. Full holder ownership
 
 ## Replacement Criteria
 
-v2 can become the default only when:
+The v2 release-candidate branch now opens the v2 shell by default, with Classic retained through `npm run start:classic`, `--classic`, or `TREBUCHET_UI=classic`. Production promotion remains blocked until:
 
 - It can complete a full demo launch end to end, including token, LP, Fee Key recipient, airdrop, sweep, and terminal completed-readiness proof.
 - It can generate and recover launch wallets.
@@ -211,5 +211,6 @@ v2 can become the default only when:
 - It can run and resume LP creation safely.
 - It can sweep and produce reports.
 - It has visual smoke tests for desktop and mobile first viewport. The v2 file-preview smoke now runs through `npm run test:v2:viewport` and asserts the primary cockpit fits without horizontal page overflow.
+- CI passes the authenticated `/v2/` browser flow and launches the built Linux Electron package through both the default v2 route and the explicit Classic fallback.
 
-Until then, v2 is a launch console prototype and v1 remains Classic/Production.
+Until then, v2 remains a release candidate rather than an approved production `v2.0.0`, and v1 remains the explicit Classic rollback path.

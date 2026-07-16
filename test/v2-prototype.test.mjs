@@ -12,6 +12,8 @@ const css = read('public/v2/styles.css');
 const js = read('public/v2/app.js');
 const apiClientJs = read('public/v2/api-client.js');
 const viewportSmokeJs = read('test/v2-viewport-smoke.mjs');
+const v2BrowserE2eJs = read('test/e2e/v2-flows.mjs');
+const v2ElectronSmokeJs = read('test/e2e/electron-v2-smoke.mjs');
 const electronMainJs = read('main.js');
 const packageJson = JSON.parse(read('package.json'));
 
@@ -1932,11 +1934,23 @@ test('v2 concrete data-action controls have delegated handlers', () => {
   assert.deepEqual(missing, []);
 });
 
-test('v2 has a native Electron launcher that selects the v2 route', () => {
+test('v2 is the Electron default with an explicit tested Classic fallback', () => {
+  assert.equal(packageJson.scripts.start, 'electron .');
   assert.equal(packageJson.scripts['start:v2'], 'electron . --v2');
-  assert.match(electronMainJs, /process\.argv\.includes\('--v2'\)/);
-  assert.match(electronMainJs, /process\.env\.TREBUCHET_UI === 'v2'/);
+  assert.equal(packageJson.scripts['start:classic'], 'electron . --classic');
+  assert.equal(packageJson.scripts['test:e2e:v2'], 'node test/e2e/v2-flows.mjs');
+  assert.equal(packageJson.scripts['test:electron:v2:packaged'], 'node test/e2e/electron-v2-smoke.mjs --packaged');
+  assert.match(electronMainJs, /process\.argv\.includes\('--classic'\)/);
+  assert.match(electronMainJs, /requestedDesktopUi === 'classic'/);
+  assert.match(electronMainJs, /requestedDesktopUi === 'v1'/);
+  assert.match(electronMainJs, /const desktopUiPath = classicUiRequested \? '\/' : '\/v2\/'/);
   assert.match(electronMainJs, /win\.loadURL\(`http:\/\/127\.0\.0\.1:\$\{serverPort\}\$\{desktopUiPath\}`\)/);
+  assert.match(v2BrowserE2eJs, /page\.goto\(`\$\{baseUrl\}\/v2\/`/);
+  assert.match(v2BrowserE2eJs, /data-action=\"run-demo-launch\"/);
+  assert.match(v2BrowserE2eJs, /Local API connected/);
+  assert.match(v2ElectronSmokeJs, /await launchRouteSmoke\(\)/);
+  assert.match(v2ElectronSmokeJs, /await launchRouteSmoke\(\{ classic: true \}\)/);
+  assert.match(v2ElectronSmokeJs, /const expectedPath = classic \? '\/' : '\/v2\/'/);
 });
 
 test('v2 Discovery is a live, locally persisted evidence registry without social mechanics', () => {
