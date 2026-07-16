@@ -1,0 +1,397 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+import { resolveReleaseBuild } from './release-lib.mjs';
+
+export const DEFAULT_V2_RELEASE_EVIDENCE = 'release-evidence/v2/field-verification.json';
+
+const FIELD_REQUIREMENT_IDS = [
+  'live-proof',
+  'report-proof',
+  'classic-comparison',
+  'audit',
+  'replacement-criteria',
+];
+
+const REPLACEMENT_CRITERION_IDS = [
+  'demo-end-to-end',
+  'wallet-lifecycle',
+  'vanity-options',
+  'token-config-parity',
+  'charts-and-viewport',
+  'pool-config-parity',
+  'funding-and-quote',
+  'held-reserve-backing',
+  'run-and-resume',
+  'sweep-report-proof',
+  'classic-artifact-comparison',
+  'proof-audit',
+];
+
+const PARITY_AUDIT_IDS = [
+  'token-proof',
+  'launch-config-proof',
+  'authority-proof',
+  'pool-proof',
+  'position-proof',
+  'lock-proof',
+  'fee-key-proof',
+  'airdrop-proof',
+  'recovery-proof',
+  'terminal-journal-proof',
+  'report-proof',
+  'sweep-proof',
+  'classic-comparison',
+];
+
+const TOKEN_AUTHORITY_FIELDS = [
+  'mintAuthorityRenounced',
+  'freezeAuthorityDisabled',
+  'metadataUpdateAuthorityRevoked',
+  'metadataImmutable',
+];
+
+function fail(message) {
+  throw new Error(`Production release gate: ${message}`);
+}
+
+function expect(condition, message) {
+  if (!condition) fail(message);
+}
+
+function object(value, label) {
+  expect(value && typeof value === 'object' && !Array.isArray(value), `${label} is missing or invalid`);
+  return value;
+}
+
+function nonEmpty(value) {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function validTimestamp(value) {
+  return nonEmpty(value) && Number.isFinite(Date.parse(value));
+}
+
+function exactPassingRows(rows, expectedIds, label, { requireAction = false } = {}) {
+  expect(Array.isArray(rows), `${label} rows are missing`);
+  expect(rows.length === expectedIds.length, `${label} must contain ${expectedIds.length} rows`);
+  rows.forEach((row, index) => {
+    const expectedId = expectedIds[index];
+    object(row, `${label} row ${expectedId}`);
+    expect(row.id === expectedId, `${label} row ${index + 1} must be ${expectedId}`);
+    expect(row.pass === true, `${label} row ${expectedId} is not passing`);
+    if (requireAction) {
+      expect(row.action === 'none', `${label} row ${expectedId} still has an operator action`);
+    }
+  });
+}
+
+function positionRows(pool) {
+  return [
+    ...(Array.isArray(pool.mainPositions) ? pool.mainPositions : []),
+    ...(Array.isArray(pool.ladderPositions) ? pool.ladderPositions : []),
+    ...(Array.isArray(pool.supportPositions) ? pool.supportPositions : []),
+    ...(pool.bootstrap && typeof pool.bootstrap === 'object' ? [pool.bootstrap] : []),
+  ];
+}
+
+function validateConcreteLiveProof(proof, fingerprint) {
+  expect(proof.demo !== true, 'field evidence is marked as a demo proof');
+  expect(proof.source !== 'demo-run', 'field evidence came from the demo runner');
+  expect(proof.stage !== 'demo_completed', 'field evidence has a demo terminal stage');
+  expect(proof.status === 'completed', 'live proof status must be completed');
+  expect(proof.stage === 'transfer_completed', 'live proof must reach transfer_completed');
+  expect(nonEmpty(proof.journalId), 'live proof is missing its launch journal id');
+  expect(nonEmpty(proof.walletPublicKey), 'live proof is missing its launch wallet');
+
+  const token = object(proof.token, 'live token proof');
+  expect(nonEmpty(token.mint), 'live proof is missing the token mint');
+  TOKEN_AUTHORITY_FIELDS.forEach((field) => {
+    expect(token[field] === true, `live token proof has not confirmed ${field}`);
+  });
+
+  const liquidity = object(proof.liquidity, 'live liquidity proof');
+  const pools = Array.isArray(liquidity.results) ? liquidity.results : [];
+  expect(pools.length > 0, 'live proof has no liquidity pool records');
+  expect(Number(liquidity.poolCount) === pools.length, 'liquidity pool count does not match its records');
+  const allPositions = [];
+  pools.forEach((pool, poolIndex) => {
+    object(pool, `liquidity pool ${poolIndex + 1}`);
+    expect(nonEmpty(pool.poolId || pool.id), `liquidity pool ${poolIndex + 1} is missing its pool id`);
+    expect(
+      nonEmpty(pool.txIds?.createPool || pool.createPoolTx),
+      `liquidity pool ${poolIndex + 1} is missing its create transaction`,
+    );
+    const positions = positionRows(pool);
+    expect(positions.length > 0, `liquidity pool ${poolIndex + 1} has no position records`);
+    positions.forEach((position, positionIndex) => {
+      object(position, `liquidity pool ${poolIndex + 1} position ${positionIndex + 1}`);
+      expect(
+        nonEmpty(position.positionNftMint || position.nftMint || position.positionMint),
+        `liquidity pool ${poolIndex + 1} position ${positionIndex + 1} is missing its position NFT`,
+      );
+      expect(
+        nonEmpty(position.txIds?.open || position.openTx),
+        `liquidity pool ${poolIndex + 1} position ${positionIndex + 1} is missing its open transaction`,
+      );
+      expect(position.locked === true, `liquidity pool ${poolIndex + 1} position ${positionIndex + 1} is not locked`);
+      expect(
+        nonEmpty(position.txIds?.lock || position.lockTx),
+        `liquidity pool ${poolIndex + 1} position ${positionIndex + 1} is missing its lock transaction`,
+      );
+      expect(
+        nonEmpty(position.feeKeyNftMint || position.feeKeyMint),
+        `liquidity pool ${poolIndex + 1} position ${positionIndex + 1} is missing its Fee Key NFT`,
+      );
+      if (nonEmpty(position.recipient)) {
+        expect(
+          position.transferredTo === position.recipient,
+          `liquidity pool ${poolIndex + 1} position ${positionIndex + 1} did not reach its Fee Key recipient`,
+        );
+        expect(
+          nonEmpty(position.txIds?.transfer || position.transferTx),
+          `liquidity pool ${poolIndex + 1} position ${positionIndex + 1} is missing its Fee Key transfer transaction`,
+        );
+      }
+    });
+    allPositions.push(...positions);
+  });
+  if (liquidity.positionCount != null) {
+    expect(Number(liquidity.positionCount) === allPositions.length, 'liquidity position count does not match its records');
+  }
+  if (liquidity.lockedPositionCount != null) {
+    expect(Number(liquidity.lockedPositionCount) === allPositions.length, 'not every liquidity position is recorded as locked');
+  }
+  if (liquidity.feeKeyCount != null) {
+    expect(Number(liquidity.feeKeyCount) === allPositions.length, 'not every locked position has a Fee Key record');
+  }
+
+  const transfer = object(proof.transfer, 'terminal sweep proof');
+  expect(transfer.walletEmpty === true, 'terminal sweep does not confirm the launch wallet is empty');
+  expect(nonEmpty(transfer.destinationWallet), 'terminal sweep is missing its destination wallet');
+  expect(transfer.status !== 'planned-before-sweep', 'terminal sweep is only a plan');
+  expect(!Array.isArray(transfer.tokenTransferErrors) || transfer.tokenTransferErrors.length === 0, 'terminal token sweep contains errors');
+  expect(!Array.isArray(transfer.tokenSweep?.errors) || transfer.tokenSweep.errors.length === 0, 'terminal token sweep contains errors');
+  expect(!Array.isArray(transfer.nftTransferErrors) || transfer.nftTransferErrors.length === 0, 'terminal NFT sweep contains errors');
+  expect(!Array.isArray(transfer.nftSweep?.errors) || transfer.nftSweep.errors.length === 0, 'terminal NFT sweep contains errors');
+  expect(!transfer.solSweepError, 'terminal SOL sweep contains an error');
+
+  const dossier = object(proof.localDossier, 'proof-bound local artifact');
+  expect(dossier.status === 'downloaded', 'proof-bound local artifact is not recorded as downloaded');
+  expect(dossier.kind === 'local-proof-json', 'release evidence must be the JSON file from Download proof');
+  expect(nonEmpty(dossier.filename) && dossier.filename.toLowerCase().endsWith('.json'), 'local proof filename is invalid');
+  expect(validTimestamp(dossier.downloadedAt), 'local proof download timestamp is invalid');
+  expect(Number.isInteger(Number(dossier.dataVersion)) && Number(dossier.dataVersion) > 0, 'local proof data version is invalid');
+  expect(dossier.proofFingerprint === fingerprint, 'local proof fingerprint does not match the field packet');
+  expect(dossier.mint === token.mint, 'local proof mint does not match the live token');
+  expect(
+    nonEmpty(dossier.sweepEvidenceHash || dossier.transferEvidenceHash || dossier.finalSweep?.transferEvidenceHash),
+    'local proof is not bound to the terminal sweep hash',
+  );
+
+  const airdrop = proof.airdrop && typeof proof.airdrop === 'object' ? proof.airdrop : {};
+  const plannedAirdrop = Math.max(0, Number(airdrop.plannedRecipientCount || 0));
+  if (plannedAirdrop > 0) {
+    const recipients = Array.isArray(airdrop.recipients) ? airdrop.recipients : [];
+    const transferred = Array.isArray(airdrop.transferred) ? airdrop.transferred : [];
+    expect(recipients.length >= plannedAirdrop, 'airdrop proof is missing full recipient rows');
+    expect(transferred.length >= plannedAirdrop, 'airdrop proof is missing delivered rows');
+    expect(transferred.every((row) => nonEmpty(row?.wallet) && nonEmpty(row?.txId)), 'airdrop proof is missing wallet or transaction evidence');
+    expect(Number(airdrop.failedCount || 0) === 0, 'airdrop proof contains failed recipients');
+  }
+
+  return { mint: token.mint, poolCount: pools.length, positionCount: allPositions.length };
+}
+
+function validateParityAudit(audit, fingerprint) {
+  object(audit, 'report parity audit');
+  expect(audit.source === 'trebuchet-v2-report-parity-audit', 'report parity audit has the wrong source');
+  expect(Number(audit.version) >= 1, 'report parity audit has an unsupported version');
+  expect(audit.proofFingerprint === fingerprint, 'report parity audit fingerprint does not match the field packet');
+  expect(audit.status === 'pass', 'report parity audit is not passing');
+  expect(Number(audit.score) === 100, 'report parity audit score is not 100');
+  expect(Number(audit.passCount) === PARITY_AUDIT_IDS.length, 'report parity audit pass count is incomplete');
+  expect(Number(audit.itemCount) === PARITY_AUDIT_IDS.length, 'report parity audit item count is incomplete');
+  expect(Number(audit.warnCount) === 0, 'report parity audit contains warnings');
+  expect(Number(audit.missingCount) === 0, 'report parity audit contains missing checks');
+  expect(Array.isArray(audit.items) && audit.items.length === PARITY_AUDIT_IDS.length, 'report parity audit rows are incomplete');
+  audit.items.forEach((row, index) => {
+    const expectedId = PARITY_AUDIT_IDS[index];
+    object(row, `report parity audit row ${expectedId}`);
+    expect(row.id === expectedId, `report parity audit row ${index + 1} must be ${expectedId}`);
+    expect(row.state === 'pass', `report parity audit row ${expectedId} is not passing`);
+  });
+}
+
+function validateRetirementGate(gate, fingerprint) {
+  object(gate, 'Classic retirement gate');
+  expect(gate.source === 'trebuchet-v2-classic-retirement-gate', 'Classic retirement gate has the wrong source');
+  expect(gate.proofFingerprint === fingerprint, 'Classic retirement gate fingerprint does not match the field packet');
+  expect(gate.auditFingerprint === fingerprint, 'Classic retirement gate is not bound to the report audit');
+  expect(gate.state === 'pass', 'Classic retirement gate is not passing');
+  expect(gate.badge === 'Ready', 'Classic retirement gate is not marked ready');
+  expect(Number(gate.passCount) === FIELD_REQUIREMENT_IDS.length, 'Classic retirement requirement count is incomplete');
+  expect(Number(gate.itemCount) === FIELD_REQUIREMENT_IDS.length, 'Classic retirement item count is incomplete');
+  expect(Number(gate.criteriaPassCount) === REPLACEMENT_CRITERION_IDS.length, 'Classic replacement criteria are incomplete');
+  expect(Number(gate.criteriaItemCount) === REPLACEMENT_CRITERION_IDS.length, 'Classic replacement criteria count is incomplete');
+  exactPassingRows(gate.requirements, FIELD_REQUIREMENT_IDS, 'Classic retirement requirement');
+  exactPassingRows(gate.replacementCriteria, REPLACEMENT_CRITERION_IDS, 'Classic replacement criterion');
+}
+
+function validateFieldPacket(packet) {
+  object(packet, 'field verification packet');
+  expect(packet.source === 'trebuchet-v2-field-verification', 'field verification packet has the wrong source');
+  expect(Number(packet.version) >= 1, 'field verification packet has an unsupported version');
+  expect(validTimestamp(packet.generatedAt), 'field verification packet timestamp is invalid');
+  expect(nonEmpty(packet.proofFingerprint), 'field verification packet is missing its proof fingerprint');
+  expect(packet.state === 'pass', 'field verification packet is not passing');
+  expect(packet.ready === true, 'field verification packet is not ready');
+  expect(packet.nextAction === 'none', 'field verification packet still has an operator action');
+  expect(Number(packet.passCount) === FIELD_REQUIREMENT_IDS.length, 'field verification requirement count is incomplete');
+  expect(Number(packet.itemCount) === FIELD_REQUIREMENT_IDS.length, 'field verification item count is incomplete');
+  expect(Number(packet.criteriaPassCount) === REPLACEMENT_CRITERION_IDS.length, 'field verification criteria are incomplete');
+  expect(Number(packet.criteriaItemCount) === REPLACEMENT_CRITERION_IDS.length, 'field verification criteria count is incomplete');
+  expect(Number(packet.blockerCount) === 0, 'field verification packet contains blockers');
+  expect(Number(packet.criteriaBlockerCount) === 0, 'field verification packet contains replacement blockers');
+  expect(Array.isArray(packet.blockers) && packet.blockers.length === 0, 'field verification blocker rows are not empty');
+  expect(Array.isArray(packet.criteriaBlockers) && packet.criteriaBlockers.length === 0, 'field verification criterion blocker rows are not empty');
+  exactPassingRows(packet.requirements, FIELD_REQUIREMENT_IDS, 'field verification requirement', { requireAction: true });
+  exactPassingRows(packet.replacementCriteria, REPLACEMENT_CRITERION_IDS, 'field verification criterion', { requireAction: true });
+  return packet.proofFingerprint;
+}
+
+function validateClassicComparison(wrapper, fingerprint) {
+  const comparisonWrapper = object(wrapper, 'Classic comparison export');
+  const result = object(comparisonWrapper.result, 'Classic comparison result');
+  expect(result.status === 'pass', 'Classic comparison is not passing');
+  expect(
+    ['classic', 'classic-or-external'].includes(result.artifactSource),
+    'comparison did not use a Classic artifact',
+  );
+  expect(result.structuredEvidence === true, 'Classic comparison lacks structured evidence');
+  expect(result.proofFingerprint === fingerprint, 'Classic comparison fingerprint does not match the field packet');
+  expect(Number(result.warnCount) === 0, 'Classic comparison contains warnings');
+  expect(Number(result.missingCount) === 0, 'Classic comparison contains missing rows');
+  expect(Number(result.mismatchCount) === 0, 'Classic comparison contains mismatches');
+  expect(Number(result.fieldCount) > 0, 'Classic comparison contains no fields');
+  expect(Number(result.passCount) === Number(result.fieldCount), 'Classic comparison does not pass every field');
+  expect(Array.isArray(result.rows) && result.rows.length > 0, 'Classic comparison contains no evidence rows');
+  expect(result.rows.every((row) => row?.state === 'pass' && nonEmpty(row?.id)), 'Classic comparison contains a non-passing evidence row');
+}
+
+export function parseReleaseTag(tag) {
+  const value = String(tag || '').trim();
+  const match = value.match(/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/);
+  if (!match) fail(`release ref ${value || '(empty)'} is not a semantic v* tag`);
+  return {
+    tag: value,
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    requiresProductionGate: Number(match[1]) >= 2,
+  };
+}
+
+export function validateProductionTrust(env = process.env) {
+  const mac = resolveReleaseBuild('macos-arm64', env);
+  const windows = resolveReleaseBuild('windows', env);
+  expect(mac.trust === 'signed and notarized', 'v2+ requires signed and notarized macOS artifacts');
+  expect(windows.trust === 'signed', 'v2+ requires signed Windows artifacts');
+  return { macOS: mac.trust, windows: windows.trust };
+}
+
+export function validateV2ReleaseEvidence(payload) {
+  object(payload, 'v2 release evidence');
+  expect(payload.schema === 'trebuchet-v2-proof', 'release evidence is not a Trebuchet v2 proof export');
+  expect(payload.source === 'trebuchet-v2', 'release evidence has the wrong source');
+  expect(Number.isInteger(Number(payload.dataVersion)) && Number(payload.dataVersion) > 0, 'release evidence data version is invalid');
+  expect(validTimestamp(payload.exportedAt), 'release evidence export timestamp is invalid');
+  expect(!payload.compactForHtml, 'release evidence must be the full JSON proof, not compact HTML evidence');
+
+  const proof = object(payload.proof, 'exported live proof');
+  const launchConfig = object(payload.launchConfig, 'exported launch config');
+  const launchData = object(payload.launchData, 'exported launch report data');
+  expect(isDeepStrictEqual(proof.launchConfig, launchConfig), 'proof launch config does not match the export envelope');
+  expect(isDeepStrictEqual(launchData.launchConfig, launchConfig), 'report launch config does not match the export envelope');
+
+  const fingerprint = validateFieldPacket(payload.fieldVerification);
+  validateParityAudit(payload.reportParityAudit, fingerprint);
+  validateRetirementGate(payload.classicRetirementGate, fingerprint);
+  validateClassicComparison(payload.classicReportComparison, fingerprint);
+
+  for (const key of ['reportParityAudit', 'classicRetirementGate', 'fieldVerification']) {
+    expect(isDeepStrictEqual(launchData[key], payload[key]), `${key} differs between the export envelope and launch report data`);
+  }
+
+  const live = validateConcreteLiveProof(proof, fingerprint);
+  expect(launchData.source === 'trebuchet-v2', 'launch report data has the wrong source');
+  expect(launchData.mint === live.mint, 'launch report mint does not match the live proof');
+  expect(launchData.launchWallet === proof.walletPublicKey, 'launch report wallet does not match the live proof');
+
+  return {
+    fingerprint,
+    mint: live.mint,
+    exportedAt: payload.exportedAt,
+    poolCount: live.poolCount,
+    positionCount: live.positionCount,
+  };
+}
+
+export async function runProductionReleaseGate({
+  tag = process.env.GITHUB_REF_NAME,
+  env = process.env,
+  cwd = process.cwd(),
+  evidencePath = DEFAULT_V2_RELEASE_EVIDENCE,
+} = {}) {
+  const release = parseReleaseTag(tag);
+  if (!release.requiresProductionGate) {
+    return { release, skipped: true, reason: 'v1 release keeps the existing prerelease trust policy' };
+  }
+
+  const trust = validateProductionTrust(env);
+  const absoluteEvidencePath = path.resolve(cwd, evidencePath);
+  let bytes;
+  try {
+    bytes = await readFile(absoluteEvidencePath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      fail(`v2 field evidence is missing at ${evidencePath}`);
+    }
+    throw error;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    fail(`v2 field evidence at ${evidencePath} is not valid JSON`);
+  }
+  const evidence = validateV2ReleaseEvidence(payload);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  return { release, skipped: false, trust, evidence, evidencePath, sha256 };
+}
+
+const isMain = process.argv[1]
+  && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+
+if (isMain) {
+  const tag = process.argv[2] || process.env.GITHUB_REF_NAME;
+  const evidencePath = process.argv[3] || DEFAULT_V2_RELEASE_EVIDENCE;
+  try {
+    const result = await runProductionReleaseGate({ tag, evidencePath });
+    if (result.skipped) {
+      console.log(`Production release gate skipped for ${result.release.tag}: ${result.reason}.`);
+    } else {
+      console.log(`Production release gate passed for ${result.release.tag}.`);
+      console.log(`Evidence: ${result.evidencePath} (sha256 ${result.sha256})`);
+      console.log(`Field proof: ${result.evidence.fingerprint}`);
+      console.log(`Trust: macOS ${result.trust.macOS}; Windows ${result.trust.windows}.`);
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}

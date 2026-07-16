@@ -17,6 +17,9 @@ test('release workflow is tag-driven and publishes checksums', () => {
   const publishScript = read('scripts/publish-release.mjs');
 
   assert.match(workflow, /tags:\s*\n\s*-\s*'v\*'/);
+  assert.match(workflow, /name:\s+Verify production release evidence and trust/);
+  assert.match(workflow, /node scripts\/production-release-gate\.mjs "\$GITHUB_REF_NAME"/);
+  assert.match(workflow, /build:\s*\n\s+name:[\s\S]*?needs:\s+production-gate/);
   assert.match(workflow, /node scripts\/release-build\.mjs/);
   assert.match(workflow, /node scripts\/publish-release\.mjs/);
   assert.match(workflow, /actions\/download-artifact@v5/);
@@ -102,6 +105,9 @@ test('release docs explain trust states and verification', () => {
   assert.match(docs, /GitHub Packages/);
   assert.match(docs, /WIN_CSC_LINK/);
   assert.match(docs, /APPLE_API_KEY/);
+  assert.match(docs, /V2 production gate/);
+  assert.match(docs, /release-evidence\/v2\/field-verification\.json/);
+  assert.match(docs, /V2 releases cannot fall back to unsigned test artifacts/);
   assert.match(docs, /SHA256SUMS\.txt/);
 });
 

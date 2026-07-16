@@ -14,6 +14,23 @@ Pull requests run tests and Windows, Linux, and macOS arm64 package smoke builds
 
 The tag-driven workflow can still be run manually by pushing a Git tag that starts with `v`, for example `v1.2.3`.
 
+## V2 production gate
+
+Every `v2.0.0` or newer tag is blocked before desktop builds start unless both production conditions are true:
+
+1. `release-evidence/v2/field-verification.json` is the unmodified full JSON artifact produced by v2's **Download proof** action after a non-demo, journal-backed launch reaches its wallet-empty terminal sweep. The export must carry a passing report parity audit, passing Classic retirement gate, all replacement criteria, a terminal-sweep-bound local proof record, and a retirement-grade structured Classic artifact comparison for the same proof fingerprint.
+2. The repository has a complete macOS signing and notarization credential set and a complete Windows signing credential set. V2 releases cannot fall back to unsigned test artifacts.
+
+The evidence file is intentionally absent until the field launch is complete. Follow [`release-evidence/v2/README.md`](../release-evidence/v2/README.md) to produce and archive it. Do not construct or edit the packet by hand; the gate checks the concrete mint, authority, pool, position, Fee Key, airdrop, report, sweep, audit, and Classic-comparison records emitted by the app.
+
+Repository administrators can run the same check locally with signing variables loaded:
+
+```bash
+npm run release:gate -- v2.0.0
+```
+
+V1 tags keep the existing prerelease policy and skip this additional production gate.
+
 The workflow builds:
 
 - macOS arm64 DMG
@@ -29,13 +46,13 @@ The workflow builds:
   - `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, or
   - `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`, or
   - `APPLE_KEYCHAIN`, `APPLE_KEYCHAIN_PROFILE`.
-- If the macOS credentials are absent, the workflow still builds macOS **unsigned test artifacts** and marks the release accordingly. Website download cards disclose that macOS may report unsigned downloads as damaged, and show the quarantine-removal command for users who trust the download:
+- For v1 tags, if the macOS credentials are absent, the workflow still builds macOS **unsigned test artifacts** and marks the release accordingly. V2 and newer tags fail before building instead. Website download cards disclose that macOS may report unsigned v1 downloads as damaged, and show the quarantine-removal command for users who trust the download:
   `xattr -dr com.apple.quarantine /Applications/Trebuchet.app`.
 - Windows installer and portable EXE artifacts are **signed** only when `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD` are configured.
-- If the Windows credentials are absent, the workflow still builds Windows installer and portable EXE **unsigned test artifacts** and marks the release accordingly.
+- For v1 tags, if the Windows credentials are absent, the workflow still builds Windows installer and portable EXE **unsigned test artifacts** and marks the release accordingly. V2 and newer tags fail before building instead.
 - Linux AppImage and deb artifacts are built as **unsigned** packages.
 
-If any desktop artifact is published as an unsigned test artifact, the workflow marks the GitHub Release as a prerelease.
+If any v1 desktop artifact is published as an unsigned test artifact, the workflow marks the GitHub Release as a prerelease. The v2 production gate prevents an unsigned v2 release from reaching the publish job.
 
 ## Verification
 
