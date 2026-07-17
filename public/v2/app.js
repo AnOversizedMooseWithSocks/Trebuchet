@@ -74,7 +74,7 @@ const baseTransactions = [
     risk: 'Low',
     cost: 0,
     state: 'pending',
-    effects: ['Hashes token, pool, and collection settings', 'Stores the run checkpoint'],
+    effects: ['Hashes token and pool settings', 'Stores the run checkpoint'],
   },
   {
     id: 'tx-funding',
@@ -99,14 +99,6 @@ const baseTransactions = [
     cost: 0.006,
     state: 'pending',
     effects: ['Revokes mint authority', 'Revokes freeze authority', 'Locks metadata policy'],
-  },
-  {
-    id: 'tx-avatar-collection',
-    label: 'Launch avatar NFT collection',
-    risk: 'Medium',
-    cost: 0.061,
-    state: 'pending',
-    effects: ['Creates avatar collection mint', 'Writes local DB manifest', 'Pins persona metadata'],
   },
   {
     id: 'tx-pool',
@@ -137,8 +129,6 @@ const baseTransactions = [
 const guardrails = [
   { id: 'rpc', title: 'Dedicated RPC', detail: 'Mainnet launch is using a non-public RPC endpoint.', state: 'pass' },
   { id: 'authority', title: 'Authority posture', detail: 'Mint and freeze authorities are scheduled for revocation.', state: 'pass' },
-  { id: 'avatar-db', title: 'Avatar DB snapshot', detail: 'Collection launch references a local manifest hash before minting.', state: 'pass' },
-  { id: 'avatar-gate', title: 'NFT ownership gate', detail: 'Avatar runtime claim follows current collection ownership.', state: 'pass' },
   { id: 'preallocation', title: 'Preallocation optics', detail: 'Team/support allocation exceeds default threshold.', state: 'warn' },
   { id: 'wallet-control', title: 'Local signing wallet', detail: 'Trebuchet signs launch operations from its encrypted local wallet after the run is armed.', state: 'pass' },
   { id: 'resume', title: 'Recovery journal', detail: 'Every durable chain phase will be checkpointed.', state: 'pass' },
@@ -211,7 +201,6 @@ const V2_REQUIRED_LAUNCH_PLAN_OPERATION_IDS = Object.freeze([
   'v2-funding-check',
   'v2-mint-metadata',
   'v2-revoke-authorities',
-  'v2-avatar-collection',
   'v2-create-liquidity-pools',
   'v2-lock-liquidity',
   'v2-report-sweep',
@@ -1938,14 +1927,6 @@ function isPublicRpcUrl(value) {
   } catch {
     return false;
   }
-}
-
-function avatarInitials(value) {
-  const parts = String(value || 'AI')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2);
-  return (parts.map((part) => part[0]).join('') || 'AI').toUpperCase();
 }
 
 function formatDate(value) {
@@ -3988,11 +3969,6 @@ function currentClassicModel() {
 
 function currentLaunchConfig() {
   const tokenSymbol = ($('#tokenSymbol').value.trim() || 'TOK').toUpperCase();
-  const collectionName = $('#avatarCollectionName').value.trim() || `${tokenSymbol} Avatars`;
-  const parsedAvatarSupply = Math.floor(Number($('#avatarSupply').value || 1));
-  const avatarSupply = Number.isFinite(parsedAvatarSupply) && parsedAvatarSupply > 0
-    ? parsedAvatarSupply
-    : 1;
   const classic = currentClassicModel();
   return {
     token: {
@@ -4015,15 +3991,6 @@ function currentLaunchConfig() {
       activeJournalCount: state.recovery.activeJournalCount,
       failedJournalCount: state.recovery.failedJournalCount,
       pendingWalletCount: state.recovery.pendingWalletCount,
-    },
-    avatarCollection: {
-      enabled: true,
-      name: collectionName,
-      symbol: `${tokenSymbol}-AI`.slice(0, 10),
-      supply: avatarSupply,
-      source: 'local-db',
-      manifest: `db://avatars/${tokenSymbol.toLowerCase()}-draft`,
-      assignmentSeed: 'wallet + token mint seed',
     },
   };
 }
@@ -4062,7 +4029,6 @@ function fallbackLaunchPlan() {
       supply: String(config.token.supply || '1000000000').replaceAll(',', ''),
       decimals: 9,
     },
-    avatarCollection: config.avatarCollection,
     funding: {
       launchSol: config.launchSol,
       estimatedSolCost: baseTransactions.reduce((total, tx) => total + tx.cost, 0),
@@ -4076,9 +4042,7 @@ function fallbackLaunchPlan() {
         ? 'config'
         : tx.id === 'tx-funding'
           ? 'fund'
-          : tx.id === 'tx-avatar-collection'
-        ? 'avatars'
-        : tx.id === 'tx-pool' || tx.id === 'tx-lock'
+          : tx.id === 'tx-pool' || tx.id === 'tx-lock'
           ? 'liquidity'
           : tx.id === 'tx-report' ? 'sweep' : 'mint',
     })),
@@ -4247,7 +4211,8 @@ function renderLaunchPreview() {
   $('#launchStatus').textContent = state.transactions.length ? 'Staged' : state.simulated ? 'Simulated' : 'Draft';
   $('#launchStatus').className = `badge ${state.transactions.length ? 'warn' : ''}`;
   renderAgentConsole();
-  $('#setupSummary').textContent = `${symbol} / ${config.avatarCollection.supply.toLocaleString()} avatars`;
+  const poolCount = Math.max(0, Number(config.poolTopology?.pools?.length || 0));
+  $('#setupSummary').textContent = `${symbol} / ${poolCount} pool${poolCount === 1 ? '' : 's'}`;
   $('#runbookSummary').textContent = `${launchStages.length} phases`;
   $('#launchReadout').innerHTML = `
     <span><strong>${signed}/${total}</strong><small>Run</small></span>
@@ -4585,43 +4550,6 @@ function renderChartDeck() {
     <div class="funding-row ${escapeHtml(funding.observedClass)}"><span>Observed spend</span><strong>${escapeHtml(funding.observedLabel)}</strong></div>
     <div class="funding-row"><span>Run</span><strong>${signaturePercent}% complete</strong></div>
   `;
-}
-
-function renderAvatarCollectionPanel() {
-  const config = currentLaunchConfig();
-  const collection = config.avatarCollection;
-  const collectionTx = state.transactions.find((item) => item.id === 'tx-avatar-collection') || null;
-  const txState = String(collectionTx?.state || 'pending').toLowerCase();
-  const completed = ['complete', 'completed', 'success', 'done'].includes(txState);
-  const running = ['running', 'active', 'processing'].includes(txState);
-  const staged = Boolean(state.launchPlan || state.transactions.length);
-  const status = completed ? 'Minted' : running ? 'Running' : staged ? 'Staged' : 'Draft';
-  const statusClass = completed ? '' : 'warn';
-  const pipeline = [
-    { index: '01', label: 'Manifest', detail: 'Local draft', state: 'ready' },
-    { index: '02', label: 'Mint', detail: completed ? 'Created' : running ? 'Running' : 'Queued', state: completed ? 'ready' : running ? 'active' : '' },
-    { index: '03', label: 'Metadata', detail: completed ? 'Pinned' : 'On mint', state: completed ? 'ready' : '' },
-    { index: '04', label: 'Claim', detail: 'Holder gate', state: completed ? 'ready' : '' },
-  ];
-
-  $('#avatarCollectionMark').textContent = avatarInitials(collection.name);
-  $('#avatarCollectionTitle').textContent = collection.name;
-  $('#avatarCollectionSymbol').textContent = collection.symbol;
-  $('#avatarCollectionManifest').textContent = collection.manifest;
-  $('#avatarCollectionState').textContent = status;
-  $('#avatarCollectionState').className = `risk-badge ${statusClass}`;
-  $('#avatarCollectionReadout').innerHTML = `
-    <span><small>Symbol</small><strong>${escapeHtml(collection.symbol)}</strong></span>
-    <span><small>Custody</small><strong>${escapeHtml(collection.source === 'local-db' ? 'Local DB' : collection.source)}</strong></span>
-    <span><small>Assignment</small><strong>Wallet + mint</strong></span>
-  `;
-  $('#avatarCollectionPipeline').innerHTML = pipeline.map((step) => `
-    <span class="avatar-pipeline-step ${escapeHtml(step.state)}">
-      <small>${escapeHtml(step.index)}</small>
-      <strong>${escapeHtml(step.label)}</strong>
-      <em>${escapeHtml(step.detail)}</em>
-    </span>
-  `).join('');
 }
 
 function vanityCandidateTarget(candidate) {
@@ -5117,7 +5045,6 @@ function buildReportPreview() {
     token: config.token,
     vanity: config.vanity,
     poolTopology: config.poolTopology,
-    avatarCollection: config.avatarCollection,
     walletPublicKey: selectedLaunchWalletPublicKey(),
   };
 }
@@ -5136,7 +5063,6 @@ function demoRunLaunchConfig(run = state.lastDemoLaunchRun) {
     vanity: plan.vanity || fallback.vanity || {},
     poolTopology: plan.poolTopology || fallback.poolTopology || {},
     recovery: plan.recovery || fallback.recovery || {},
-    avatarCollection: plan.avatarCollection || fallback.avatarCollection || {},
     launchSol: plan.funding?.launchSol ?? fallback.launchSol,
     mode: plan.mode || fallback.mode || 'guarded',
   };
@@ -5592,7 +5518,6 @@ function mergeLaunchConfigSnapshot(existing = null, incoming = null, existingPro
     ...base,
     token: { ...(base.token || {}) },
     poolTopology: { ...(base.poolTopology || {}) },
-    avatarCollection: base.avatarCollection ? { ...base.avatarCollection } : base.avatarCollection,
   };
   const incomingDestination = String(
     incomingProof?.transfer?.destinationWallet
@@ -7292,7 +7217,6 @@ function proofConfigForFingerprint(proof = currentLaunchProof(), config = curren
     poolTopology: proofTopology,
     funding: proofConfig.funding ? { ...proofConfig.funding } : proofConfig.funding,
     recovery: proofConfig.recovery ? { ...proofConfig.recovery } : proofConfig.recovery,
-    avatarCollection: proofConfig.avatarCollection || null,
   };
 }
 
@@ -8933,7 +8857,6 @@ function buildV2LaunchReportData(proof = currentLaunchProof(), config = currentL
     destinationWallet: proofEffectiveDestination(proof, config),
     recoveryAudit: buildV2ReportRecoveryAudit(proof),
     poolTopology: reportPoolTopology,
-    avatarCollection: config.avatarCollection,
   };
 }
 
@@ -12494,7 +12417,6 @@ function launchPlanConfigFingerprint(config = currentLaunchConfig()) {
         ? Number(config?.funding?.targetMarketCapUsd ?? topology.targetMarketCapUsd)
         : null,
     },
-    avatarCollection: config?.avatarCollection || null,
   }));
 }
 
@@ -15158,7 +15080,6 @@ function renderAll() {
   renderLaunchPreview();
   renderTokenLogoPreview();
   renderChartDeck();
-  renderAvatarCollectionPanel();
   renderVanityCandidates();
   renderPoolEditorPanel();
   renderAirdropPanel();
@@ -15490,7 +15411,6 @@ function refreshClassicPreview({ includePoolEditor = false } = {}) {
   renderLaunchPreview();
   renderTokenLogoPreview();
   renderChartDeck();
-  renderAvatarCollectionPanel();
   renderVanityCandidates();
   if (includePoolEditor) renderPoolEditorPanel();
   renderAirdropPanel();
@@ -15727,7 +15647,6 @@ function exportableLaunchConfigSnapshot(config = currentLaunchConfig()) {
         ? Number(config?.funding?.targetMarketCapUsd ?? config?.poolTopology?.targetMarketCapUsd)
         : null,
     },
-    avatarCollection: config?.avatarCollection || null,
   };
 }
 
@@ -16143,7 +16062,6 @@ function importedProofComparisonConfig(payload = {}) {
     ...exportedConfig,
     token,
     poolTopology,
-    avatarCollection: exportedConfig.avatarCollection || launchData.avatarCollection || current.avatarCollection,
   };
 }
 
@@ -19978,8 +19896,6 @@ function bindEvents() {
     'tokenDescription',
     'targetMarketCapUsd',
     'launchSol',
-    'avatarCollectionName',
-    'avatarSupply',
     'vanityStart',
     'vanityEnd',
     'mainPoolPercent',

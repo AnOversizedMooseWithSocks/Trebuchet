@@ -37,7 +37,7 @@ Before merging a release-bearing pull request:
 1. Confirm the intended semantic version and release label.
 2. Require all pull request checks: tests, the three platform package smoke builds, v2 E2E coverage, and any path-triggered screenshot checks.
 3. Review the PR's dependency-risk section and record a disposition for every high or critical advisory. The current audit snapshot is maintained in [`SECURITY.md`](../SECURITY.md).
-4. Confirm user-facing claims match implemented execution. In particular, v2's NFT collection panel currently stages normalized collection configuration; it does not by itself prove an on-chain collection mint.
+4. Confirm user-facing claims match implemented execution.
 5. For v2+, complete the field-evidence, independent-review, and signing preflight below before merge.
 6. Verify the marketing-site download names still match `package.json` artifact names.
 
@@ -54,8 +54,6 @@ Every `v2.0.0` or newer tag is blocked before desktop builds unless all producti
 The two production files are intentionally absent until the field run and independent review are complete. Follow [`release-evidence/v2/README.md`](../release-evidence/v2/README.md); never construct, trim, reformat, or repair the exported proof by hand.
 
 The gate independently recomputes the proof fingerprint and terminal-sweep fingerprint. It also checks the concrete mint, authority state, pool and position transactions, Burn & Earn locks, Fee Key records, optional airdrop, report, full raw Classic input, comparison rows, local proof-download record, evidence age, reviewer separation, file digests, and Git ancestry.
-
-The present gate proves the token-launch and recovery path represented by that packet. It does not turn staged NFT collection configuration into a proven collection-mint executor. Any release claim that NFT collection creation is live requires its own implemented transaction path and proof coverage.
 
 Run the same check locally with the production signing environment loaded:
 

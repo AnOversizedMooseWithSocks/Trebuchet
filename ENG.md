@@ -129,7 +129,6 @@ storage backend. See [SECURITY.md](SECURITY.md).
 - pool topology, quote venues, fee tiers, slices, ladders, support;
 - preallocation and exact airdrop rows/counts;
 - report and sweep policy;
-- staged NFT collection manifest;
 - decoded operations, cost model, and guardrails.
 
 A plan is not authority to send transactions. For a fresh live launch,
@@ -163,12 +162,6 @@ The guarded runner dispatches only the next safe Classic-backed operation:
 8. execute/retry exact airdrop rows;
 9. publish or download a proof-bound report/dossier;
 10. perform the terminal token/NFT/SOL sweep.
-
-The staged `v2-avatar-collection` operation is part of the normalized plan and
-UI pipeline. The current Classic-backed executor does not, by that operation
-alone, prove a live collection mint. Do not advance it to completed product
-behavior without a real handler, durable journal fields, transaction proof,
-recovery behavior, and release-gate coverage.
 
 ## Concurrency and idempotency
 
@@ -344,7 +337,6 @@ without field evidence and signing. See [docs/releasing.md](docs/releasing.md).
 Production blockers are tracked in [GAP_ANALYSIS.md](GAP_ANALYSIS.md). Beyond
 that gate, likely work includes:
 
-- a real proof-backed NFT collection executor or a narrower product claim;
 - compatible upgrades/remediation for current dependency advisories;
 - further extraction of large v2 renderer/proof modules;
 - optional browser-compatible read/configuration surfaces only where custody

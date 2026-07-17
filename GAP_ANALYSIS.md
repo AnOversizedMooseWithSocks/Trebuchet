@@ -5,12 +5,9 @@ Status date: 2026-07-16
 ## Executive summary
 
 The implementation gap from Classic to the v2 token-launch experience is
-largely closed. The remaining gap to a production `v2.0.0` is now mostly
-operational proof and release trust, with two product/engineering decisions that
-must not be hidden:
+largely closed. The remaining gap to a production `v2.0.0` is now operational
+proof and release trust. One release-engineering decision must not be hidden:
 
-- the current NFT collection panel is staged plan/configuration, not proven
-  live collection execution;
 - the auto-release default is a patch bump, so merging a v2-default branch
   without a `major` label could publish a `v1.x` tag and skip the v2-only
   production gate.
@@ -118,22 +115,6 @@ Before production, update/remediate the safely fixable paths and record an
 explicit accept/mitigate/defer decision for the coupled paths after relevant
 launch tests. See [SECURITY.md](SECURITY.md).
 
-### 6. NFT collection product claim
-
-The v2 plan and UI model a collection manifest, edition supply, assignment seed,
-holder gate, cost, and staged operation. The Classic-backed live executor does
-not yet supply the transaction/journal/proof chain required to call that
-collection **Minted**.
-
-Before production choose one:
-
-- implement, recover, test, and gate real collection execution; or
-- make the feature visibly staged/preview-only and remove any live-mint claim
-  from release marketing.
-
-This does not block the proven token-launch mechanics if the scope is stated
-honestly.
-
 ## Replacement criteria
 
 The field packet contains twelve replacement criteria:
@@ -158,18 +139,17 @@ pass state alone is not acceptance.
 ## Release sequence
 
 1. Resolve the v1-tag bypass invariant.
-2. Resolve or explicitly scope the NFT collection claim.
-3. Remediate/disposition the current dependency audit.
-4. Load repository signing/notarization credentials.
-5. Run the authorized mainnet launch from the candidate commit.
-6. Export the final proof after the terminal sweep.
-7. Load and compare the retained Classic artifact.
-8. Have a second GitHub user review and attest exact hashes.
-9. Run `npm run release:gate -- v2.0.0` with signing variables loaded.
-10. Apply the `major` label only when the candidate is intended to tag
+2. Remediate/disposition the current dependency audit.
+3. Load repository signing/notarization credentials.
+4. Run the authorized mainnet launch from the candidate commit.
+5. Export the final proof after the terminal sweep.
+6. Load and compare the retained Classic artifact.
+7. Have a second GitHub user review and attest exact hashes.
+8. Run `npm run release:gate -- v2.0.0` with signing variables loaded.
+9. Apply the `major` label only when the candidate is intended to tag
     `v2.0.0`.
-11. Merge, verify the tag, and monitor the full release workflow.
-12. Verify release assets, checksums, trust metadata, GitHub Package, and
+10. Merge, verify the tag, and monitor the full release workflow.
+11. Verify release assets, checksums, trust metadata, GitHub Package, and
     marketing-site links.
 
 ## Exit criteria
@@ -181,7 +161,6 @@ The v2 production gap is closed only when:
 - the production gate passes on the release commit;
 - all required platform credentials are present;
 - dependency risk has a recorded production disposition;
-- the NFT collection promise matches executable proof;
 - all PR checks and tag-release jobs are green;
 - the published artifacts and website links verify.
 
@@ -195,7 +174,6 @@ Until then, the accurate state is:
 These are improvements, not substitutes for the blockers above:
 
 - modularize the large v2 renderer and proof code;
-- implement proof-backed NFT collection execution if retained in scope;
 - add richer Discovery data providers;
 - track Fee Key portfolios;
 - add multi-launch operational views;

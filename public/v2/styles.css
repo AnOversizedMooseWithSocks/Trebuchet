@@ -4231,15 +4231,13 @@ textarea:focus {
   gap: 12px;
 }
 
-.ecosystem-head h3,
-.avatar-card h3 {
+.ecosystem-head h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ecosystem-icon,
-.avatar-mark {
+.ecosystem-icon {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
@@ -4285,43 +4283,6 @@ textarea:focus {
   font-size: 10px;
   font-weight: 760;
   text-transform: uppercase;
-}
-
-.avatar-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.avatar-strip.compact {
-  grid-template-columns: 1fr;
-  gap: 0;
-  border-top: 1px solid var(--line);
-}
-
-.avatar-card {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.avatar-strip.compact .avatar-card {
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-  padding-inline: 0;
-}
-
-.avatar-mark {
-  width: 34px;
-  height: 34px;
-  font-size: 11px;
-  font-weight: 860;
 }
 
 .stage-list,
@@ -6360,10 +6321,6 @@ button.discovery-row {
   .asset-lockup {
     border-right: 0;
     border-bottom: 1px solid var(--line);
-  }
-
-  .avatar-strip {
-    grid-template-columns: 1fr;
   }
 
   .discovery-row {
@@ -8750,7 +8707,6 @@ select:focus,
 .token-logo-preview,
 .vanity-status,
 .vanity-candidate,
-.avatar-card,
 .pool-row,
 .operator-subpanel,
 .phase-tree,
@@ -9392,216 +9348,9 @@ select:focus,
   text-transform: uppercase;
 }
 
-/* NFT collection terminal: configuration, custody, and mint route share one
-   compact instrument instead of splitting inputs from a tiny status card. */
-
-#view-launch .avatar-collection-terminal {
-  display: grid;
-  align-content: start;
-  gap: 7px;
-  min-width: 0;
-  min-height: 0;
-  padding: 7px 8px;
-  border: 1px solid var(--line);
-  background: color-mix(in srgb, #050708 84%, var(--panel));
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-}
-
-.avatar-collection-command {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--line);
-}
-
-.avatar-collection-mark {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid color-mix(in srgb, var(--violet) 62%, var(--line));
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--violet) 16%, transparent), transparent 62%),
-    var(--panel-strong);
-  color: color-mix(in srgb, var(--violet) 74%, var(--ink));
-  font-size: 9px;
-  font-weight: 850;
-  letter-spacing: .06em;
-}
-
-.avatar-collection-identity {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.avatar-collection-identity .eyebrow {
-  color: var(--subtle);
-  font-size: 7px;
-  letter-spacing: .08em;
-}
-
-.avatar-collection-identity h3 {
-  overflow: hidden;
-  margin: 0;
-  color: var(--ink);
-  font-size: 10px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.avatar-collection-identity code {
-  color: var(--muted);
-  font-size: 7px;
-  letter-spacing: .05em;
-}
-
-.avatar-collection-controls {
-  display: grid;
-  gap: 5px;
-}
-
-#view-launch .avatar-collection-controls label {
-  display: grid;
-  grid-template-columns: 74px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 8px;
-  letter-spacing: .03em;
-}
-
-#view-launch .avatar-collection-controls input,
-#view-launch .avatar-collection-controls .number-stepper {
-  min-height: 25px;
-}
-
-#view-launch .avatar-collection-controls input {
-  height: 25px;
-  padding: 2px 7px;
-  font-family: inherit;
-  font-size: 9px;
-}
-
-.avatar-collection-readout {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  border: 1px solid var(--line);
-}
-
-.avatar-collection-readout > span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 5px 6px;
-  border-right: 1px solid var(--line);
-}
-
-.avatar-collection-readout > span:last-child {
-  border-right: 0;
-}
-
-.avatar-collection-readout small,
-.avatar-manifest-line > span,
-.avatar-pipeline-step small {
-  color: var(--subtle);
-  font-size: 6px;
-  font-weight: 750;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-}
-
-.avatar-collection-readout strong {
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 7px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.avatar-manifest-line {
-  display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 4px 6px;
-  border-left: 1px solid color-mix(in srgb, var(--violet) 58%, var(--line));
-  background: color-mix(in srgb, var(--violet) 4%, transparent);
-}
-
-.avatar-manifest-line code {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 7px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.avatar-collection-pipeline {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border: 1px solid var(--line);
-}
-
-.avatar-pipeline-step {
-  position: relative;
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-  padding: 5px 5px 5px 7px;
-  border-right: 1px solid var(--line);
-}
-
-.avatar-pipeline-step:last-child {
-  border-right: 0;
-}
-
-.avatar-pipeline-step::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 1px;
-  background: var(--line-strong);
-}
-
-.avatar-pipeline-step.ready::before {
-  background: var(--green);
-}
-
-.avatar-pipeline-step.active::before {
-  background: var(--amber);
-}
-
-.avatar-pipeline-step strong,
-.avatar-pipeline-step em {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.avatar-pipeline-step strong {
-  color: var(--ink);
-  font-size: 7px;
-  font-weight: 650;
-  text-transform: uppercase;
-}
-
-.avatar-pipeline-step em {
-  color: var(--muted);
-  font-size: 6px;
-  font-style: normal;
-}
-
 @media (min-width: 901px) {
   #view-launch .compact-workbench {
-    grid-template-columns: minmax(280px, .72fr) minmax(360px, 1fr) minmax(240px, .64fr);
+    grid-template-columns: minmax(420px, 1.25fr) minmax(340px, .75fr);
     gap: 10px;
   }
 }
@@ -9620,20 +9369,6 @@ select:focus,
     display: none;
   }
 
-  .avatar-collection-readout,
-  .avatar-collection-pipeline {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .avatar-collection-readout > span:nth-child(2),
-  .avatar-pipeline-step:nth-child(2) {
-    border-right: 0;
-  }
-
-  .avatar-collection-readout > span:nth-child(-n + 2),
-  .avatar-pipeline-step:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--line);
-  }
 }
 
 /* -------------------------------------------------------------------------

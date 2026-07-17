@@ -21,9 +21,7 @@ v2 is a release candidate:
 - production `v2+` publishing is fail-closed on field proof, independent
   attestation, and platform signing;
 - the authorized funded mainnet field run has not yet supplied the checked-in
-  release evidence;
-- the staged NFT collection manifest is not yet proof of a live collection
-  mint and must not be marketed as one.
+  release evidence.
 
 See [GAP_ANALYSIS.md](GAP_ANALYSIS.md) for the release decision.
 
@@ -84,7 +82,7 @@ One cockpit with five workspaces:
 
 - **Configure** — token metadata/logo, Vanity CA, pool topology,
   preallocation, airdrops, support, Fee Key recipients, report policy, sweep
-  destination, and staged NFT collection manifest.
+  destination.
 - **Fund** — proof-bound cost estimate, wallet balance, quote requirements,
   quote acquisition/manual prefund, and funding blockers.
 - **Execute** — decoded next operation, guarded full runner, phase progress,
@@ -192,31 +190,6 @@ scrolling.
   verification.
 - Route each blocker to a real existing action.
 
-## NFT collection scope
-
-The v2 plan currently includes:
-
-- collection name and symbol;
-- edition supply;
-- local manifest URI/source;
-- deterministic assignment seed;
-- ownership-gate and metadata-standard declarations;
-- a staged operation and pipeline UI.
-
-This is configuration and product-contract work. Production acceptance for a
-live NFT collection requires, at minimum:
-
-- a real on-chain handler;
-- collection and edition transaction signatures;
-- durable journal/recovery fields;
-- cost and partial-failure handling;
-- proof/dossier rows;
-- demo and non-demo tests;
-- release-gate validation.
-
-Until then, the surface must remain visibly **Draft/Staged** and must not claim
-that a collection was minted.
-
 ## Recovery requirements
 
 - Never auto-resume an unsafe unknown partial state.
@@ -273,9 +246,7 @@ A production `v2.0.0` is acceptable only when:
 6. macOS artifacts are signed and notarized;
 7. Windows artifacts are signed;
 8. current dependency advisories have an explicit production disposition;
-9. the NFT collection surface is either implemented and proven or clearly
-   scoped as staged/non-live;
-10. auto-release cannot publish the v2-default app under a `v1.x` tag.
+9. auto-release cannot publish the v2-default app under a `v1.x` tag.
 
 ## Non-goals
 
@@ -286,7 +257,7 @@ A production `v2.0.0` is acceptable only when:
 - Treating a wallet connection as permission for arbitrary transactions.
 - Making a browser-only implementation a prerequisite for core launch
   execution.
-- Claiming AI/avatar runtime output without verifiable execution.
+- Creating generative or edition collectible collections.
 
 ## Success measures
 
@@ -305,7 +276,6 @@ A production `v2.0.0` is acceptable only when:
 
 After the production v2 token-launch gate is satisfied:
 
-- proof-backed NFT collection execution;
 - Fee Key portfolio tracking;
 - richer Discovery evidence providers;
 - multi-launch operations view;

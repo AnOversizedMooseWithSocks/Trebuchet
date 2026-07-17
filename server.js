@@ -2114,7 +2114,6 @@ function v2LaunchConfigSnapshotFromPlan(plan = {}, journal = null) {
         : null,
     },
     recovery: plan?.recovery || null,
-    avatarCollection: plan?.avatarCollection || null,
   };
 }
 

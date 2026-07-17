@@ -30,8 +30,6 @@ Before spending funds or generating evidence:
 6. Retain the complete structured Classic JSON or HTML artifact for the same launch outcome. A screenshot or hand-written summary is insufficient.
 7. Confirm macOS signing/notarization and Windows signing credentials are available for the final gate. The evidence process does not waive artifact trust.
 
-V2's NFT collection panel currently stages collection configuration in the launch plan. Unless the release candidate adds a real collection-mint transaction executor and corresponding proof, do not claim or attest that NFT collection creation was field-proven by this procedure.
-
 ## Operator procedure
 
 Run the candidate exactly as a user would:

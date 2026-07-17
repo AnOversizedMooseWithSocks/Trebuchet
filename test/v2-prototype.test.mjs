@@ -418,7 +418,6 @@ function loadClassicRetirementGateHarness() {
       'v2-funding-check',
       'v2-mint-metadata',
       'v2-revoke-authorities',
-      'v2-avatar-collection',
       'v2-create-liquidity-pools',
       'v2-lock-liquidity',
       'v2-report-sweep',
@@ -1061,7 +1060,6 @@ function loadProofImportHarness() {
       launchSol: 1,
       mode: 'guarded',
       poolTopology: { sweepDestination: 'TypedDest11111111111111111111111111111111111' },
-      avatarCollection: null,
     }),
     selectedLaunchWalletPublicKey: () => null,
     normalizeStoredLaunchProof: (record = {}) => ({
@@ -1985,25 +1983,15 @@ test('v2 Discovery is a live, locally persisted evidence registry without social
   assert.doesNotMatch(combined, /\bsocial vote/i);
 });
 
-test('v2 keeps avatar NFTs as a configured launch primitive without fake AI runtime evidence', () => {
+test('v2 removes the staged NFT collection product surface', () => {
   const combined = `${html}\n${css}\n${js}`;
 
-  assert.match(combined, /NFT collection \/ holder runtime/);
-  assert.match(combined, /Collection name/);
-  assert.match(combined, /Edition supply/);
-  assert.match(html, /class="avatar-collection-terminal"/);
-  assert.match(html, /id="avatarCollectionReadout"/);
-  assert.match(html, /id="avatarCollectionPipeline"/);
-  assert.match(js, /Wallet \+ mint/);
-  assert.match(js, /Holder gate/);
-  assert.match(js, /Persona metadata|Metadata/);
-  assert.match(css, /#view-launch \.avatar-collection-terminal/);
-  assert.match(css, /\.avatar-collection-pipeline/);
-  assert.match(combined, /source: 'local-db'/);
+  assert.doesNotMatch(combined, /NFT collection/i);
+  assert.doesNotMatch(combined, /avatarCollection/);
+  assert.doesNotMatch(combined, /avatar-collection/);
+  assert.doesNotMatch(combined, /v2-avatar-collection/);
+  assert.doesNotMatch(combined, /holder runtime/i);
   assert.match(combined, /data-action="select-discovery"/);
-  assert.doesNotMatch(combined, /avatarEcosystems/);
-  assert.doesNotMatch(combined, /active AI/);
-  assert.doesNotMatch(combined, /Transaction Room/);
 });
 
 test('v2 applies Trebuchet branding from the v1 launch site', () => {
@@ -2853,7 +2841,7 @@ test('v2 launch-plan fingerprints match the server builder for staged config', (
       name: 'MoonKit',
       symbol: 'MKT',
       supply: '1,000,000,000',
-      description: 'AI avatar swarm launch',
+      description: 'Community token launch',
       logo: {
         name: 'moon.png',
         mimeType: 'image/png',
@@ -2903,13 +2891,6 @@ test('v2 launch-plan fingerprints match the server builder for staged config', (
     funding: {
       launchSol: 3.5,
       targetMarketCapUsd: '250000',
-    },
-    avatarCollection: {
-      enabled: true,
-      name: 'MoonKit Avatars',
-      symbol: 'MKTAI',
-      supply: '777',
-      manifest: 'db://avatars/mkt-draft',
     },
   };
 
@@ -4251,7 +4232,6 @@ test('v2 imported proof comparison uses the exported launch config snapshot', ()
       launchSol: 1,
       mode: 'guarded',
       poolTopology: { sweepDestination: 'TypedDest11111111111111111111111111111111111' },
-      avatarCollection: { name: 'Typed Avatars' },
     }),
   };
   vm.runInNewContext(
@@ -4277,7 +4257,6 @@ test('v2 imported proof comparison uses the exported launch config snapshot', ()
     mode: 'operator',
     poolTopology: { sweepDestination: 'ExportedDest111111111111111111111111111111111' },
     funding: { targetMarketCapUsd: 25000 },
-    avatarCollection: { name: 'Exported Avatars' },
   });
   assert.equal(exported.schema, 'trebuchet-v2-launch-config');
   assert.equal(exported.source, 'trebuchet-v2');
@@ -7845,7 +7824,6 @@ test('v2 retirement gate only passes completed live proof compared to Classic', 
     'v2-funding-check',
     'v2-mint-metadata',
     'v2-revoke-authorities',
-    'v2-avatar-collection',
     'v2-create-liquidity-pools',
     'v2-lock-liquidity',
     'v2-report-sweep',

@@ -69,7 +69,7 @@ test('buildV2LaunchPlan returns a normalized local-wallet run contract', () => {
       name: '  MoonKit  ',
       symbol: ' mkt ',
       supply: '1,000,000,000',
-      description: 'AI avatar swarm launch',
+      description: 'Community token launch',
       logo: {
         name: 'moon.png',
         mimeType: 'image/png',
@@ -127,7 +127,7 @@ test('buildV2LaunchPlan returns a normalized local-wallet run contract', () => {
     symbol: 'MKT',
     supply: '1000000000',
     decimals: 9,
-    description: 'AI avatar swarm launch',
+    description: 'Community token launch',
     logo: {
       name: 'moon.png',
       mimeType: 'image/png',
@@ -166,20 +166,10 @@ test('buildV2LaunchPlan returns a normalized local-wallet run contract', () => {
     failedJournalCount: 0,
     pendingWalletCount: 1,
   });
-  assert.deepEqual(plan.avatarCollection, {
-    enabled: true,
-    name: 'MoonKit Avatars',
-    symbol: 'MKTAI',
-    supply: '777',
-    source: 'local-db',
-    manifest: 'db://avatars/mkt-draft',
-    assignmentSeed: 'wallet + token mint seed',
-    ownershipGate: 'nft-holder-claim',
-    metadataStandard: 'metaplex+rati-avatar',
-  });
+  assert.equal(Object.hasOwn(plan, 'avatarCollection'), false);
   assert.equal(plan.funding.launchSol, 3.5);
   assert.ok(plan.funding.estimatedSolCost > 3.5);
-  assert.equal(plan.operations.length, 8);
+  assert.equal(plan.operations.length, 7);
   assert.ok(plan.operations.every((item) => item.kind === 'local-wallet-operation'));
   assert.ok(plan.operations.every((item) => item.source === 'v2-launch-plan'));
   assert.ok(plan.operations.every((item) => item.signer === 'trebuchet-managed-launch-wallet'));
@@ -192,16 +182,37 @@ test('buildV2LaunchPlan returns a normalized local-wallet run contract', () => {
       'v2-funding-check',
       'v2-mint-metadata',
       'v2-revoke-authorities',
-      'v2-avatar-collection',
       'v2-create-liquidity-pools',
       'v2-lock-liquidity',
       'v2-report-sweep',
     ],
   );
   assert.match(plan.guardrails.map((item) => item.id).join(','), /metadata-valid/);
-  assert.match(plan.guardrails.map((item) => item.id).join(','), /avatar-manifest/);
   assert.match(plan.guardrails.map((item) => item.id).join(','), /classic-pool-model/);
   assert.match(plan.guardrails.map((item) => item.id).join(','), /vanity-ca-options/);
+});
+
+test('removed collection configuration is ignored by the v2 launch contract', () => {
+  const input = {
+    token: { name: 'MoonKit', symbol: 'MKT', supply: '1000000' },
+    launchSol: 2.5,
+    poolTopology: {
+      pools: [{ quoteToken: 'SOL', quoteSymbol: 'SOL', supplyPercent: 80 }],
+    },
+  };
+  const legacyInput = {
+    ...input,
+    avatarCollection: {
+      enabled: true,
+      name: 'MoonKit Crew',
+      editionSupply: 777,
+    },
+  };
+
+  assert.equal(launchPlanConfigFingerprint(legacyInput), launchPlanConfigFingerprint(input));
+  const plan = buildV2LaunchPlan(legacyInput, { demoMode: true });
+  assert.equal(Object.hasOwn(plan, 'avatarCollection'), false);
+  assert.equal(plan.operations.some((operation) => operation.id.includes('avatar')), false);
 });
 
 test('buildV2LaunchPlan rejects invalid launch config before staging', () => {
@@ -235,13 +246,6 @@ test('buildV2LaunchPlan rejects invalid launch config before staging', () => {
   assert.throws(
     () => buildV2LaunchPlan({ token: { name: 'Token', symbol: 'TOK', supply: '1000' }, launchSol: -1 }),
     /Launch SOL must be a non-negative number/,
-  );
-  assert.throws(
-    () => buildV2LaunchPlan({
-      token: { name: 'Token', symbol: 'TOK', supply: '1000' },
-      avatarCollection: { manifest: '' },
-    }),
-    /Avatar collection manifest is required/,
   );
   assert.throws(
     () => buildV2LaunchPlan({
@@ -383,14 +387,14 @@ test('buildV2LaunchPlan marks non-demo runtime as preview-only', () => {
   );
 });
 
-test('buildV2LaunchPlan keeps default avatar symbol inside Solana metadata limits', () => {
+test('buildV2LaunchPlan keeps maximum-length token symbols inside Solana metadata limits', () => {
   const plan = buildV2LaunchPlan(
     { token: { name: 'Ten Bytes', symbol: 'TENBYTES10', supply: '1000' } },
     { demoMode: true, now: '2026-06-20T12:00:00.000Z' },
   );
 
   assert.equal(plan.token.symbol, 'TENBYTES10');
-  assert.equal(plan.avatarCollection.symbol, 'TENBYTES10');
+  assert.equal(Object.hasOwn(plan, 'avatarCollection'), false);
   assert.equal(plan.poolTopology.pools[1].id, 'meme-flywheel');
   assert.equal(plan.poolTopology.pools[1].quoteToken, 'HipYKXiDh3Kjd1jb7ji6jCEsKQMSGWiFJMdtvH8yb5r');
   assert.equal(plan.poolTopology.pools[1].quoteMint, 'HipYKXiDh3Kjd1jb7ji6jCEsKQMSGWiFJMdtvH8yb5r');

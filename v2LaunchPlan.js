@@ -21,7 +21,6 @@ import {
 const CONTRACT_VERSION = 1;
 const TOKEN_DECIMALS = 9;
 const VALID_MODES = new Set(['guarded', 'operator', 'dry-run']);
-const COST_AVATAR_COLLECTION_SOL = 0.061;
 const DEFAULT_SOL_MINT = 'So11111111111111111111111111111111111111112';
 const DEFAULT_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const DEFAULT_MEME_FLYWHEEL_MINT = 'HipYKXiDh3Kjd1jb7ji6jCEsKQMSGWiFJMdtvH8yb5r';
@@ -92,35 +91,6 @@ function normalizeLaunchSol(value) {
 function normalizeMode(value) {
   const mode = String(value || 'guarded').trim();
   return VALID_MODES.has(mode) ? mode : 'guarded';
-}
-
-function normalizeAvatarCollection(input = {}, token) {
-  const enabled = input.enabled !== false;
-  const defaultSymbol = token.symbol.length <= 8
-    ? `${token.symbol}AI`
-    : token.symbol.slice(0, 10);
-  const name = normalizeTokenName(input.name ?? `${token.name} Avatars`);
-  const symbol = normalizeTokenSymbol(input.symbol ?? defaultSymbol).toUpperCase();
-  const supply = normalizeWholeTokenSupply(input.supply ?? '777', 0);
-  const manifest = String(input.manifest ?? `db://avatars/${token.symbol.toLowerCase()}-draft`).trim();
-  const source = String(input.source ?? 'local-db').trim();
-  const assignmentSeed = String(input.assignmentSeed ?? 'wallet + token mint seed').trim();
-
-  if (!manifest) throw new Error('Avatar collection manifest is required');
-  if (!source) throw new Error('Avatar collection source is required');
-  if (!assignmentSeed) throw new Error('Avatar collection assignment seed is required');
-
-  return {
-    enabled,
-    name,
-    symbol,
-    supply,
-    source,
-    manifest,
-    assignmentSeed,
-    ownershipGate: 'nft-holder-claim',
-    metadataStandard: 'metaplex+rati-avatar',
-  };
 }
 
 function numeric(value, fallback = 0) {
@@ -285,7 +255,6 @@ export function launchPlanConfigFingerprint(input = {}) {
         ? Number(input?.funding?.targetMarketCapUsd ?? topology.targetMarketCapUsd)
         : null,
     },
-    avatarCollection: input?.avatarCollection || null,
   }));
 }
 
@@ -1218,7 +1187,6 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
   const logo = normalizeTokenLogo(tokenInput.logo || input.logo || null);
   const launchSol = normalizeLaunchSol(input.launchSol ?? input.funding?.launchSol ?? 0);
   const mode = normalizeMode(input.mode);
-  const avatarCollection = normalizeAvatarCollection(input.avatarCollection || {}, { name, symbol });
   const vanity = normalizeVanity(input.vanity || {});
   const poolTopology = normalizePoolTopology(input.poolTopology || {});
   const recovery = {
@@ -1320,23 +1288,6 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
       requires: ['v2-mint-metadata'],
     }),
     operation({
-      id: 'v2-avatar-collection',
-      stage: 'avatars',
-      label: 'Launch avatar NFT collection',
-      risk: 'Medium',
-      costSol: avatarCollection.enabled ? COST_AVATAR_COLLECTION_SOL + COST_TX_BUFFER_SOL : 0,
-      effects: [
-        avatarCollection.enabled
-          ? `Creates ${avatarCollection.name} collection mint`
-          : 'Skips avatar collection minting',
-        `References ${avatarCollection.manifest} from local avatar DB`,
-        `Uses deterministic ${avatarCollection.assignmentSeed} assignment`,
-        'Binds avatar runtime claim to current NFT ownership',
-      ],
-      checks: ['avatar-manifest', 'metaplex-metadata', 'rati-avatar-schema', 'ownership-gate'],
-      requires: ['v2-revoke-authorities'],
-    }),
-    operation({
       id: 'v2-create-liquidity-pools',
       stage: 'liquidity',
       label: 'Create liquidity pools',
@@ -1348,7 +1299,7 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
         'Records pool checkpoint before positions open',
       ],
       checks: ['pool-rent', 'quote-venue', 'checkpoint'],
-      requires: ['v2-avatar-collection'],
+      requires: ['v2-revoke-authorities'],
     }),
     operation({
       id: 'v2-lock-liquidity',
@@ -1410,7 +1361,6 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
     vanity,
     poolTopology,
     recovery,
-    avatarCollection,
     funding: {
       launchSol,
       estimatedSolCost,
@@ -1430,18 +1380,6 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
           ? 'The staged bundle is safe to inspect without sending transactions.'
           : 'Trebuchet will sign from its encrypted local launch wallet after the user arms the run envelope.',
         state: demoMode ? 'pass' : 'warn',
-      },
-      {
-        id: 'avatar-manifest',
-        title: 'Avatar manifest ready',
-        detail: `${avatarCollection.name} references ${avatarCollection.source} manifest ${avatarCollection.manifest}.`,
-        state: avatarCollection.enabled ? 'pass' : 'warn',
-      },
-      {
-        id: 'avatar-ownership-gate',
-        title: 'Avatar ownership gate',
-        detail: 'AI avatar runtime claim is tied to current NFT collection ownership.',
-        state: 'pass',
       },
       {
         id: 'classic-pool-model',

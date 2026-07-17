@@ -71,7 +71,7 @@ prototype tokens:
 | `--blue` / `--cyan` | `#68cfff` | Informational/live data. |
 | `--amber` | `#f3be5b` | Warning, needs review, staged. |
 | `--red` | `#ff6570` | Failed, destructive, blocked. |
-| `--violet` | `#b09cff` | Collection/secondary proof accent. |
+| `--violet` | `#b09cff` | Secondary proof and selection accent. |
 
 The light-mode overrides are functional, not a separate aesthetic. Maintain the
 same hierarchy and state semantics with accessible darker accents.
@@ -224,19 +224,6 @@ basic progress.
 
 Classic parity controls may be collapsed, but their values and blockers must
 feed the same plan and proof state as the primary controls.
-
-### NFT collection terminal
-
-Treat collection configuration as a small terminal manifest:
-
-- collection identity and symbol;
-- edition supply;
-- local manifest/custody source;
-- staged pipeline;
-- proof-backed status.
-
-Do not show synthetic artwork, fake AI progress, or a **Minted** state without a
-collection transaction and proof record.
 
 ### Recovery
 

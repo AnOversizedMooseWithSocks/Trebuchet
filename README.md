@@ -85,8 +85,7 @@ port and opens the selected UI in a sandboxed browser window.
 The Launch cockpit is the primary command surface:
 
 - **Configure** — token metadata, logo, Vanity CA targets, pool topology,
-  preallocation, airdrops, support, Fee Key recipients, sweep destination, and
-  the staged NFT collection manifest.
+  preallocation, airdrops, support, Fee Key recipients, and sweep destination.
 - **Fund** — a proof-bound Classic funding estimate, selected-wallet balances,
   quote-token requirements, manual prefund guidance, and guarded quote
   acquisition.
@@ -96,12 +95,6 @@ The Launch cockpit is the primary command surface:
   sweep evidence, Classic comparison, and field-verification packet.
 - **Recover** — recovery actions related to the active launch without leaving
   the cockpit.
-
-The NFT collection terminal currently normalizes and stages a collection name,
-edition supply, manifest, assignment seed, and holder-gate contract in the v2
-launch plan. It must not be interpreted as proof that a live collection mint or
-avatar-generation runtime has executed; only transaction and proof records count
-as completed functionality.
 
 ### Wallet
 
