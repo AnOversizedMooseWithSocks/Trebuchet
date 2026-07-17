@@ -231,6 +231,10 @@ The active wallet is not the parent of every recoverable wallet. Put recovery
 inventory in the central History/Wallet workspace, collapsed by default when it
 is not the current task. Separate:
 
+Use the wallet's rarity grade as the selected-wallet identity accent across its
+row, topbar indicator, and active-signer badge. Keep warning, failure, and
+destructive colors independent so rarity never obscures operational state.
+
 - active launch signer;
 - pending/recovery wallets;
 - launch journals;

@@ -85,6 +85,36 @@ test('adds pending wallets idempotently and removes them', async (t) => {
   });
 });
 
+test('persists non-secret vanity rarity metadata for wallet styling', async (t) => {
+  await withMutedConsole(async () => {
+    const configDir = makeTempConfigDir(t);
+    secretStore.setSafeStorage(null);
+    const pendingWallets = await importFreshPendingWallets(configDir);
+    const publicKey = 'RareWallet1111111111111111111111111111111';
+
+    pendingWallets.add(publicKey, [4, 5, 6], null, {
+      rarity: 'Legendary',
+      vanity: true,
+    });
+
+    assert.deepEqual(pendingWallets.list(), [
+      {
+        publicKey,
+        createdAt: pendingWallets.list()[0].createdAt,
+        rarity: 'Legendary',
+        vanity: true,
+        secretKey: [4, 5, 6],
+      },
+    ]);
+
+    const disk = JSON.parse(readFileSync(pendingWalletFile(configDir), 'utf8'));
+    assert.equal(disk[0].rarity, 'Legendary');
+    assert.equal(disk[0].vanity, true);
+    assert.equal(disk[0].secretKey, undefined);
+    assert.equal(disk[0].secretKeyEnc, 'plain:[4,5,6]');
+  });
+});
+
 test('migrates legacy plaintext entries when encryption is available', async (t) => {
   await withMutedConsole(async () => {
     const configDir = makeTempConfigDir(t);

@@ -6343,6 +6343,26 @@ test('v2 Vanity CA candidates use a compact terminal list and Signal grade color
   assert.match(css, /#view-launch \.vanity-candidate\s*\{[\s\S]*?font-family: inherit;/);
 });
 
+test('v2 active wallet identity uses its rarity color without replacing status colors', () => {
+  const renderStart = js.indexOf('function renderWallet()');
+  const renderEnd = js.indexOf('function renderDiscovery()', renderStart);
+  const renderSource = js.slice(renderStart, renderEnd);
+
+  assert.ok(renderStart >= 0 && renderEnd > renderStart);
+  assert.match(html, /id="activeWalletRarityBadge"/);
+  assert.match(js, /rarityGrade: vanityRarityGrade\(rarity\)/);
+  assert.match(renderSource, /wallet-rarity-\$\{escapeHtml\(item\.rarityGrade\)\}/);
+  assert.match(renderSource, /wallet-rarity-label/);
+  assert.match(renderSource, /activeWalletRarityBadge/);
+  for (const grade of ['common', 'fine', 'rare', 'rati', 'commissioned']) {
+    assert.match(css, new RegExp(`\\.wallet-rarity-${grade}\\s*\\{`));
+  }
+  assert.match(css, /#view-wallet \.account-row\.is-active[\s\S]*?border-left-color: var\(--wallet-rarity\)/);
+  assert.match(css, /\.wallet-button\[class\*="wallet-rarity-"\] \.wallet-led\.is-on[\s\S]*?background: var\(--wallet-rarity\)/);
+  assert.match(css, /\.wallet-rarity-badge\[class\*="wallet-rarity-"\][\s\S]*?color: var\(--wallet-rarity\)/);
+  assert.match(css, /\.risk-badge\.danger[\s\S]*?color: var\(--red\)/);
+});
+
 test('v2 primary views share framed terminal workspaces and tabbed History panes', () => {
   for (const pane of ['recovery', 'wallets', 'audit', 'journal']) {
     assert.match(html, new RegExp(`data-history-pane="${pane}"`));

@@ -23,8 +23,17 @@ const EMPTY_ACCOUNT = Object.freeze({
   address: 'Not connected',
   balance: 0,
   role: 'Generate or import a local wallet',
-  color: '#6f7783',
+  rarity: 'Common',
+  rarityGrade: 'common',
 });
+
+const WALLET_RARITY_CLASSES = Object.freeze([
+  'wallet-rarity-common',
+  'wallet-rarity-fine',
+  'wallet-rarity-rare',
+  'wallet-rarity-rati',
+  'wallet-rarity-commissioned',
+]);
 
 const launchStages = [
   {
@@ -955,24 +964,28 @@ function escapeHtml(value) {
 
 function walletAccounts() {
   if (state.managedWallets.length) {
-    return state.managedWallets.map((wallet, index) => ({
-      id: wallet.publicKey,
-      name: wallet.label || (index === 0 ? 'Launch Wallet' : `Local Wallet ${index + 1}`),
-      address: shortAddress(wallet.publicKey),
-      publicKey: wallet.publicKey,
-      balance: Number(wallet.balanceSol || 0),
-      role: wallet.source === 'imported-local'
-        ? 'Imported local wallet'
-        : wallet.hasSecretKey ? 'Trebuchet-managed signer' : 'Locked local wallet',
-      color: index === 0 ? '#6be2a2' : index === 1 ? '#ffbd61' : '#7fb0ff',
-      hasSecretKey: wallet.hasSecretKey === true,
-      hasMnemonic: wallet.hasMnemonic === true || typeof wallet.mnemonic === 'string',
-      decryptionFailed: wallet.decryptionFailed === true,
-      secretPinLocked: wallet.secretPinLocked === true,
-      qrCode: wallet.qrCode || null,
-      createdAt: wallet.createdAt || null,
-      source: wallet.source || 'local',
-    }));
+    return state.managedWallets.map((wallet, index) => {
+      const rarity = String(wallet.rarity || 'Common').trim() || 'Common';
+      return {
+        id: wallet.publicKey,
+        name: wallet.label || (index === 0 ? 'Launch Wallet' : `Local Wallet ${index + 1}`),
+        address: shortAddress(wallet.publicKey),
+        publicKey: wallet.publicKey,
+        balance: Number(wallet.balanceSol || 0),
+        role: wallet.source === 'imported-local'
+          ? 'Imported local wallet'
+          : wallet.hasSecretKey ? 'Trebuchet-managed signer' : 'Locked local wallet',
+        rarity,
+        rarityGrade: vanityRarityGrade(rarity),
+        hasSecretKey: wallet.hasSecretKey === true,
+        hasMnemonic: wallet.hasMnemonic === true || typeof wallet.mnemonic === 'string',
+        decryptionFailed: wallet.decryptionFailed === true,
+        secretPinLocked: wallet.secretPinLocked === true,
+        qrCode: wallet.qrCode || null,
+        createdAt: wallet.createdAt || null,
+        source: wallet.source || 'local',
+      };
+    });
   }
   return [];
 }
@@ -13664,6 +13677,24 @@ function renderWallet() {
       ? walletRows.find((item) => item.publicKey === selectedPublicKey || item.id === selectedPublicKey)
       : null
   ) || walletRows[0] || null;
+  const activeRarity = selectedRow?.rarity || 'Common';
+  const activeRarityGrade = selectedRow?.rarityGrade || 'common';
+  const activeRarityClass = `wallet-rarity-${activeRarityGrade}`;
+  const walletView = $('#view-wallet');
+  const walletButton = $('#walletButton');
+  [walletView, walletButton].forEach((element) => {
+    if (!element) return;
+    element.classList.remove(...WALLET_RARITY_CLASSES);
+    if (selectedRow) element.classList.add(activeRarityClass);
+  });
+  if (walletButton) {
+    walletButton.title = selectedRow ? `${activeRarity} active wallet` : 'No active wallet';
+  }
+  const activeRarityBadge = $('#activeWalletRarityBadge');
+  if (activeRarityBadge) {
+    activeRarityBadge.className = `risk-badge wallet-rarity-badge${selectedRow ? ` ${activeRarityClass}` : ''}`;
+    activeRarityBadge.textContent = selectedRow ? activeRarity : 'No wallet';
+  }
   const rawWallet = selectedManagedWallet();
   const qrCode = rawWallet?.qrCode || (
     state.walletQr.publicKey === selectedPublicKey ? state.walletQr.qrCode : null
@@ -13724,20 +13755,23 @@ function renderWallet() {
       state: 'Verified',
     } : null,
   ].filter(Boolean) : [];
-  $('#accountList').innerHTML = walletRows.map((item) => `
-    <article class="account-row ${item.id === state.accountId ? 'is-active' : ''}">
-      <span class="ident" style="border-color:${item.color}; color:${item.color}">${escapeHtml(item.name.slice(0, 1))}</span>
-      <span class="account-copy">
-        <h3>${escapeHtml(item.name)}</h3>
-        <p>${escapeHtml(item.role)} / ${escapeHtml(item.address)}</p>
-      </span>
-      <span class="balance">
-        <strong>${Number(item.balance || 0).toFixed(2)} SOL</strong>
-        <span>${item.id === state.accountId ? 'Active' : 'Wallet'}</span>
-      </span>
-      <button class="pill-button" type="button" data-action="select-account" data-account="${escapeHtml(item.id)}">Select</button>
-    </article>
-  `).join('') || '<div class="empty-state">Create or import a Trebuchet-managed wallet.</div>';
+  $('#accountList').innerHTML = walletRows.map((item) => {
+    const isActive = item.publicKey === selectedPublicKey;
+    return `
+      <article class="account-row wallet-rarity-${escapeHtml(item.rarityGrade)} ${isActive ? 'is-active' : ''}">
+        <span class="ident">${escapeHtml(item.name.slice(0, 1))}</span>
+        <span class="account-copy">
+          <h3>${escapeHtml(item.name)}</h3>
+          <p>${escapeHtml(item.role)} / ${escapeHtml(item.address)}</p>
+        </span>
+        <span class="balance">
+          <strong>${Number(item.balance || 0).toFixed(2)} SOL</strong>
+          <span class="wallet-rarity-label">${isActive ? 'Active' : 'Wallet'} / ${escapeHtml(item.rarity)}</span>
+        </span>
+        <button class="pill-button" type="button" data-action="select-account" data-account="${escapeHtml(item.id)}">Select</button>
+      </article>
+    `;
+  }).join('') || '<div class="empty-state">Create or import a Trebuchet-managed wallet.</div>';
 
   $('#walletDetailPanel').innerHTML = selectedPublicKey && selectedRow ? `
     <div class="wallet-detail-grid">

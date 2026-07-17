@@ -10696,3 +10696,82 @@ input[type="number"]::-webkit-outer-spin-button {
 .number-stepper:has(input[readonly]) .number-stepper-button {
   cursor: not-allowed;
 }
+
+/* Active wallet identity follows the same rarity palette as Vanity CA
+   candidates. Rarity colors identify the signer; warning and destructive
+   controls keep their independent amber/red status semantics. */
+
+.wallet-rarity-common {
+  --wallet-rarity: var(--rarity-common);
+}
+
+.wallet-rarity-fine {
+  --wallet-rarity: var(--rarity-fine);
+}
+
+.wallet-rarity-rare {
+  --wallet-rarity: var(--rarity-rare);
+}
+
+.wallet-rarity-rati {
+  --wallet-rarity: var(--rarity-rati);
+}
+
+.wallet-rarity-commissioned {
+  --wallet-rarity: var(--rarity-commissioned);
+}
+
+.wallet-button[class*="wallet-rarity-"] {
+  border-color: color-mix(in srgb, var(--wallet-rarity) 38%, var(--line));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--wallet-rarity) 7%, transparent), transparent 72%);
+}
+
+.wallet-button[class*="wallet-rarity-"] .wallet-led.is-on {
+  background: var(--wallet-rarity);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--wallet-rarity) 56%, transparent);
+}
+
+#view-wallet .account-row {
+  --wallet-rarity: var(--rarity-common);
+  border-left: 2px solid transparent;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+#view-wallet .account-row .ident {
+  border-color: color-mix(in srgb, var(--wallet-rarity) 36%, var(--line));
+  color: color-mix(in srgb, var(--wallet-rarity) 68%, var(--muted));
+}
+
+#view-wallet .account-row .wallet-rarity-label {
+  color: color-mix(in srgb, var(--wallet-rarity) 52%, var(--muted));
+}
+
+#view-wallet .account-row.is-active,
+#view-wallet .account-row.is-active:hover {
+  border-left-color: var(--wallet-rarity);
+  border-bottom-color: color-mix(in srgb, var(--wallet-rarity) 44%, var(--line));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--wallet-rarity) 11%, transparent), transparent 78%);
+  box-shadow: inset 8px 0 18px -18px var(--wallet-rarity);
+}
+
+#view-wallet .account-row.is-active .ident {
+  border-color: var(--wallet-rarity);
+  color: var(--wallet-rarity);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--wallet-rarity) 22%, transparent);
+}
+
+#view-wallet .account-row.is-active .account-copy h3,
+#view-wallet .account-row.is-active .balance strong,
+#view-wallet .account-row.is-active .wallet-rarity-label {
+  color: var(--wallet-rarity);
+}
+
+#view-wallet .wallet-module-heading {
+  border-top: 1px solid color-mix(in srgb, var(--wallet-rarity, var(--line-strong)) 28%, var(--line));
+}
+
+#view-wallet .wallet-rarity-badge[class*="wallet-rarity-"] {
+  border-color: color-mix(in srgb, var(--wallet-rarity) 52%, var(--line));
+  background: color-mix(in srgb, var(--wallet-rarity) 7%, transparent);
+  color: var(--wallet-rarity);
+}

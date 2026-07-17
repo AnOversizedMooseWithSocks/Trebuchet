@@ -1066,6 +1066,10 @@ function managedWalletMetadata(wallet, extra = {}) {
   return {
     publicKey: wallet.publicKey,
     createdAt: wallet.createdAt || null,
+    rarity: typeof wallet.rarity === 'string' && wallet.rarity.trim()
+      ? wallet.rarity.trim()
+      : 'Common',
+    vanity: wallet.vanity === true,
     hasSecretKey: Array.isArray(wallet.secretKey),
     hasMnemonic: typeof wallet.mnemonic === 'string' && wallet.mnemonic.length > 0,
     decryptionFailed: !Array.isArray(wallet.secretKey),
@@ -1505,7 +1509,10 @@ app.post('/api/generate-vanity-wallet', async (req, res) => {
       // so synthetic demo wallets never leak into real recovery data.
       demoChainService.registerWallet(walletInfo.publicKey);
     } else {
-      pendingWallets.add(walletInfo.publicKey, walletInfo.secretKey, null);
+      pendingWallets.add(walletInfo.publicKey, walletInfo.secretKey, null, {
+        rarity: result.rarity,
+        vanity: true,
+      });
       launchJournal.start({ walletPublicKey: walletInfo.publicKey });
     }
 

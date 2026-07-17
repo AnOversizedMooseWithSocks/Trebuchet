@@ -53,6 +53,10 @@ function decodeEntry(raw) {
     publicKey: raw.publicKey,
     createdAt: raw.createdAt,
   };
+  if (typeof raw.rarity === 'string' && raw.rarity.trim()) {
+    out.rarity = raw.rarity.trim();
+  }
+  if (raw.vanity === true) out.vanity = true;
 
   // Secret key (byte array). Encrypted form serialises through JSON.
   if (typeof raw.secretKeyEnc === 'string') {
@@ -82,6 +86,10 @@ function encodeEntry(decoded) {
     publicKey: decoded.publicKey,
     createdAt: decoded.createdAt,
   };
+  if (typeof decoded.rarity === 'string' && decoded.rarity.trim()) {
+    out.rarity = decoded.rarity.trim();
+  }
+  if (decoded.vanity === true) out.vanity = true;
   if (Array.isArray(decoded.secretKey)) {
     out.secretKeyEnc = secretStore.encryptString(JSON.stringify(decoded.secretKey));
   }
@@ -167,15 +175,33 @@ function persist(list) {
 // mnemonic support won't have one, and we want them to keep working.
 // Idempotent: if the same publicKey is added twice, we keep the first
 // entry's createdAt timestamp.
-export function add(publicKey, secretKey, mnemonic) {
+export function add(publicKey, secretKey, mnemonic, metadata = {}) {
   const list = load();
-  if (list.some((w) => w.publicKey === publicKey)) return;
+  const existing = list.find((wallet) => wallet.publicKey === publicKey);
+  const rarity = typeof metadata?.rarity === 'string' && metadata.rarity.trim()
+    ? metadata.rarity.trim()
+    : null;
+  if (existing) {
+    let changed = false;
+    if (rarity && existing.rarity !== rarity) {
+      existing.rarity = rarity;
+      changed = true;
+    }
+    if (metadata?.vanity === true && existing.vanity !== true) {
+      existing.vanity = true;
+      changed = true;
+    }
+    if (changed) persist(list);
+    return;
+  }
   const entry = {
     publicKey,
     secretKey,
     createdAt: new Date().toISOString(),
   };
   if (mnemonic) entry.mnemonic = mnemonic;
+  if (rarity) entry.rarity = rarity;
+  if (metadata?.vanity === true) entry.vanity = true;
   list.push(entry);
   persist(list);
 }
