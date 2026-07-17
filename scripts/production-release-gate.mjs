@@ -1,12 +1,24 @@
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { isDeepStrictEqual } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { resolveReleaseBuild } from './release-lib.mjs';
+import {
+  classicArtifactRequiredValues,
+  requiredClassicComparisonRowIds,
+  v2LaunchProofFingerprint,
+  v2TransferEvidenceHash,
+} from './v2-proof-integrity.mjs';
 
 export const DEFAULT_V2_RELEASE_EVIDENCE = 'release-evidence/v2/field-verification.json';
+export const DEFAULT_V2_RELEASE_ATTESTATION = 'release-evidence/v2/release-attestation.json';
+
+const execFileAsync = promisify(execFile);
+const MAX_EVIDENCE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 const FIELD_REQUIREMENT_IDS = [
   'live-proof',
@@ -73,6 +85,23 @@ function nonEmpty(value) {
 
 function validTimestamp(value) {
   return nonEmpty(value) && Number.isFinite(Date.parse(value));
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function exactSha256(value) {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+}
+
+function exactCommit(value) {
+  return typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+}
+
+function githubHandle(value) {
+  return typeof value === 'string'
+    && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(value);
 }
 
 function exactPassingRows(rows, expectedIds, label, { requireAction = false } = {}) {
@@ -187,10 +216,12 @@ function validateConcreteLiveProof(proof, fingerprint) {
   expect(Number.isInteger(Number(dossier.dataVersion)) && Number(dossier.dataVersion) > 0, 'local proof data version is invalid');
   expect(dossier.proofFingerprint === fingerprint, 'local proof fingerprint does not match the field packet');
   expect(dossier.mint === token.mint, 'local proof mint does not match the live token');
-  expect(
-    nonEmpty(dossier.sweepEvidenceHash || dossier.transferEvidenceHash || dossier.finalSweep?.transferEvidenceHash),
-    'local proof is not bound to the terminal sweep hash',
-  );
+  const dossierSweepHash = dossier.sweepEvidenceHash
+    || dossier.transferEvidenceHash
+    || dossier.finalSweep?.transferEvidenceHash;
+  const expectedSweepHash = v2TransferEvidenceHash(transfer);
+  expect(nonEmpty(expectedSweepHash), 'terminal sweep evidence hash could not be derived');
+  expect(dossierSweepHash === expectedSweepHash, 'local proof terminal sweep hash does not match the transfer record');
 
   const airdrop = proof.airdrop && typeof proof.airdrop === 'object' ? proof.airdrop : {};
   const plannedAirdrop = Math.max(0, Number(airdrop.plannedRecipientCount || 0));
@@ -263,8 +294,10 @@ function validateFieldPacket(packet) {
   return packet.proofFingerprint;
 }
 
-function validateClassicComparison(wrapper, fingerprint) {
+function validateClassicComparison(wrapper, fingerprint, proof) {
   const comparisonWrapper = object(wrapper, 'Classic comparison export');
+  const rawArtifact = String(comparisonWrapper.input || '').trim();
+  expect(rawArtifact.length >= 256, 'Classic comparison must retain the full raw Classic artifact');
   const result = object(comparisonWrapper.result, 'Classic comparison result');
   expect(result.status === 'pass', 'Classic comparison is not passing');
   expect(
@@ -280,6 +313,18 @@ function validateClassicComparison(wrapper, fingerprint) {
   expect(Number(result.passCount) === Number(result.fieldCount), 'Classic comparison does not pass every field');
   expect(Array.isArray(result.rows) && result.rows.length > 0, 'Classic comparison contains no evidence rows');
   expect(result.rows.every((row) => row?.state === 'pass' && nonEmpty(row?.id)), 'Classic comparison contains a non-passing evidence row');
+  expect(Number(result.fieldCount) === result.rows.length, 'Classic comparison field count does not match its evidence rows');
+  const rowIds = result.rows.map((row) => row.id);
+  expect(new Set(rowIds).size === rowIds.length, 'Classic comparison contains duplicate evidence rows');
+  const requiredRows = requiredClassicComparisonRowIds(proof);
+  const missingRows = requiredRows.filter((id) => !rowIds.includes(id));
+  expect(missingRows.length === 0, `Classic comparison is missing required rows: ${missingRows.join(', ')}`);
+  expect(result.classicMint === proof.token.mint, 'Classic comparison mint does not match the live proof');
+  const expectedPoolCount = new Set((proof.liquidity.results || []).map((pool) => pool.poolId || pool.id).filter(Boolean)).size;
+  expect(Number(result.classicPoolCount) === expectedPoolCount, 'Classic comparison pool count does not match the live proof');
+  const missingValues = classicArtifactRequiredValues(proof).filter((value) => !rawArtifact.includes(value));
+  expect(missingValues.length === 0, `raw Classic artifact is missing ${missingValues.length} proof value(s)`);
+  return { classicArtifactSha256: sha256(Buffer.from(rawArtifact, 'utf8')) };
 }
 
 export function parseReleaseTag(tag) {
@@ -314,13 +359,20 @@ export function validateV2ReleaseEvidence(payload) {
   const proof = object(payload.proof, 'exported live proof');
   const launchConfig = object(payload.launchConfig, 'exported launch config');
   const launchData = object(payload.launchData, 'exported launch report data');
+  expect(launchConfig.schema === 'trebuchet-v2-launch-config', 'launch config is missing its v2 schema');
+  expect(launchConfig.source === 'trebuchet-v2', 'launch config has the wrong source');
   expect(isDeepStrictEqual(proof.launchConfig, launchConfig), 'proof launch config does not match the export envelope');
   expect(isDeepStrictEqual(launchData.launchConfig, launchConfig), 'report launch config does not match the export envelope');
 
   const fingerprint = validateFieldPacket(payload.fieldVerification);
+  const independentlyDerivedFingerprint = v2LaunchProofFingerprint(proof);
+  expect(
+    fingerprint === independentlyDerivedFingerprint,
+    'field verification fingerprint does not match independently derived proof evidence',
+  );
   validateParityAudit(payload.reportParityAudit, fingerprint);
   validateRetirementGate(payload.classicRetirementGate, fingerprint);
-  validateClassicComparison(payload.classicReportComparison, fingerprint);
+  const classic = validateClassicComparison(payload.classicReportComparison, fingerprint, proof);
 
   for (const key of ['reportParityAudit', 'classicRetirementGate', 'fieldVerification']) {
     expect(isDeepStrictEqual(launchData[key], payload[key]), `${key} differs between the export envelope and launch report data`);
@@ -337,6 +389,73 @@ export function validateV2ReleaseEvidence(payload) {
     exportedAt: payload.exportedAt,
     poolCount: live.poolCount,
     positionCount: live.positionCount,
+    classicArtifactSha256: classic.classicArtifactSha256,
+  };
+}
+
+async function gitHead(cwd) {
+  const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd });
+  return stdout.trim().toLowerCase();
+}
+
+async function gitAncestor(ancestor, descendant, cwd) {
+  try {
+    await execFileAsync('git', ['merge-base', '--is-ancestor', ancestor, descendant], { cwd });
+    return true;
+  } catch (error) {
+    if (error?.code === 1) return false;
+    throw error;
+  }
+}
+
+export async function validateV2ReleaseAttestation(attestation, {
+  releaseTag,
+  releaseCommit,
+  evidenceSha256,
+  classicArtifactSha256,
+  exportedAt,
+  cwd = process.cwd(),
+  now = Date.now(),
+  isAncestor = gitAncestor,
+} = {}) {
+  object(attestation, 'v2 release attestation');
+  expect(attestation.schema === 'trebuchet-v2-production-attestation', 'release attestation has the wrong schema');
+  expect(Number(attestation.version) === 1, 'release attestation has an unsupported version');
+  expect(attestation.cluster === 'mainnet-beta', 'release attestation must name mainnet-beta');
+  expect(attestation.releaseTag === releaseTag, 'release attestation tag does not match the release');
+  expect(attestation.decision === 'approved-for-v2-production', 'release attestation is not approved for production');
+  expect(exactSha256(attestation.evidenceSha256), 'release attestation evidence digest is invalid');
+  expect(attestation.evidenceSha256 === evidenceSha256, 'release attestation does not match the field evidence bytes');
+  expect(exactSha256(attestation.classicArtifactSha256), 'release attestation Classic artifact digest is invalid');
+  expect(attestation.classicArtifactSha256 === classicArtifactSha256, 'release attestation does not match the raw Classic artifact');
+  expect(exactCommit(attestation.fieldRunCommit), 'release attestation field-run commit is invalid');
+  expect(exactCommit(releaseCommit), 'release commit is unavailable or invalid');
+  expect(
+    await isAncestor(attestation.fieldRunCommit, releaseCommit, cwd),
+    'field-run commit is not an ancestor of the release commit',
+  );
+  expect(githubHandle(attestation.operatedBy), 'release attestation operator is invalid');
+  expect(githubHandle(attestation.reviewedBy), 'release attestation reviewer is invalid');
+  expect(
+    attestation.operatedBy.toLowerCase() !== attestation.reviewedBy.toLowerCase(),
+    'field operator and release reviewer must be different people',
+  );
+  expect(validTimestamp(attestation.fieldRunCompletedAt), 'field-run completion timestamp is invalid');
+  expect(validTimestamp(attestation.reviewedAt), 'release review timestamp is invalid');
+  expect(validTimestamp(exportedAt), 'field evidence export timestamp is invalid');
+  const fieldRunAt = Date.parse(attestation.fieldRunCompletedAt);
+  const exportedAtMs = Date.parse(exportedAt);
+  const reviewedAt = Date.parse(attestation.reviewedAt);
+  expect(fieldRunAt <= exportedAtMs + CLOCK_SKEW_MS, 'field evidence predates the attested field run');
+  expect(reviewedAt >= exportedAtMs, 'release review predates the field evidence export');
+  expect(exportedAtMs <= now + CLOCK_SKEW_MS, 'field evidence export timestamp is in the future');
+  expect(reviewedAt <= now + CLOCK_SKEW_MS, 'release review timestamp is in the future');
+  expect(now - exportedAtMs <= MAX_EVIDENCE_AGE_MS, 'field evidence is older than 30 days');
+  return {
+    operatedBy: attestation.operatedBy,
+    reviewedBy: attestation.reviewedBy,
+    fieldRunCommit: attestation.fieldRunCommit,
+    reviewedAt: attestation.reviewedAt,
   };
 }
 
@@ -345,6 +464,10 @@ export async function runProductionReleaseGate({
   env = process.env,
   cwd = process.cwd(),
   evidencePath = DEFAULT_V2_RELEASE_EVIDENCE,
+  attestationPath = DEFAULT_V2_RELEASE_ATTESTATION,
+  releaseCommit = process.env.GITHUB_SHA,
+  now = Date.now(),
+  isAncestor = gitAncestor,
 } = {}) {
   const release = parseReleaseTag(tag);
   if (!release.requiresProductionGate) {
@@ -370,8 +493,44 @@ export async function runProductionReleaseGate({
     fail(`v2 field evidence at ${evidencePath} is not valid JSON`);
   }
   const evidence = validateV2ReleaseEvidence(payload);
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
-  return { release, skipped: false, trust, evidence, evidencePath, sha256 };
+  const evidenceSha256 = sha256(bytes);
+  const absoluteAttestationPath = path.resolve(cwd, attestationPath);
+  let attestationBytes;
+  try {
+    attestationBytes = await readFile(absoluteAttestationPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      fail(`v2 release attestation is missing at ${attestationPath}`);
+    }
+    throw error;
+  }
+  let attestationPayload;
+  try {
+    attestationPayload = JSON.parse(attestationBytes.toString('utf8'));
+  } catch {
+    fail(`v2 release attestation at ${attestationPath} is not valid JSON`);
+  }
+  const effectiveReleaseCommit = String(releaseCommit || '').trim().toLowerCase() || await gitHead(cwd);
+  const attestation = await validateV2ReleaseAttestation(attestationPayload, {
+    releaseTag: release.tag,
+    releaseCommit: effectiveReleaseCommit,
+    evidenceSha256,
+    classicArtifactSha256: evidence.classicArtifactSha256,
+    exportedAt: evidence.exportedAt,
+    cwd,
+    now,
+    isAncestor,
+  });
+  return {
+    release,
+    skipped: false,
+    trust,
+    evidence,
+    attestation,
+    evidencePath,
+    attestationPath,
+    sha256: evidenceSha256,
+  };
 }
 
 const isMain = process.argv[1]
@@ -380,13 +539,15 @@ const isMain = process.argv[1]
 if (isMain) {
   const tag = process.argv[2] || process.env.GITHUB_REF_NAME;
   const evidencePath = process.argv[3] || DEFAULT_V2_RELEASE_EVIDENCE;
+  const attestationPath = process.argv[4] || DEFAULT_V2_RELEASE_ATTESTATION;
   try {
-    const result = await runProductionReleaseGate({ tag, evidencePath });
+    const result = await runProductionReleaseGate({ tag, evidencePath, attestationPath });
     if (result.skipped) {
       console.log(`Production release gate skipped for ${result.release.tag}: ${result.reason}.`);
     } else {
       console.log(`Production release gate passed for ${result.release.tag}.`);
       console.log(`Evidence: ${result.evidencePath} (sha256 ${result.sha256})`);
+      console.log(`Attestation: ${result.attestationPath} (${result.attestation.reviewedBy})`);
       console.log(`Field proof: ${result.evidence.fingerprint}`);
       console.log(`Trust: macOS ${result.trust.macOS}; Windows ${result.trust.windows}.`);
     }

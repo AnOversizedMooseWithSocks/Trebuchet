@@ -16,12 +16,13 @@ The tag-driven workflow can still be run manually by pushing a Git tag that star
 
 ## V2 production gate
 
-Every `v2.0.0` or newer tag is blocked before desktop builds start unless both production conditions are true:
+Every `v2.0.0` or newer tag is blocked before desktop builds start unless all production conditions are true:
 
 1. `release-evidence/v2/field-verification.json` is the unmodified full JSON artifact produced by v2's **Download proof** action after a non-demo, journal-backed launch reaches its wallet-empty terminal sweep. The export must carry a passing report parity audit, passing Classic retirement gate, all replacement criteria, a terminal-sweep-bound local proof record, and a retirement-grade structured Classic artifact comparison for the same proof fingerprint.
-2. The repository has a complete macOS signing and notarization credential set and a complete Windows signing credential set. V2 releases cannot fall back to unsigned test artifacts.
+2. `release-evidence/v2/release-attestation.json` approves that exact evidence file and retained raw Classic artifact by SHA-256. It records the exact field-run commit, which must be an ancestor of the release commit, and must name different GitHub users as field operator and release reviewer. Evidence older than 30 days is rejected.
+3. The repository has a complete macOS signing and notarization credential set and a complete Windows signing credential set. V2 releases cannot fall back to unsigned test artifacts.
 
-The evidence file is intentionally absent until the field launch is complete. Follow [`release-evidence/v2/README.md`](../release-evidence/v2/README.md) to produce and archive it. Do not construct or edit the packet by hand; the gate checks the concrete mint, authority, pool, position, Fee Key, airdrop, report, sweep, audit, and Classic-comparison records emitted by the app.
+The evidence and approval files are intentionally absent until the field launch is complete. Follow [`release-evidence/v2/README.md`](../release-evidence/v2/README.md) to produce, independently review, and archive them. Do not construct or edit the proof packet by hand. The gate independently recomputes its proof and terminal-sweep fingerprints, requires the full raw Classic artifact and every proof-derived comparison row, checks concrete mint, authority, pool, position, Fee Key, airdrop, report, sweep, and audit records, then verifies the separate approval against the exact file bytes and release history.
 
 Repository administrators can run the same check locally with signing variables loaded:
 
