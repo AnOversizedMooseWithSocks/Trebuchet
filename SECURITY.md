@@ -1,39 +1,229 @@
-# Security Notes
+# Security notes
 
-## npm audit residuals
+## Scope and threat model
 
-`npm audit --audit-level=high` currently reports high-severity findings in transitive Solana/Irys dependencies:
+Trebuchet is a local desktop application that can sign irreversible Solana
+transactions. Its primary security boundaries are:
 
-- `bigint-buffer` through `@solana/spl-token` and `@raydium-io/raydium-sdk-v2`.
-- `elliptic` through `@metaplex-foundation/umi-uploader-irys` and its Irys upload stack.
+- local wallet-secret storage;
+- the Electron renderer ↔ loopback API boundary;
+- untrusted RPC/indexer/upload responses;
+- launch configuration and destination confirmation;
+- partial-failure recovery;
+- dependency and release supply chain.
 
-`tmp <0.2.6` was also reported through `@metaplex-foundation/umi-uploader-irys -> @irys/sdk -> arbundles -> tmp-promise`.
-That path is pinned with an npm override to `tmp ^0.2.6`, because npm reported a non-force fix path for this package and it does not require changing the Metaplex/Irys API surface.
+Local-first does not mean automatically safe. A compromised machine, insecure
+local secret backend, malicious dependency, forged proof file, unsafe RPC
+response, or operator-approved wrong destination can still cause loss.
 
-The npm force fixes are not safe to apply blindly:
+## Local API boundary
 
-- The `bigint-buffer` force fix downgrades `@solana/spl-token` to `0.1.8`, which removes APIs this app needs for current SPL/Token-2022 compatibility checks.
-- The `elliptic` force fix moves the Irys uploader to the Umi `1.5.x` stack, while this app's Metaplex token metadata stack is still on the `0.9.x` Umi line.
+`main.js` and `serverMiddleware.js` provide:
 
-Do not run `npm audit fix --force` without validating token minting, metadata upload, and Raydium CLMM creation end to end. Keep these residuals visible until compatible upstream Solana, Raydium, and Metaplex releases allow a non-breaking upgrade.
+- explicit bind to `127.0.0.1`;
+- Host allowlist for `127.0.0.1` and `localhost`;
+- process-random API session token;
+- timing-safe session comparison on protected `/api/*` routes;
+- Content Security Policy;
+- `X-Frame-Options: DENY`;
+- `X-Content-Type-Options: nosniff`;
+- HTTPS-only external URL opening.
+
+Exempt API routes must remain narrow. `/api/session` bootstraps same-origin
+access; `/api/proxy-image` is read-only for HTML image loading; the Vanity CA
+stream is an intentional browser-stream exception. Do not add a mutation
+exception merely because attaching the session header is inconvenient.
+
+## Local secrets and Recovery PIN
+
+`secretStore.js` recognizes three storage prefixes:
+
+| Prefix | Protection |
+| --- | --- |
+| `pin:` | Recovery-PIN data key held only while unlocked. |
+| `enc:` | Electron safeStorage / operating-system secret backend. |
+| `plain:` | Plaintext fallback when secure storage is unavailable. |
+
+The four-digit Recovery PIN is an access factor, not high-entropy key material
+by itself. `secretPinStore.js` combines it with a random device secret and
+memory-hard derivation; the device secret is wrapped by safeStorage when the
+platform offers a secure backend.
+
+Important limitations:
+
+- `npm run web` has no Electron safeStorage.
+- Linux safeStorage may report the insecure `basic_text` backend.
+- The code can retain a secret as `plain:` rather than silently discard
+  recoverable funds.
+- Anyone with local file access can read a plaintext fallback record.
+- A Recovery PIN reset intentionally destroys access to PIN-encrypted pending
+  wallets and Vanity CA secrets; the UI must enumerate the impact.
+
+Production UI and docs must disclose the active protection state. Never describe
+all local records as “OS-keychain encrypted” without checking the backend.
+
+List APIs return metadata such as `hasSecretKey`/`hasMnemonic`, not bulk secret
+material. Secret reveal requires an explicit route and unlocked policy.
+
+## Transaction safety
+
+- Fresh live execution is blocked on known public RPC endpoints.
+- The renderer cannot authorize a transaction by setting a pass flag.
+- The server rebuilds plan/readiness from the selected managed wallet, launch
+  config, funding estimate, balances, quote safety, and journal.
+- Long-running launch mutations are serialized by wallet.
+- Retry logic distinguishes transient RPC failure, insufficient funds,
+  deterministic errors, and unsafe unknown state.
+- Every irreversible phase should have an idempotency check and durable journal
+  checkpoint.
+- Sweep destinations are validated and shown in full during typed
+  confirmation.
+- Browser `prompt()`, `confirm()`, and `alert()` are not accepted security UI in
+  Electron.
+
+## Proof and release integrity
+
+App-generated proof is useful for operator workflow but is not self-authenticating.
+For a `v2+` release, the production gate:
+
+- recomputes the launch proof fingerprint independently;
+- recomputes the terminal-sweep evidence hash;
+- validates exact token, authority, pool, position, lock, Fee Key, recipient,
+  airdrop, report, and sweep records;
+- requires the full retained Classic comparison input and proof-derived rows;
+- hashes the exact evidence file bytes and trimmed Classic input;
+- verifies a recent, separate, two-person release attestation;
+- requires the field-run commit to be an ancestor of the release commit;
+- requires signed/notarized macOS and signed Windows build plans.
+
+This protects against stale, mutually consistent, hand-thinned, or hand-edited
+release packets. It does not replace human review of public transaction links.
+
+## Upload and remote-content handling
+
+Logo upload is constrained by:
+
+- renderer normalization for oversized PNG/JPEG inputs;
+- multipart memory storage;
+- server 100 KB file limit;
+- PNG/JPEG MIME allowlist;
+- byte-signature sniffing;
+- dimension validation;
+- proxy and CSP controls for displayed remote images.
+
+Never trust filename extension or renderer MIME alone. Remote token metadata,
+logos, RPC data, and indexer responses are untrusted display inputs and must be
+escaped/normalized before rendering.
+
+## Dependency audit snapshot
+
+Snapshot date: 2026-07-16
+Command: `npm audit --audit-level=high --json`
+
+| Severity | Package entries |
+| --- | ---: |
+| Critical | 0 |
+| High | 11 |
+| Moderate | 2 |
+| Low | 15 |
+| Total | 28 |
+
+CI blocks critical findings. High findings are currently reported but
+non-blocking, so production approval needs an explicit disposition rather than
+assuming a green CI job means zero high-risk advisories.
+
+### Actionable compatible updates
+
+The current audit reports ordinary fixes for paths including:
+
+- direct `multer@2.1.1` (deep field names and aborted-upload cleanup);
+- overridden `tmp@0.2.6` (path-validation bypass; `0.2.7` is outside the
+  currently installed lockfile);
+- `form-data@4.0.5`;
+- Electron/electron-builder transitives containing affected `undici`;
+- affected `tar` and `js-yaml` transitives.
+
+Apply these through a reviewed dependency update, not by editing the lockfile by
+hand. Rerun package, upload, Electron, and launch tests after resolution.
+
+### Coupled or major-line residuals
+
+`bigint-buffer` remains high severity through:
+
+```text
+@solana/spl-token
+  └─ @solana/buffer-layout-utils
+      └─ bigint-buffer
+```
+
+npm proposes `@solana/spl-token@0.1.8`, which is a functional downgrade from
+the current `^0.4.14` line and removes APIs Trebuchet uses. Do not accept that
+force fix without redesign and full compatibility validation.
+
+The Irys uploader path remains coupled:
+
+```text
+@metaplex-foundation/umi-uploader-irys@0.9.2
+  └─ @irys/sdk
+      ├─ aptos / form-data
+      └─ arbundles / ethers / elliptic
+```
+
+npm proposes `@metaplex-foundation/umi-uploader-irys@1.5.0`, crossing from the
+Umi `0.9.x` stack to `1.x`. That requires coordinated Umi/MPL/Irys migration and
+live metadata-upload validation. `elliptic` itself is currently reported as low
+severity, while the aggregate Irys path remains high.
+
+Do not run `npm audit fix --force` and assume the result is safe.
 
 ## SDK compatibility matrix
 
-| Package | Current constraint | Why it matters | Upgrade blocker |
-| --- | --- | --- | --- |
-| `@solana/web3.js` | `^1.98.4` | Core wallet, token, and transaction RPC primitives. | Must remain compatible with `@solana/spl-token` and Raydium SDK transaction builders. |
-| `@solana/spl-token` | `^0.4.14` | SPL minting, token accounts, authority revocation, and Token-2022 compatibility checks. | npm's `bigint-buffer` force fix downgrades this to `0.1.8`, which removes APIs used by Trebuchet. |
-| `@raydium-io/raydium-sdk-v2` | `0.1.144-alpha` | CLMM pool creation, position opens, locks, and route/swap support. | Needs live CLMM validation before changing because failed pool transactions can spend real SOL. |
-| `@metaplex-foundation/umi` | `^0.9.2` | Umi identity and transaction execution for token metadata. | Must stay aligned with MPL Token Metadata and the Irys uploader plugin line. |
-| `@metaplex-foundation/mpl-token-metadata` | `^3.2.1` | Metadata account creation and update-authority revocation. | Umi major-line changes need token metadata create/update validation. |
-| `@metaplex-foundation/umi-uploader-irys` | `^0.9.2` | Arweave/Irys logo and metadata upload. | npm's `elliptic` force fix moves this to `1.5.0`, crossing the Umi `1.x` boundary. |
+| Package | Current constraint | Security/upgrade requirement |
+| --- | --- | --- |
+| `@solana/web3.js` | `^1.98.4` | Keep compatible with SPL Token, Raydium builders, and transaction/version APIs. |
+| `@solana/spl-token` | `^0.4.14` | Do not accept the audit-proposed `0.1.8` downgrade; validate Token-2022 and authority flows for any move. |
+| `@raydium-io/raydium-sdk-v2` | `0.1.144-alpha` | Exact alpha pin; any change requires CLMM create/open/lock/route validation. |
+| `@metaplex-foundation/umi` | `^0.9.2` | Coordinate with MPL Token Metadata and uploader plugin. |
+| `@metaplex-foundation/mpl-token-metadata` | `^3.2.1` | Revalidate metadata create and update-authority revocation. |
+| `@metaplex-foundation/umi-uploader-irys` | `^0.9.2` | `1.x` audit fix is a coupled migration, not a drop-in patch. |
+| `multer` | `^2.1.1` | Update to the fixed compatible release and rerun upload-limit/type tests. |
 
-## Upgrade workflow
+## Dependency upgrade workflow
 
-Dependency changes touching token minting, metadata upload, or Raydium CLMM creation should:
+1. Record before-update `npm audit --audit-level=critical` and
+   `npm audit --audit-level=high`.
+2. Prefer a narrow direct/override update.
+3. Inspect `npm ls` for the affected path.
+4. Run:
 
-- Run `npm audit --audit-level=high` before and after the change.
-- Avoid `npm audit fix --force` unless the resulting dependency graph is validated.
-- Run `npm run check:syntax` and `npm test`.
-- Exercise metadata upload through `metadataUploadService.js` tests before attempting a full launch.
-- For Solana/Raydium SDK upgrades, run an explicit live-RPC smoke on a low-risk wallet before shipping.
+   ```bash
+   npm run check:syntax
+   npm run check:package
+   npm test
+   ```
+
+5. Run relevant API/Electron/UI/package tests.
+6. For Solana/Raydium/Metaplex changes, run the read-only mainnet smoke.
+7. Perform a separately authorized low-risk live test before production when a
+   change affects signed transactions, metadata upload, or CLMM execution.
+8. Update this snapshot and the pull request's dependency-risk section.
+
+## Security reporting
+
+Do not post wallet secrets, Recovery PIN state files, unpublished field evidence
+containing unintended sensitive data, signing certificates, or notarization
+credentials in a public issue. Use the repository owner's private security
+contact/channel where available and provide only the minimum reproduction data.
+
+## Production security checklist
+
+- [ ] No critical audit findings.
+- [ ] Compatible high-advisory fixes applied.
+- [ ] Remaining high advisories explicitly accepted/mitigated/deferred.
+- [ ] Dedicated RPC used for field launch.
+- [ ] Active secret backend protection verified.
+- [ ] Field proof reviewed for accidental secrets.
+- [ ] Distinct field operator and release reviewer.
+- [ ] macOS identity and notarization credentials loaded.
+- [ ] Windows signing identity loaded.
+- [ ] Checksums and trust metadata verified after publication.

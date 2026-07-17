@@ -1,216 +1,203 @@
-# Trebuchet v1 to v2 Gap Analysis
+# Trebuchet v2 production gap
 
-Date: 2026-06-29
+Status date: 2026-07-16
 
-## Executive Summary
+## Executive summary
 
-v2 is moving in the right product direction and now covers most of the classic launch path through guarded bridges, but it still needs polish before it should be called a drop-in replacement for v1.
+The implementation gap from Classic to the v2 token-launch experience is
+largely closed. The remaining gap to a production `v2.0.0` is now mostly
+operational proof and release trust, with two product/engineering decisions that
+must not be hidden:
 
-The biggest issue is not only missing functionality. It is that v2 compresses a powerful launch engine into a compact control-panel shell, so every wired classic action needs visible planning, cost, recovery, and progress context. v1 has real wallet generation, vanity CA grinding, tokenomics charts, custom pool controls, funding acquisition, live launch phases, resume paths, airdrops, reports, and recovery. v2 now has a cleaner shell, local API bootstrap, guarded execution bridges, and most launch mechanics wired; the remaining work is making those paths feel as inspectable and confidence-building as classic.
+- the current NFT collection panel is staged plan/configuration, not proven
+  live collection execution;
+- the auto-release default is a patch bump, so merging a v2-default branch
+  without a `major` label could publish a `v1.x` tag and skip the v2-only
+  production gate.
 
-The no-scroll idea is viable, but only if the first screen becomes an agentic command surface with charts, not a text explainer. The first viewport should answer:
+The current v2-default pull request may be mergeable as code, but it is not safe
+to merge and auto-publish until the version/gate invariant, field evidence, and
+signing inputs are resolved.
 
-- What is Trebuchet doing now?
-- What is the next action?
-- What will the launch look like?
-- What is unsafe or incomplete?
-- Can I see tokenomics, liquidity depth, cost, and signatures without scrolling?
+## What is complete
 
-## Current v2 State
-
-What v2 has today:
-
-- Modern app shell under `public/v2/`.
-- Sidebar/topbar navigation for Launch, Wallet, Discovery, History, Settings.
-- Fixed-height desktop workspaces with view-owned scrolling; Launch keeps its cockpit fixed while Configure/Fund/Execute/Verify/Recover switch in place, and Discovery keeps its registry and evidence rail independently scrollable.
-- Local API client with static-file fallback.
-- `file://` previews boot the v2 cockpit JavaScript without a local server, do not manufacture fake launch-wallet placeholders, and `npm run test:v2:viewport` smoke-checks desktop and mobile rendering for dynamic charts, funding, parity rows, horizontal overflow, and primary cockpit first-viewport fit while writing a self-describing, check-contract-bearing, hash-bound `public/v2/viewport-smoke-proof.json` artifact.
-- Boot reads local prefs, demo status, RPC config/health, launch journals, and pending wallets when served by the local app.
-- RPC management in v2 Settings, including active endpoint health, saved endpoint list, public-RPC warning, test, add-and-use, select, and remove controls bridged to classic RPC endpoints.
-- Fresh live v2 execution now receives the active Classic RPC endpoint in the server readiness contract and blocks known public Solana RPCs before irreversible launch work starts; already-started resume/sweep recovery paths keep public RPC as a warning so funds are not stranded.
-- Staged launch-plan contract via `/api/v2/launch-plan`, now server-bound to the normalized launch config and selected Trebuchet-managed wallet fingerprint instead of trusting browser-stamped local-plan evidence.
-- Managed v2 wallet generation/import backed by local server storage, with demo-mode wallet secrets retained in-memory for walkthroughs.
-- Wallet funding/recovery surface with selected funding address, on-demand QR loading, copy actions, guarded pending-wallet reveal/discard, explicit recovery wallet reuse for the next launch, and recovery secret hide/copy controls.
-- Recovery PIN bootstrap and controls in v2 Settings/Wallet for setup, unlock, lock, change, and status refresh.
-- Release/update state in v2 Settings, including app version, manual check bridge, release-page fallback, update result rendering, and persisted startup auto-check preference.
-- Destructive Recovery PIN reset in v2 Settings, with exact-phrase confirmation, targeted purge of PIN-encrypted pending wallets and saved Vanity CAs, and a persistent History audit card showing what was discarded.
-- Split Vanity CA start/end grinder controls, saved candidate selection/removal/pruning, cancellation, expected-attempt/time estimates, invalid Base58 guidance, selected-candidate target validation in the launch planner, live ETA, and local API bridge.
-- Token logo picker with local preview, MIME/size validation, and v2 launch-plan payload handoff.
-- Classic-shaped pool topology controls for SOL plus Classic quote-venue presets (Meme flywheel by default, Reserve flywheel, or USDC), main slices, ladder count, support SOL, Fee Key recipient, airdrop count, and sweep destination.
-- Classic held-supply preallocation control for non-LP, non-airdrop reserves, included in tokenomics charts, launch-plan fingerprints, funding estimate freshness, over-allocation blockers, held-reserve support backing, and visible report/dossier audit fields.
-- Compact custom pool editor surface for quote pools, classic CLMM fee-tier discovery/dropdowns, per-pool slices, manual ladder bands, support depth, and Fee Key recipients.
-- Classic quote-token metadata/safety verification in the v2 custom pool editor via `/api/quote-token-info`, including resolved symbol/decimals/price, Token-2022 compatibility, authority warnings, and Raydium route status before execution; fresh live execution now blocks unverified, incompatible, freeze-risk, or no-route custom quote tokens at the server readiness layer while leaving mint-authority warnings visible but non-blocking.
-- Airdrop CSV/manual-count panel with budget %, Auto-fit, required allocation, remaining tokens, estimated execution cost, and report/sweep preview that feeds v2 launch config without firing irreversible work.
-- Fresh live execution blocks configured airdrops until executable recipient rows are attached, and blocks airdrop reserves whose configured support liquidity does not prove equal-value backing from the Classic funding estimate SOL/USD rate; resume and sweep recovery remain available for already-started launches.
-- Tokenomics, liquidity, funding, and signature charts powered by the v2 launch config, with cockpit chart badges promoted from Preview to Model/Live/Proof as launch-plan, LP-event, or proof evidence becomes available; replacement criteria require validated desktop/mobile viewport-smoke proof loaded from the local `/api/v2/viewport-smoke-proof` endpoint with artifact identity metadata, a current required-check contract, named cockpit check rows, and current v2 asset hashes instead of treating renderer presence or imported `passed: true` proof claims as enough.
-- Classic funding estimate, quote-token acquire job control, and execution-readiness bridge via `/api/estimate-lp-funding`, `/api/acquire-quote-tokens`, and `/api/v2/execution-readiness`, with fresh-live execution requiring the attached estimate to be fingerprint-bound to the normalized token, pool, report, and airdrop model that Classic will actually execute.
-- Funding-wallet detection in v2 via the classic `/api/find-funder` route, with a visible funding-source hint and guarded "use as sweep destination" action.
-- Solflare external funding wallet support in v2 Wallet, matching the classic convenience flow: connect browser wallet, show status, and fill the sweep destination while Trebuchet-managed wallets remain the only launch signers.
-- Manual quote-token prefund checklist in v2, using estimator `byQuote`/`quoteBreakdown` output with copyable wallet, mint, amount, and live selected-wallet balance checks.
-- Guarded real execution bridge via `/api/v2/run-envelope/execute-next`, which rebuilds server-side readiness from the managed wallet and launch journal, requires exact endpoint confirmation, and dispatches only the next classic token/LP/resume/sweep handler.
-- One-click guarded real launch runner in v2 that chains readiness-approved token creation, liquidity create/resume, airdrop, report publishing, and final sweep until the launch completes or a blocker appears; recorded airdrop failures are retried or block report publishing/final sweep instead of being counted as complete. Airdrop completion is evidence-based rather than count-based: recipient rows, delivered rows, and transaction signatures must be present before report publishing, full-run completion, or final sweep can treat an airdrop as complete. Manual "run next" execution and the server execute-next route both block before the final sweep when airdrops are pending/failed/incomplete or the launch report is stale/missing, preserving Classic Step 6 order. Local-report mode now also requires a downloaded local dossier before final sweep, carries that dossier evidence into the server execute-next call, and server-validates the downloaded artifact kind, filename, timestamp, data version, proof fingerprint, and terminal sweep hash when present. The full-run completion audit requires pool-create, position-open, and Burn & Earn lock transaction proof plus either a permanent report URI or local dossier artifact before a live run can be marked complete, even when permanent publishing is unavailable.
-- Reload-safe compact execution ledger in the live run strip and History audit area, showing guarded token/LP/report/airdrop/sweep steps with phase, estimated cost, retry attempt, status, duration, interrupted-run warnings, recent failure detail, and observed SOL spend totals in the cockpit funding meter. The final sweep row requires terminal demo completion or terminal sweep proof instead of treating generic readiness completion as enough, and the report row returns to needs-proof after terminal sweep when the attached report/dossier predates the terminal sweep hash.
-- Reload-safe launch proof cache in v2 that preserves same-launch report, airdrop, transfer, complete server-derived and journal-frozen launch-config snapshot, and Classic comparison evidence across readiness refreshes without allowing stale cross-proof artifacts, imported snapshotless/thin-snapshot proofs, mismatched complete snapshots, renderer-synthesized snapshots, resume-form drift, current-form drift, terminal-sweep proofs with pre-sweep local dossier records, same-fingerprint report/dossier records with missing or mismatched terminal sweep hashes, restored local-storage proof artifacts that fail the current proof/terminal-sweep binding, new in-memory proof identities carrying stale report/dossier/comparison records, stale legacy `classicComparison` aliases, or stale-only persistence attempts to survive as current proof; current legacy aliases are promoted to the primary comparison field before the gates read them.
-- Classic Cancel & Refund parity in v2, sweeping the selected Trebuchet-managed launch wallet through the existing `/api/transfer-assets` bridge only after destination validation, no active operation, Recovery PIN unlock, and exact wallet-address confirmation.
-- Classic Step 6 finalization bridge in v2 for journal-derived proof review, explorer grouping, copyable proof summary, compact publish retry/status notices, proof-bound report publishing via `/api/publish-launch-report` that requires an active matching launch journal and carries/server-validates the frozen launch-config snapshot, including required token/report fields, planned pool rows, strict journal token/pool-plan field matches, consistency against submitted report fields, launch-journal consistency, and minimum execution proof for token authorities, pool creation, position opening, Burn & Earn locks, Fee Key mints, and configured Fee Key recipient transfers, first-pass/retry airdrops via `/api/run-airdrop` and `/api/retry-airdrop`, local proof JSON export/import with launch-config snapshots, proof-bound local HTML/JSON dossier evidence that must also carry the exact terminal final-sweep evidence hash once the wallet-empty sweep exists, a classic report parity audit checklist, and a reload-safe file-or-paste classic artifact comparison tool that keeps structured Classic evidence status and enough named evidence rows through local persistence and checks mint, launch wallet, exact pool IDs, quote mints, pool supply/spacing parameters, pool-create transactions, exact position counts, exact position NFTs, exact Fee Key NFTs, exact Fee Key recipient/delivery wallets, position transaction signatures, authority posture by exact flag, destination, exact structured airdrop recipients, and exact structured airdrop transaction signatures from Classic JSON, Classic report HTML address/meta rows, and Classic report airdrop tables while rejecting v2 proof exports, v2 published report envelopes, stale cross-proof comparisons, partial-sweep destinations without wallet-empty terminal evidence, count-only airdrop summaries without recipient/transaction rows, thin pass-status comparisons missing the required named evidence rows for the current proof, loose text-only artifacts that merely contain matching addresses/signatures, structured Classic JSON/HTML rows that only match through surrounding prose instead of parsed fields, structured Classic JSON supersets, structured Classic HTML pool or airdrop supersets, result-only imported comparisons, and mint-only stale report URIs as Classic evidence.
-- A cockpit-level and proof-bundle Classic retirement gate that stays blocked until a reload-safe, complete-configuration-snapshotted, journal-backed, matching-local-terminal-journal, wallet-bound, authority-complete, non-demo v2 launch proof has completed token, exact recorded pool IDs for the planned pool count, liquidity, terminal final-sweep evidence, proof-fingerprinted and terminal-sweep-hash-bound report publishing or local dossier evidence, passing proof-fingerprinted Classic artifact comparison evidence, and all replacement criteria passing; the local terminal journal must also back the proof's token authority posture, pool IDs, position/lock/Fee Key/recipient-transfer records, airdrop delivery rows, and sweep destination with terminal wallet-empty, error-free sweep evidence before the gate can pass. Pool-count-only proof can no longer satisfy server-derived report publishability, cockpit live completion, full-run completion, generated proof-audit pass state, report/dossier readiness, local dossier evidence recording, report publishing, or Classic retirement; report publishability, cockpit rows, proof-audit rows, live completion, and retirement live-proof now wait for authority, pool-create transaction signatures, position-open transaction signatures, lock transaction signatures, Fee Key mint proof, configured Fee Key recipient-transfer proof, and exact airdrop recipient/transaction evidence as applicable. The generated dossier now also carries an explicit replacement-criteria audit for demo launch, wallet lifecycle, Vanity CA options, token configuration, charts/viewport smoke, pool configuration, funding/quote readiness, run/resume safety, sweep/report proof, Classic comparison, and proof checklist coverage, the cockpit diagnostics drawer renders those criteria as compact pass/needs-proof chips, and the cockpit feature-status map derives Wallet/Vanity/Token/Pool/Funding/Recovery/Chart/Sweep rows from that audit instead of static preview flags.
-- The cockpit parity panel now includes a compact field-proof rail for the final retirement blockers: non-demo live proof, proof-bound report/dossier, completed Classic artifact comparison, generated audit, and replacement-criteria coverage; the launch-step drawer now follows the same proof-backed field runbook so the first unresolved blocker becomes the operator's next visible stage, with the active stage mapped to an existing v2 control such as estimate, quote acquire, readiness, live run, report/dossier, recovery, or Classic comparison instead of a static checklist. The Classic artifact stage now asks the operator to load a completed Classic artifact before enabling comparison against the v2 proof.
-- Classic-shaped v2 launch dossier generation with Trebuchet branding, copyable proof rows, tokenomics breakdown, pool/position cards with custom quote labels sourced from the journal-frozen pool plan, airdrop tables, final-sweep transaction evidence plus a separate sweep-evidence hash sourced from the recorded SOL/token/NFT sweep proof, audit guidance, embedded parity evidence rows, and a portable field-verification packet that binds the final retirement blockers, criterion-level replacement actions, and next action to the proof fingerprint; the one-click copied proof summary also includes Classic retirement state, field parity count, replacement-criteria blocker count, and the next verification action for chat/PR handoff.
-- Classic report renderer chrome in v2, including the makesometokens parchment theme, manuscript masthead, status/demo banners, section rules, pool/position class structure, position-card corner accents, copy/toast behavior, and print/mobile rules, while retaining v2-only recovery and airdrop evidence sections; Classic's own machine-readable report payload now emits structured airdrop recipient, transfer, and failure rows plus planned final-sweep destination metadata for JSON-only parity review.
-- Demo-mode v2 launch runner via `/api/v2/demo-launch/run`, covering demo token creation, LP creation, Fee Key recipient transfer, airdrop delivery, final sweep, and terminal completed-readiness evidence through existing v1 demo handlers.
-- Journal-aware recovery actions in History, bridged to `/api/launch-journals/resume` and `/api/launch-journals/dismiss`.
-- Journal resume planner in History, showing recorded pool state, skipped work, next retry scope, unsafe automatic-resume blocks, and a transaction-risk confirmation before resume.
-- Multi-screen recovery wizard in History with Find, Unlock, Act, and Verify screens. It prioritizes unsafe manual blockers, safe resume-only-missing-work paths, Recovery PIN unlock, stranded-wallet sweep/reuse, and cleanup verification before exposing the lower-level recovery controls.
-- Live operations diagnostics, polling `/api/lp-progress`, `/api/airdrop-progress`, and `/api/server-logs`, plus a larger filterable activity-log drawer.
-- Classic per-position phase tree preview for pool create, slice open/lock, ladder open/lock, support, airdrop, report, and sweep checkpoints.
-- Agent-style launch panel with setup, next move, signatures, and avatar collection preview; the agent status, checkpoint highlight, and compact action rail now derive from the same live/staged progress context as the signature rail.
-- Live Discovery registry backed by `/api/v2/discovery/inspect`: operators can inspect any Solana mint through the configured RPC, persist/filter/refresh/remove records locally, audit mint/freeze authority and Raydium CLMM compatibility, read supply and top-token-account concentration, attach local notes, and cross-check matching Trebuchet journals and the loaded v2 proof. The scripted sample tokens and AI transaction-room events have been removed.
-- Structural tests for navigation, render targets, API fallback, v2 launch plan, and branding.
-
-What remains to prove in field testing:
-
-- Real mainnet report parity should be compared against a completed classic launch artifact after the next live launch. The v2 renderer now uses the classic report chrome, class contract, generated parity evidence checklist, replacement-criteria audit rows, a reload-safe and re-importable v2 proof cache, proof-bound and terminal-sweep-hash-bound report publish/local dossier evidence, structured Classic JSON airdrop evidence, planned Classic sweep-destination metadata, an in-app classic artifact comparison tool that rejects v2 self-artifacts, stale cross-proof comparisons, pre-terminal comparisons after terminal sweep, partial-sweep destinations without wallet-empty terminal evidence, count-only airdrop summaries, thin pass-status comparisons without required named evidence rows, loose text-only artifacts without structured Classic JSON/HTML report evidence, missing pool topology facts, missing per-position evidence, missing airdrop recipient or transaction evidence, and authority-count false positives, and a Classic retirement gate that rejects demo-only, stale report, stale comparison evidence, too-thin comparison evidence, pre-sweep report artifacts after terminal sweep, missing matching local terminal launch journals, terminal journals without wallet-empty/error-free sweep proof, terminal journals with mismatched or weak token authority evidence, terminal journals with mismatched or weak liquidity position/Fee Key evidence, terminal journals with mismatched or weak airdrop delivery rows, and terminal journals whose pool IDs or sweep destination do not back the proof. Live report content should still be checked against real on-chain outputs before retiring Classic.
-
-## No-Scroll Control Panel Target
-
-The no-scroll first screen should be a cockpit, not a wizard and not a document.
-
-As of 2026-07-14, the v2 launch surface uses a fixed-height desktop shell. The cockpit and next action remain visible while Configure, Fund, Execute, Verify, and Recover switch the active workspace below them. Document-level scrolling is disabled on desktop; only the selected workspace pane scrolls. The viewport smoke test now opens every workspace and verifies the complete desktop shell, rather than treating the cockpit card alone as the first-viewport boundary.
-
-Recommended first viewport:
-
-| Zone | Purpose | Contents |
+| Area | State | Evidence |
 | --- | --- | --- |
-| Top bar | Identity and connection | Trebuchet mark, network/RPC health, launch wallet state, demo/live badge |
-| Agent strip | Current orchestration state | Agent status, next move, current checkpoint, blocking issue |
-| Setup dock | Editable essentials | Token name, ticker, supply, launch SOL, avatar collection, vanity CA |
-| Chart deck | Visual truth | Tokenomics donut, liquidity-depth chart, cost meter, signature progress |
-| Action rail | One obvious action | Review plan, generate wallet, grind CA, acquire funds, resume, sweep |
-| Detail drawers | Escape hatch | Advanced pool editor, airdrop CSV, report, raw checks, logs |
+| v2 desktop default | Complete | `main.js`, default/Classic tests |
+| Terminal design and responsive shell | Complete | v2 viewport and visual checks |
+| Managed wallet, Recovery PIN, recovery inventory | Complete | wallet/PIN/recovery tests |
+| Token/pool/airdrop/support configuration | Complete | plan/readiness and parity tests |
+| Oversized logo normalization | Complete | v2 logo tests and server upload validation |
+| Guarded Classic-backed execution | Complete in code | API E2E, unit, mutex, resume tests |
+| In-app typed sweep confirmation | Complete | prompt regression tests |
+| Mainnet mint inspection fallback | Complete | Discovery service tests and readonly smoke |
+| Report/dossier and final-sweep proof | Complete in code | proof staleness/binding tests |
+| Structured Classic comparison | Complete in code | JSON/HTML exact-evidence tests |
+| Independent production release gate | Complete | adversarial release-gate tests |
+| Package/runtime smoke | Complete | Linux packaged v2 plus platform build jobs |
+| Classic fallback | Complete | explicit startup route and E2E |
 
-Rules:
+“Complete in code” is deliberately different from “field-proven on mainnet.”
 
-- First screen can have drill-down drawers, but the primary launch state should not require scrolling.
-- Keep copy to labels and short status lines. Longer education belongs in tooltips, drawers, or Classic docs.
-- Charts should carry the explanatory load.
-- The agent should always show one next action and one reason.
-- Advanced controls can exist, but should not dominate the default view.
-- On mobile, the primary chart deck is a horizontal one-chart rail and the top action rail hides detailed queue rows so the cockpit fits the first viewport.
+## Production blockers
 
-## Chart Gaps
+### 1. Prevent a v1 tag bypass
 
-v1 has charts and visual explainers that v2 has not ported.
+Current behavior:
 
-| Chart / Visual | v1 State | v2 State | Gap |
-| --- | --- | --- | --- |
-| Tokenomics donut | Exists in v1 config/report flow | Wired shared SVG preview/report renderer | v2 now uses one tokenomics item model for cockpit preview and dossier export, and its cockpit badge reflects Preview/Model/Live/Proof evidence state |
-| Liquidity depth chart | Exists in `public/modules/depth-chart.js` | Live overlay + report renderer | v2 depth rows now include pool supply, open/lock checkpoint counts, ladder/support annotations, live active/complete states, and a portable per-pool dossier depth sketch derived from the frozen launch topology; its cockpit badge reflects Preview/Model/Live/Proof evidence state |
-| Cost/funding meter | v1 estimates and funding checklist | Wired bridge | Shows wallet/planned SOL, missing SOL, acquired quote routes, manual prefund state from the classic estimate, and observed spend from guarded execution deltas; the live funding row completes only after estimate, fresh selected-wallet balance evidence, sufficient SOL, and manual quote readiness agree |
-| Signature progress | v2 has basic progress | Live-aware + ledger | The run strip maps readiness, proof, quote acquire, LP events, airdrops, reports, and sweep into an eight-phase live progress view with recent operation cost/status/duration, separates pool IDs from position/lock evidence, keeps local-only report mode as a pending dossier action instead of completed proof, only completes the final sweep row from terminal demo completion or terminal sweep evidence, and feeds the top agent plus compact action rail next-action/checkpoint state |
-| Pool topology map | v1 custom pool rows and progress tree | Wired preview + criteria-backed status | v2 now renders compact pool rows and a checkpoint tree, with the parity panel reflecting replacement-criteria evidence instead of static feature flags |
-| Recovery/resume state | v1 journals and phase tree | Wired guarded workspace | v2 shows journal actions, pending-wallet recovery/sweep controls, post-sweep cleanup guidance, and live checkpoint overlay. |
-| Vanity grinder progress | v1 progress/result/options UI | Wired | Split start/end grind, cancellation, expected-attempt/time estimates, invalid Base58 guidance, saved candidates, remove/prune management, binary availability state, and compact candidate triage are present |
+- v2 is the desktop default;
+- auto-release uses a patch bump unless the merged PR has `minor` or `major`;
+- the production release gate applies only to semantic tags with major version
+  `2` or higher.
 
-## v1 to v2 Parity Matrix
+Therefore a v2-default merge without `major` could generate a `v1.x` release
+that retains the v1 unsigned-test policy.
 
-| Capability | v1 | v2 | Priority | Notes |
-| --- | --- | --- | --- | --- |
-| Temporary launch wallet generation | Real | Wired | P0 | v2 can generate/import managed local wallets through the local app bridge; static previews now refuse to manufacture fake wallet placeholders, demo secrets are in-memory only, and the cockpit/replacement wallet rows require either completed live proof or a selected managed wallet with an available unlocked signing secret. |
-| Wallet QR / copy / recovery phrase | Real | Wired guarded bridge | P0 | v2 loads QR on demand and reveals/copies pending-wallet recovery material only through the explicit guarded endpoint. |
-| Recovery PIN for saved wallets and Vanity CAs | Real | Wired guarded bridge | P0 | v2 can bootstrap status, set an initial PIN, unlock, lock, change, refresh, reset with exact confirmation, and gate wallet reveal controls. |
-| Vanity CA grinder | Real | Wired | P0 | Split start/end grind, saved candidates, cancellation, binary-availability state, triage metadata, Base58-safe planner validation, and selected-candidate target matching are present; replacement evidence now requires a saved/selected candidate or confirmed native grinder availability from the local app. |
-| Multiple saved Vanity CA options | Real | Wired | P0 | Saved candidates remain selectable instead of being cleared per run. |
-| Token basics | Real | Wired + criteria-backed | P0 | v2 has name/symbol/supply/description/market cap plus byte-sniffed logo selection carried into the launch-plan/create-token payload, including Classic's 10B whole-token supply policy cap, 1000-byte description cap, and PNG/JPG 100KB plus 64-1024px logo envelope enforced by both the launch planner and create-token boundary. Replacement evidence now requires Classic-compatible token fields plus either a current selected-wallet-bound local launch plan containing the complete ordered Trebuchet local-wallet run envelope or a completed live proof carrying the frozen token config. |
-| Tokenomics visualization | Real | Wired + criteria-backed | P0 | Charts render from the v2 classic launch model; replacement evidence now requires wired chart renderers, current hash-validated desktop/mobile viewport-smoke proof from the connected local app, and either completed live proof or a current selected-wallet-bound local launch plan containing the complete ordered Trebuchet local-wallet run envelope. |
-| Simple pool defaults | Real | Wired + criteria-backed | P0 | v2 serializes SOL plus Classic quote-venue defaults into classic-shaped allocations, with the Meme flywheel mint as the default and Reserve/USDC options available; pool replacement evidence now requires those defaults to be staged in the current local launch-plan envelope or backed by completed live proof. |
-| Held supply preallocation | Real | Wired + guarded | P0 | v2 has an explicit prealloc percentage for team/utility reserves outside LP and airdrop; it is included in tokenomics, free-reserve math, launch-plan/funding fingerprints, over-allocation blockers, held-reserve support-backing checks, and visible report audit rows for held reserve, support, required support, coverage, and estimate rate. |
-| Custom pool editor | Real | Wired + payload-tested | P0 | Quote pools, live classic CLMM fee tiers, supply split, support, manual ladder text, slices, recipients, quote price/decimals overrides, classic quote-token metadata/safety checks, Fee Key recipient address guards, duplicate quote+fee-tier collision blocking, and fresh-live quote safety blockers now round-trip through the v2 model, direct funding estimates, server readiness, and classic execution payload; replacement criteria now require planned pool rows with no blocking topology issues plus a current-fingerprint local API plan containing the complete ordered Trebuchet local-wallet run envelope or completed live proof. |
-| Ladder bands | Real | Wired + payload-tested | P0 | Simple ladder count emits Classic's executable `supplyPercent`/`ceilingMultiplier` wire shape, manual ladder text preserves over-cap input long enough to block above Classic's 20-band cap, and readiness blocks ladder payloads the LP executor would reject. |
-| Round-to-100 allocation ergonomics | Missing/needed in v1 | Wired | P0 | `Round slices to 100%` normalizes base and custom pool slice inputs, including chat-style `48% - 1% - 1%` input, into exact pool-local percentages. |
-| LP slice recipients / Fee Key splits | Real | Payload-tested | P0 | Base Fee Key recipient and custom-pool recipient fields map into classic allocations and resume payloads, with v2 readiness blocking implausible recipient addresses before LP execution. |
-| Flywheel quote tokens | Real | Wired + result-checked | P1 | v2 classifies each non-SOL pool as estimate-needed, auto-acquire, manual prefund, covered, or blocked by a missing mint using the classic funding estimate, custom quote pools can run the classic quote-token info probe before launch, and quote acquire readiness now requires fingerprint-current per-route successful result rows instead of trusting aggregate done counters alone. |
-| Airdrop CSV and auto-fit | Real | Wired bridge | P1 | CSV/manual-count import feeds v2 config; v2 now shows a budget meter, Auto-fit can raise allocation for explicit token rows, execution-cost/budget warnings are visible before finalization, readiness blocks malformed airdrop rows, manual-count-only fresh live execution, recipient-count/row mismatches, underbacked airdrop support, or over-budget CSV state before irreversible launch work, executable airdrop payloads carry the configured count for direct transfer validation, and proof/final-sweep gates preserve the configured planned recipient count even when attached rows are incomplete while keeping already-started resume paths recoverable with warnings. |
-| Funding estimate and cost breakdown | Real | Wired + phase-aware execution gate | P0 | v2 calls the classic funding estimator and live guarded execution now blocks until a positive Classic estimate is attached, fingerprint-current for the normalized token/pool/report/airdrop execution model, and the launch wallet has enough SOL/manual quote tokens/acquired quote tokens for the current phase. The cockpit funding row uses the same fresh selected-wallet balance and missing-SOL proof as the funding meter instead of treating the estimate alone or stale cached balance reads as complete. The gate credits completed token creation and does not strand journal resume or final sweep recovery on stale full-launch funding math. |
-| Funding wallet detection | Real | Wired bridge | P1 | v2 can call the classic funder detector, show the possible source, and prefill the sweep destination as a user-verifiable hint. |
-| Solflare browser wallet helper | Real | Wired helper | P1 | v2 can connect Solflare as an external funding/destination wallet and fill the sweep destination; it is not used to sign launch execution. |
-| Acquire quote tokens | Real | Wired guarded bridge | P0 | v2 can start, poll, and clear `/api/acquire-quote-tokens` jobs after a funding estimate. |
-| Manual prefund fallback | Real | Wired live check | P0 | v2 renders estimator-backed manual quote-token rows with destination wallet, mint, amount, copy controls, and selected-wallet balance polling. |
-| RPC management | Real | Wired bridge | P0 | v2 Settings can test, add, select, and remove saved RPC endpoints through the classic local API, warns when the active endpoint is a public Solana RPC, and the server-side v2 readiness gate blocks fresh live execution on known public RPC endpoints while leaving resume/sweep recovery available as a warning. |
-| Create token | Real | Real guarded bridge | P0 | v2 can execute the next readiness-approved `/api/create-token` call through execute-next or the full-run orchestrator; the live token row now requires recorded mint and authority proof instead of phase readiness alone. |
-| Revoke authorities | Real | Real guarded bridge | P0 | Included in classic token creation via the execute-next bridge, and cockpit completion requires mint/freeze/update-authority plus metadata immutability proof. |
-| Create pools and positions | Real | Real guarded bridge | P0 | v2 can execute readiness-approved create/resume LP calls through the classic handlers and full-run orchestrator; create-LP execution now runs Classic's price/route preflight before the irreversible pool-create call, and the full-run orchestrator only marks completion after proof-backed token authority, pool-create transactions, position-open transactions, lock transactions, Fee Key mint, Fee Key recipient delivery, airdrop, report, and terminal sweep evidence is attached. |
-| Pool phase progress tree | Real | Wired + proof-gated | P0 | v2 renders create/open/lock/transfer checkpoints from live readiness/proof context and overlays LP events; cockpit pool and lock rows now require create-pool, position-open, and lock transaction signatures plus recorded position, Burn & Earn, Fee Key NFT, and configured Fee Key recipient delivery evidence instead of treating pool-count/readiness/lock-count alone as complete. |
-| Resume failed pool creation | Real | Wired guarded bridge | P0 | v2 now exposes journal-aware resume/dismiss with a computed resume plan; unsafe mid-pool states are blocked instead of retried blindly. |
-| Resume from slice/position checkpoint | Real | Wired guarded bridge | P0 | Completed pools skip, lock/transfer retries inspect per-position state, and pool-plus-open-position journals can resume the existing pool to fill missing slices/bands/support. Pool-create-without-any-open-position remains a manual recovery path by design. |
-| Burn & Earn locks | Real | Real guarded bridge | P0 | Executed by the classic create/resume LP handlers through execute-next. |
-| Fee Key NFT transfer | Real | Real guarded bridge | P0 | Executed by the classic create/resume LP handlers through execute-next; cockpit/report/completion gates now distinguish Fee Key mints from configured recipient transfers, and report fingerprints bind recipient, delivery address, and transfer tx evidence. |
-| Transfer/sweep | Real | Real guarded bridge | P0 | v2 can execute the readiness-approved classic transfer/sweep handler; readiness keeps sweep recoverable until the journal has terminal wallet-empty, error-free evidence, direct transfer calls validate attached airdrop payloads before any sweep work starts, the journal retains SOL/token/NFT sweep transfer arrays for reload-safe proof, and the parity gate/fingerprint snapshot requires terminal final-sweep evidence instead of a merely present transfer object. |
-| Cancel & Refund | Real | Wired guarded bridge | P0 | v2 can sweep the selected Trebuchet-managed launch wallet to the configured destination through the classic transfer handler, blocked during active operations and guarded by exact wallet confirmation. |
-| Destination address verification | Real | Wired guarded bridge | P0 | v2 flags missing sweep destinations, blocks malformed filled-in destinations in readiness before transfer, and the classic transfer handler still rejects missing or malformed destinations before signer resolution. |
-| Launch report download | Real | Wired classic renderer | P0 | v2 can export a local JSON preview, export/import final proof JSON with a non-secret launch-config snapshot for deterministic re-comparison and stable report fingerprints, download a classic-chrome HTML dossier, and publish that same dossier through the local app bridge with tokenomics, per-pool liquidity depth sketches, launch-market-cap summary, Classic-style pool fee-tier/spacing summaries, Classic address-row labels, copyable rows, pool/position cards, status/demo banners, per-position lock/Fee Key audit records, airdrop budget/source, recovery evidence, terminal sweep status plus SOL/token/NFT transfer transaction rows and a separate sweep-evidence hash, audit guidance, explorer proof grouping, copyable launch summary, classic retirement gate, classic report parity audit, and reload-safe file-or-paste classic artifact comparison results for mint, launch wallet, exact pool IDs, quote mints, pool supply/spacing parameters, pool-create transactions, exact position counts, exact position NFTs, exact Fee Key NFTs, exact Fee Key recipient/delivery wallets, position transaction signatures, exact authority flags, destination, exact structured airdrop recipient wallets, and exact structured airdrop transaction signatures. Classic JSON reports now include the same airdrop recipient/transfer/failure rows that Classic HTML renders plus the planned final-sweep destination recorded before sweep; Classic report HTML address/meta rows are parsed back into structured pool, quote, create-pool, supply allocation, tick spacing, position, Fee Key, recipient-delivery, and position-transaction evidence, Classic report airdrop tables are parsed back into exact delivered/failed/pending wallet and tx rows, and HTML pool/airdrop supersets are rejected the same way as structured JSON supersets; v2 report JSON now also carries planned recipient rows plus delivered airdrop transfer rows and fingerprint-normalized quote/create-pool/position/recipient-transfer evidence for server-side completion and fingerprint checks. Airdrop completion gates v2 report publishing as well as final sweep; server-side report publishing rejects count-only, hash-only, explicit airdrop or liquidity count/row mismatches, and frozen snapshot fields that are not backed by matching journal token/pool-plan rows before upload. The sweep destination remains editable until proof-bound report artifact evidence or terminal sweep finalization, final-sweep completion requires wallet-empty, error-free proof before replacement gates pass, report data/dossiers and server-derived fingerprints use the same effective destination as the client fingerprint and bind terminal wallet-empty final-sweep evidence through the same transfer-evidence hash, pre-sweep report artifacts become stale after terminal sweep and must be refreshed as final dossiers, visible HTML dossier sections are rendered from the same proof-bound config snapshot as the JSON evidence, URI-backed report publish and local HTML/JSON dossier downloads freeze the exact effective config used for their fingerprint, each downloaded local proof/dossier embeds the same local-dossier evidence record that the app persists after a successful download, HTML dossiers now embed the same non-secret v2 proof payload as JSON exports and can be loaded back through the proof importer, large embedded HTML airdrops render visible overflow rows and keep exact full-list hashes with capped row samples so the report remains portable while full JSON exports retain all rows, hash-only compact HTML airdrop evidence preserves launch fingerprints but blocks exact Classic airdrop row comparison until the full JSON proof or original session rows are loaded, imported proof files restore local dossier and published-report records only when their fingerprint still matches the imported proof and terminal proofs carry the matching sweep-evidence hash, and local-only report preference no longer makes the cockpit report row look completed without a report artifact; the server rejects missing, mismatched, launch-data-derived mismatched v2 report fingerprints, or mismatched sweep-evidence hashes before upload. Published report URIs, local dossier artifacts, and Classic comparisons are then bound to the active proof, including authority posture, pool topology, position evidence, Fee Key recipient transfers, destination, and hashed airdrop details. Stale report proof, URI-less report success, v2 proof/dossier exports, v2 published report envelopes, result-only imported comparisons, current-form drift, authority-count false positives, missing pool topology facts, missing per-position evidence, missing Fee Key recipient-transfer evidence, missing airdrop evidence, structured JSON/HTML supersets, and stale cross-proof comparisons are rejected as Classic evidence. |
-| Arweave report publishing | Real preference/execution | Wired bridge | P1 | v2 persists the Classic report-publish preference through `/api/user-prefs` and calls the classic publisher with generated HTML and journal-derived launch data. |
-| Demo Mode full launch | Real | Wired + evidence-tested | P0 | v2 drives token, LP, and sweep through existing demo handlers, then rebuilds completed readiness from the terminal transfer result so replacement criteria and cockpit progress cannot pass from a partial demo object. |
-| Pending wallet recovery | Real | Guided guarded wizard | P0 | v2 has selected-wallet QR/reveal/copy/discard controls plus a History recovery wizard/workspace with Find/Unlock/Act/Verify screens, explicit recovered-wallet reuse, abandoned-wallet sweep, retry/manual cleanup steps, post-sweep state, and PIN-reset audit state. |
-| Launch journal recovery | Real | Wired action bridge | P0 | v2 can resume/dismiss journals through classic recovery routes; live LP/airdrop events now feed the main run strip and checkpoint tree. |
-| Activity log | Real | Wired drawer + durable audit strip | P1 | v2 shows recent backend logs plus LP and airdrop progress in a larger filterable activity drawer, plus a reload-safe History audit of guarded v2 operations. |
-| Update/release state | Real | Wired settings bridge | P0 | v2 shows app version/release state, discloses unsigned/not-notarized desktop artifact trust status from the local app endpoint, parses selected-download trust from release notes when the classic Electron update checker finds an update, renders pushed update results, links to releases, and persists the startup auto-check preference. |
-| Discovery | Not v1 main surface | Functional RPC-backed prototype | P1 | v2 inspects real mint metadata, authority posture, supply, largest token-account concentration, price availability, and local Trebuchet provenance on demand. Saved registry state and operator notes stay local; full holder ownership and DEX liquidity-depth indexing remain future work. |
-| NFT avatar collection launch | Not v1 | Concept only | P1 | New v2 feature; should not block v1 parity unless positioned as core. |
-| AI token chat/swarm | Not v1 | Concept only | P2 | Product differentiator, but after launch parity. |
+Required resolution before merge:
 
-## Remaining Parity Work
+- apply the `major` label and satisfy the v2 gate; or
+- change release automation so a v2-default commit cannot produce a v1 tag; or
+- split/hold the default-switch commit until the production inputs exist.
 
-### 1. Complete a Non-Demo Field Launch
+Documentation and reviewer habit are not sufficient as the final control. A
+code-level invariant is recommended.
 
-The prototype now routes real work through the guarded Classic handlers, but Classic cannot be retired from source-level coverage alone. The remaining hard gate is a completed non-demo v2 launch with token authority proof, pool and position proof, Burn & Earn/Fee Key proof, airdrop proof, report artifact proof, and terminal final-sweep evidence.
+### 2. Authorized funded mainnet field run
 
-### 2. Compare Against a Completed Classic Artifact
+Run one explicitly authorized, low-risk `mainnet-beta` launch from the exact
+candidate commit through:
 
-The comparison tool can parse Classic JSON and HTML report artifacts, reject v2 self-artifacts, reject stale cross-proof comparisons, and verify mint, wallet, pools, frozen planned pool topology, positions, Fee Key delivery, authority posture, airdrops, destination, report, and sweep evidence. It still needs a real completed Classic artifact from the same intended topology to prove field parity before Classic becomes removable.
+- managed launch wallet;
+- token creation and authority finalization;
+- every planned CLMM pool and position;
+- Burn & Earn locks;
+- Fee Key proof and configured transfers;
+- exact configured airdrop rows, if any;
+- report or downloaded local dossier;
+- terminal token/NFT/SOL sweep;
+- wallet-empty confirmation.
 
-### 3. Keep Replacement Criteria Proof-Backed
+The operator must use a dedicated RPC and a funding/destination wallet placed in
+scope for the test. Read-only smoke is useful but does not replace this step.
 
-Replacement criteria are now intentionally stricter than preview UI availability:
+### 3. Field evidence and independent review
 
-- Wallet lifecycle passes only with completed live proof or a selected managed wallet whose local signing secret is available and unlocked; demo proof does not replace Classic signing custody.
-- Vanity CA passes only with saved/selected candidates verified through the connected local app or confirmed native grinder availability from that local app.
-- Token config passes only with Classic-compatible token name/symbol/supply/description/logo fields and either a completed live proof or a connected local-API launch plan whose staged fingerprint still matches the current launch model, whose wallet stamp still matches the selected Trebuchet-managed launch wallet, and whose decoded operations contain the complete ordered Trebuchet local-wallet run envelope.
-- Charts/viewport passes only with wired chart renderers, current desktop/mobile viewport-smoke proof verified by the connected local app against current v2 asset hashes, and either completed live proof or a connected local-API launch plan whose staged fingerprint still matches the current token, pool, airdrop, vanity, and avatar configuration, whose wallet stamp still matches the selected Trebuchet-managed launch wallet, and whose decoded operations contain the complete ordered Trebuchet local-wallet run envelope.
-- Pool config parity passes only with planned pool rows, no blocking topology issues, and either completed live proof or a connected local-API launch plan whose staged fingerprint still matches the current token, pool, airdrop, vanity, and avatar configuration, whose wallet stamp still matches the selected Trebuchet-managed launch wallet, and whose decoded operations contain the complete ordered Trebuchet local-wallet run envelope.
-- Funding/quote passes only with completed live proof or a Classic funding estimate plus fresh selected launch-wallet SOL evidence, successful quote acquire, and freshly verified manual prefund rows.
-- Held reserve backing passes only when no held reserve is configured, or when a current pre-live estimate proves support backing, or when the terminal-sweep-bound final report/dossier evidence carries a passing held-reserve audit.
-- Run/resume safety passes only with a completed live proof whose matching local launch journal reached `transfer_completed` and backs the proof's token authority posture, pool IDs, position/lock/Fee Key delivery evidence, airdrop delivery evidence, and sweep destination with wallet-empty, error-free sweep evidence, a proof-bound journal id whose matching local journal is loaded before terminal sweep and contains pool-plan/checkpoint recovery evidence, a loaded active/failed launch journal with pool-plan/checkpoint evidence for preflight recovery planning, or a successful journal recovery/resume result with pool rows carrying explicit phase-complete or opened-position checkpoints or an embedded journal reference.
-- Sweep/report passes only with proof-bound report evidence that carries the terminal sweep-evidence hash plus terminal final-sweep evidence; local dossier/proof artifacts must also carry app-generated download metadata and a kind-matched filename, and after sweep the cockpit asks for a fresh local final dossier/proof when the permanent report was published pre-sweep.
-- Classic retirement stays blocked for demo proof, stale reports, v2-generated artifacts, stale comparisons, partial sweep records, or any replacement criterion that still needs proof.
+The field run must produce:
 
-### 4. Product Expansion After Parity
+- `release-evidence/v2/field-verification.json`;
+- the retained full raw Classic comparison input;
+- `release-evidence/v2/release-attestation.json`.
 
-Discovery now has a functional local/RPC-backed prototype. Full holder ownership indexing, multi-DEX liquidity depth, NFT avatar collection execution, and AI token chat/swarm remain product expansion work and should stay behind launch parity until the Classic replacement gate has passed with live artifacts.
+The gate recomputes the launch fingerprint and sweep hash, validates concrete
+proof and required Classic rows, verifies exact evidence and Classic SHA-256
+digests, requires an ancestral field-run commit, enforces a 30-day freshness
+window, and requires different GitHub users for operation and review.
 
-## Field Verification Sequence
+### 4. Platform signing
 
-1. Connect the local app and use a dedicated RPC endpoint.
-2. Generate or import a Trebuchet-managed launch wallet, unlock the Recovery PIN, and verify the signing secret is available.
-3. Configure token metadata, Vanity CA, pool topology, Fee Key recipients, airdrop rows, report preference, and sweep destination.
-4. Run Classic funding estimate, acquire or manually prefund quote routes, and confirm launch-wallet balance; the replacement criterion should stay blocked until all of those checks are verified.
-5. Execute the v2 full launch path and keep any `needs-proof` state visible until the missing proof row is resolved.
-6. Run `npm run test:v2:viewport` so the local app can validate `public/v2/viewport-smoke-proof.json` against the current v2 assets.
-7. Publish or download the proof-bound v2 report/dossier, then complete terminal sweep.
-8. Paste a completed Classic artifact into the comparison tool and require the Classic retirement gate to pass.
+Repository administrators must supply:
 
-## Replacement Criteria
+- macOS signing identity (`CSC_LINK`, `CSC_KEY_PASSWORD`);
+- one complete Apple notarization method;
+- Windows signing identity (`WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD`).
 
-The v2 release-candidate branch now opens the v2 shell by default, with Classic retained through `npm run start:classic`, `--classic`, or `TREBUCHET_UI=classic`. Production promotion remains blocked until:
+V2 cannot publish unsigned test artifacts.
 
-- It can complete a full demo launch end to end, including token, LP, Fee Key recipient, airdrop, sweep, and terminal completed-readiness proof.
-- It can generate and recover launch wallets.
-- It can grind and preserve Vanity CA options.
-- It can render tokenomics and liquidity charts.
-- It can configure pools at least as well as v1 simple mode.
-- It can route to v1 custom pool controls or fully replace them.
-- It can run and resume LP creation safely.
-- It can sweep and produce reports.
-- It has visual smoke tests for desktop and mobile first viewport. The v2 file-preview smoke now runs through `npm run test:v2:viewport` and asserts the primary cockpit fits without horizontal page overflow.
-- CI passes the authenticated `/v2/` browser flow and launches the built Linux Electron package through both the default v2 route and the explicit Classic fallback.
+### 5. Dependency advisory disposition
 
-Until then, v2 remains a release candidate rather than an approved production `v2.0.0`, and v1 remains the explicit Classic rollback path.
+The 2026-07-16 lockfile audit reports:
+
+- 0 critical;
+- 11 high;
+- 2 moderate;
+- 15 low.
+
+Some highs have ordinary fixes available (for example current upload/tooling
+transitives); others are coupled to Solana/Raydium or the Irys/Umi major line.
+Before production, update/remediate the safely fixable paths and record an
+explicit accept/mitigate/defer decision for the coupled paths after relevant
+launch tests. See [SECURITY.md](SECURITY.md).
+
+### 6. NFT collection product claim
+
+The v2 plan and UI model a collection manifest, edition supply, assignment seed,
+holder gate, cost, and staged operation. The Classic-backed live executor does
+not yet supply the transaction/journal/proof chain required to call that
+collection **Minted**.
+
+Before production choose one:
+
+- implement, recover, test, and gate real collection execution; or
+- make the feature visibly staged/preview-only and remove any live-mint claim
+  from release marketing.
+
+This does not block the proven token-launch mechanics if the scope is stated
+honestly.
+
+## Replacement criteria
+
+The field packet contains twelve replacement criteria:
+
+1. demo end to end;
+2. wallet lifecycle;
+3. Vanity CA options;
+4. token configuration parity;
+5. charts and viewport;
+6. pool configuration parity;
+7. funding and quote readiness;
+8. held-reserve backing;
+9. run and resume safety;
+10. sweep/report proof;
+11. Classic artifact comparison;
+12. proof audit.
+
+Automated tests exercise these criteria, but the production packet must show all
+twelve passing against the same non-demo proof fingerprint. A renderer-generated
+pass state alone is not acceptance.
+
+## Release sequence
+
+1. Resolve the v1-tag bypass invariant.
+2. Resolve or explicitly scope the NFT collection claim.
+3. Remediate/disposition the current dependency audit.
+4. Load repository signing/notarization credentials.
+5. Run the authorized mainnet launch from the candidate commit.
+6. Export the final proof after the terminal sweep.
+7. Load and compare the retained Classic artifact.
+8. Have a second GitHub user review and attest exact hashes.
+9. Run `npm run release:gate -- v2.0.0` with signing variables loaded.
+10. Apply the `major` label only when the candidate is intended to tag
+    `v2.0.0`.
+11. Merge, verify the tag, and monitor the full release workflow.
+12. Verify release assets, checksums, trust metadata, GitHub Package, and
+    marketing-site links.
+
+## Exit criteria
+
+The v2 production gap is closed only when:
+
+- no v1 tag can ship the v2-default product;
+- the exact field evidence and attestation are committed;
+- the production gate passes on the release commit;
+- all required platform credentials are present;
+- dependency risk has a recorded production disposition;
+- the NFT collection promise matches executable proof;
+- all PR checks and tag-release jobs are green;
+- the published artifacts and website links verify.
+
+Until then, the accurate state is:
+
+> v2 token-launch release candidate; code-complete for guarded launch parity,
+> awaiting production field proof, trust inputs, and release-invariant closure.
+
+## Post-v2 work
+
+These are improvements, not substitutes for the blockers above:
+
+- modularize the large v2 renderer and proof code;
+- implement proof-backed NFT collection execution if retained in scope;
+- add richer Discovery data providers;
+- track Fee Key portfolios;
+- add multi-launch operational views;
+- explore browser-compatible read/configuration surfaces without weakening
+  local custody.

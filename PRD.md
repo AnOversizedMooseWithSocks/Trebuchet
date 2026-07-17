@@ -1,243 +1,314 @@
-# Trebuchet PRD
+# Trebuchet product requirements
 
-## Summary
+## Product summary
 
-Trebuchet is a local-first Solana token launch application. It helps a user mint an SPL token, configure one or more Raydium CLMM liquidity pools, lock positions through Burn & Earn, transfer Fee Key NFTs, sweep remaining assets to a destination wallet, and produce an auditable launch report.
+Trebuchet is a local-first Solana launch terminal for operators who want to
+create a token, deploy and permanently lock Raydium CLMM liquidity, distribute
+Fee Key NFTs, preserve recovery state, and leave behind auditable launch proof
+without surrendering custody to a hosted launch service.
 
-The product posture is deliberately anti-extractive: no launch fee, no supply cut, no hosted custody, no middleman. The user runs the app on their own machine, uses their own RPC endpoint, and signs with a launch-specific temporary wallet.
+The v2 terminal is the default desktop product. Classic remains available as an
+explicit fallback and comparison reference while production field verification
+is completed.
 
-Trebuchet currently ships as an Electron desktop app backed by a local Express server and browser UI. v2 should become the main product identity: a modern wallet-like launch console with a local SPA/WASM path, a browser-extension direction, and Discovery for tokens that meet Trebuchet standards for liquidity diversity, holder distribution, authority posture, and launch provenance.
+## Current status
 
-## Problem
+v2 is a release candidate:
 
-Launching a token with honest liquidity is operationally hard. A credible launch requires many steps that are easy to misconfigure or partially complete:
+- product shell and Classic-backed token launch execution are implemented;
+- demo, unit, package, Electron, API-backed E2E, viewport, and visual checks
+  exist;
+- production `v2+` publishing is fail-closed on field proof, independent
+  attestation, and platform signing;
+- the authorized funded mainnet field run has not yet supplied the checked-in
+  release evidence;
+- the staged NFT collection manifest is not yet proof of a live collection
+  mint and must not be marketed as one.
 
-- RPC endpoints can throttle mid-launch.
-- Token metadata and authority settings must be correct before the token becomes immutable.
-- CLMM pool creation has several price, tick, mint-order, rent, and quote-token edge cases.
-- Liquidity positions need to be opened, locked, recorded, and sometimes split among recipients.
-- Airdrops and preallocations create holder-trust risks unless backed by visible support liquidity.
-- Partial failures can leave durable on-chain state that must be resumed, not blindly retried.
-- Teams need a post-launch report that proves what happened.
-
-Most existing launch tools either abstract this away by taking custody/fees, or expose enough raw mechanics that non-specialists can make expensive mistakes. Trebuchet should be the credible local tool for users who want control, transparency, and recoverability.
+See [GAP_ANALYSIS.md](GAP_ANALYSIS.md) for the release decision.
 
 ## Users
 
-### Primary Users
+### Primary operator
 
-- Independent token creators launching a meme, community, brand, or utility token.
-- Small teams that want locked liquidity and transferable fee streams without giving away supply allocations.
-- Technically capable operators who can obtain a dedicated RPC endpoint and verify wallet addresses.
+A token creator who:
 
-### Secondary Users
+- controls the funding and destination wallets;
+- understands that launch transactions are irreversible;
+- wants local custody and inspectable execution;
+- needs a guided path through funding, token authority, liquidity, locks,
+  distribution, proof, and recovery.
 
-- Advisors, contributors, or partners receiving Fee Key NFTs.
-- Investors, community members, and listing reviewers reading the launch report.
-- Power users experimenting with pool splits, flywheel quote tokens, ladder bands, preallocations, support positions, and airdrops.
+### Recovery operator
 
-### Future Users
+The same creator, or a trusted technical operator, returning after an
+interrupted launch to inspect a journal, unlock a recovery wallet, resume only
+missing work, or sweep stranded assets.
 
-- Browser-extension users who want Trebuchet to behave like a wallet/signing surface.
-- Web users who want a local SPA/WASM experience without installing an unsigned desktop binary.
-- Discovery users who want to evaluate whether a launched token meets Trebuchet standards.
+### Auditor or reviewer
 
-## Product Principles
+A person evaluating a launch dossier, authority posture, pool/position
+transactions, Fee Key delivery, airdrop evidence, or a production release field
+packet.
 
-- **Local first.** Private keys, temporary wallets, and launch state should stay on the user machine unless the user explicitly publishes or transfers assets.
-- **No hidden economics.** Trebuchet does not take supply, fees, or custody.
-- **Recoverable over clever.** Partial on-chain work must be resumable or explicitly swept; the app should not invite duplicate execution.
-- **Opinionated honesty.** The app should warn about public RPC, unsafe preallocations, unlocked liquidity, authority risks, and destination-wallet irreversibility.
-- **Auditability.** Every material launch artifact should appear in a shareable report.
-- **Power with guardrails.** Advanced pool topology should be possible, but defaults should protect most users from obvious footguns.
-- **Modern but not hypey.** v1 uses an engineering-manuscript identity; v2 can be cleaner and more wallet-like, but should remain sober and utilitarian.
+### Discovery user
 
-## Current Product Scope
+A person inspecting public evidence about a mint. Discovery is an evidence tool,
+not a recommendation or promotion surface.
 
-### Core Launch Flow
+## Product principles
 
-Trebuchet’s main user journey is a six-step launch:
+1. **Local custody is explicit.** Core launch execution uses a
+   Trebuchet-managed local signer.
+2. **Renderer state is not authority.** The server normalizes and rebuilds
+   readiness before dispatch.
+3. **Proof beats presentation.** Counts, previews, and pass-shaped flags do not
+   replace addresses, signatures, rows, and hashes.
+4. **Recovery is a primary workflow.** Interrupted mainnet work must remain
+   inspectable and safely resumable.
+5. **Irreversible effects are decoded.** The operator sees destination, cost,
+   transaction scope, and risk before arming.
+6. **No false completion.** Staged, modeled, simulated, and proven states use
+   different language.
+7. **No hosted dependency for core execution.**
+8. **No extraction or promotion layer.** Trebuchet does not take a supply cut or
+   sell discovery placement.
+9. **Dense terminal, not SaaS.** Operational evidence and next action dominate
+   the interface.
 
-1. **Generate temporary wallet**
-   - Create a launch-specific keypair.
-   - Show public key, QR code, and recovery phrase.
-   - Store encrypted recovery material using the OS-safe storage path where available.
+## Product surfaces
 
-2. **Configure token and pools**
-   - Token name, symbol, supply, description, and logo.
-   - Target market cap and launch price.
-   - SOL pool by default.
-   - Optional flywheel pool using known quote tokens.
-   - Optional LP splits into multiple Fee Key NFTs.
-   - Optional starting liquidity, ladder positions, preallocation, support position, and airdrop.
-   - Manual/custom pool configuration for advanced users.
-   - Tokenomics visualization before funding.
+### Launch
 
-3. **Fund wallet**
-   - Estimate required SOL and quote-token funding.
-   - Warn against public RPC usage.
-   - Poll wallet balances.
-   - Allow quote-token acquisition through swap flow when routeable.
-   - Let users edit configuration before on-chain work begins.
+One cockpit with five workspaces:
 
-4. **Create token**
-   - Upload metadata and logo.
-   - Mint SPL token.
-   - Transfer supply to temporary wallet.
-   - Revoke mint, freeze, and metadata update authorities.
+- **Configure** — token metadata/logo, Vanity CA, pool topology,
+  preallocation, airdrops, support, Fee Key recipients, report policy, sweep
+  destination, and staged NFT collection manifest.
+- **Fund** — proof-bound cost estimate, wallet balance, quote requirements,
+  quote acquisition/manual prefund, and funding blockers.
+- **Execute** — decoded next operation, guarded full runner, phase progress,
+  retry state, signatures, and observed spend.
+- **Verify** — report/dossier, proof audit, Classic comparison, final sweep,
+  retirement gate, and field packet.
+- **Recover** — active-launch recovery controls.
 
-5. **Create pools and positions**
-   - Create CLMM pools and main positions.
-   - Open ladder and bootstrap positions.
-   - Lock positions through Burn & Earn.
-   - Transfer Fee Key NFTs to configured recipients.
-   - Surface phase progress, partial failures, and resume actions.
+The first desktop viewport must show the active launch, next action, tokenomics,
+liquidity shape, funding envelope, and execution/proof status without page-level
+scrolling.
 
-6. **Sweep assets**
-   - Transfer Fee Key NFTs first.
-   - Execute configured airdrop and track progress.
-   - Sweep unallocated tokens and remaining SOL.
-   - Produce or re-download launch report.
+### Wallet
 
-### Supporting Product Surfaces
+- Create or import one Trebuchet-managed launch wallet.
+- Display funding address, QR, balances, and full copy access.
+- Connect Solflare only for funding/destination convenience.
+- Keep recovery wallets in a separate central inventory.
+- Protect secret reveal and destructive actions with Recovery PIN state and
+  typed confirmation.
 
-- RPC management panel with saved endpoints, active selection, connection testing, and health display.
-- Demo Mode for simulated launches without spending SOL.
-- Activity/server log panel.
-- Pending wallet recovery.
-- Launch journal recovery and resume.
-- Cancel & Refund flow.
-- Update checking and release notes.
-- Launch report publishing.
-- Solflare browser-wallet integration in the frontend.
-- Vanity wallet generation and streaming cancellation.
+### History
 
-## Product Decisions
+- List durable launch journals and execution-ledger records.
+- Explain safe resume, unsafe/manual recovery, and missing work.
+- Provide the multi-step Find → Unlock → Act → Verify recovery flow.
+- Allow a recoverable wallet to be reused or swept when evidence permits.
+- Keep Recovery PIN reset audit information.
 
-- v2 should become Trebuchet's primary identity and product shell. Keep the parchment v1 UI available as Classic only until v2 reaches feature parity, then retire it.
-- Discovery MVP should be evidence-first: Trebuchet launch reports plus on-chain verification of authorities, pools, locks, holders, and liquidity.
-- Discovery should include any token that can satisfy Trebuchet standards, not only Trebuchet-launched tokens. Trebuchet-launched tokens may have stronger provenance because their reports are richer.
-- Cut user ratings, bookmarks, social signals, and synced preferences from the Discovery MVP.
-- The browser extension should only sign narrow, human-readable actions: site connect, message signing, simulated transactions, wallet-safe transfers, and explicit Trebuchet launch-session approvals.
-- Browser/WASM should start with configuration, demo mode, scoring, reports, validation, and wallet-adapter signing. Full Raydium/Metaplex launch orchestration remains Electron/local-backend until the dependency graph proves browser-safe.
-- Unsafe preallocation and support configurations should be blocked by default, with advanced override only after an explicit consequence screen.
+### Discovery
 
-## v2 Product Direction
+- Inspect any supplied mint through the active RPC.
+- Persist a local registry.
+- Show authority posture, mint program/extensions, Raydium compatibility,
+  routes/pools, holder/liquidity evidence, and confidence.
+- Explain unavailable or risky evidence.
+- Exclude social voting, paid placement, popularity feeds, and unproven claims.
 
-The untracked `public/v2/` mockup explores a future wallet-app shell:
+### Settings
 
-- Minimal Trebuchet branding and navigation.
-- Wallet-style topbar and connect state.
-- Launch desk with staged transactions and extension approval window.
-- Portfolio, permissions, transaction queue, extension policy controls, history.
-- Discovery view for coins that meet Trebuchet standards.
+- Manage and health-check RPC endpoints.
+- Strongly warn/block fresh mainnet work on public RPCs.
+- Control demo mode and startup preferences.
+- Set up, unlock, change, lock, or destructively reset the four-digit Recovery
+  PIN.
+- Check app/release state and updates.
+- Expose local diagnostics.
 
-v2 should not simply reskin v1. It should make Trebuchet feel like a wallet and launch operating system:
+## Core launch workflow
 
-- A local app users can open as a trusted signer, evaluator, and launch cockpit.
-- A browser-compatible SPA/WASM path to avoid desktop signing/notarization friction where possible.
-- A Chrome extension direction for connected-site approvals.
-- Discovery as a credibility layer, not a market-pump feed.
-- A Classic path only while v2 reaches functional parity with the current launch flow.
+### 1. Wallet and launch identity
 
-## Discovery Requirements
+- Select, generate, or import a server-managed wallet.
+- Optionally request a random mint or grind start/end Vanity CA targets.
+- Persist candidate metadata without bulk-returning secret material.
+- Bind the normalized plan to the selected wallet.
 
-Discovery should show coins that meet or nearly meet Trebuchet standards. It is not a price leaderboard, social feed, paid placement surface, or opinion market.
+### 2. Token and distribution
 
-The MVP data source should be Trebuchet launch reports plus on-chain verification. Broader token inclusion is allowed when evidence can be gathered from public chain/indexer APIs and presented with confidence labels.
+- Validate name, symbol, description, whole-token supply, and logo.
+- Accept PNG/JPEG logos and normalize oversized inputs before the Classic
+  execution envelope.
+- Configure SOL/quote pools, fee tiers, slices, ladders, support,
+  preallocation, exact airdrop rows, and Fee Key recipients.
+- Prevent allocation totals over 100%.
+- Surface backing/risk for held reserve and airdrop allocation.
 
-### Required Signals
+### 3. Planning and funding
 
-- Liquidity diversity:
-  - Number of pools.
-  - Largest pool concentration.
-  - Route depth and quote diversity.
-- Holder distribution:
-  - Top holder concentration.
-  - Active holder count.
-  - Known team/vesting/preallocation wallets when available.
-- Authority posture:
-  - Mint authority revoked.
-  - Freeze authority revoked.
-  - Metadata update authority revoked or explicitly disclosed.
-  - Transfer fees, Token-2022 extensions, or other mint constraints disclosed.
-- Launch provenance:
-  - Pool-lock proof.
-  - Fee Key ownership/transfer records.
-  - Launch report or equivalent on-chain/off-chain audit facts.
-- Market health:
-  - Sustained volume.
-  - Wash-trade suspicion.
-  - Price/liquidity drift warnings.
+- Build a server-normalized launch plan.
+- Decode every planned operation, requirement, estimated cost, and effect.
+- Attach a fresh Classic funding estimate with a matching fingerprint.
+- Require a current selected-wallet balance check.
+- Verify custom quote-token metadata, extensions, authority risk, and route.
+- Block a fresh live launch on a known public RPC.
 
-### Discovery UX
+### 4. Guarded execution
 
-- Show a Trebuchet quality score and evidence confidence.
-- Explain why each token passes or is on the watchlist.
-- Avoid oversized cards; use dense rows and evidence-first metrics.
-- Make standards visible before the list.
-- Keep user ratings, bookmarks, notes, and social voting out of the MVP.
-- Clearly label any simulated/mock data until real indexers are connected.
+- Require exact endpoint/operation confirmation before arming.
+- Rebuild readiness server-side for every next operation.
+- Serialize long-running mutation work by wallet.
+- Create token and metadata.
+- Verify mint, freeze, and metadata-update authority posture.
+- Create/resume every planned pool and position.
+- Lock positions through Burn & Earn.
+- Record position NFT, Fee Key NFT, and open/lock/transfer signatures.
+- Transfer configured Fee Keys.
 
-## Functional Requirements
+### 5. Distribution and finalization
 
-### P0
+- Deliver exact configured airdrop rows.
+- Require wallet and transaction evidence for completion.
+- Publish a proof-bound report or record a downloaded local dossier.
+- Preserve report/dossier staleness against proof and terminal-sweep hashes.
+- Sweep tokens, NFTs, and SOL to the validated destination.
+- Confirm wallet-empty terminal state without hiding individual transfer errors.
 
-- Launch flow must protect against duplicate long-running operations on the same temporary wallet.
-- RPC configuration must strongly steer users away from public mainnet RPC.
-- Token metadata validation must enforce Solana/Metaplex limits before transaction submission.
-- Funding estimator must include rent, fees, liquidity, quote-token needs, and safety buffer.
-- Pool creation must record enough recoverable state to resume partial launches.
-- Burn & Earn lock output must record Fee Key NFT mints, not just position NFTs.
-- Sweep must prioritize Fee Key NFTs and prevent concurrent airdrop/sweep operations.
-- Launch report must include token, pool, position, lock, transfer, and verification data.
-- Demo Mode must mirror real-launch payload shape closely enough for user training.
-- Release downloads must disclose signing/notarization status.
+### 6. Verification
 
-### P1
+- Render token, authority, pool, position, Fee Key, airdrop, report, recovery,
+  and final-sweep evidence.
+- Export/import a full JSON proof with launch-config snapshot.
+- Compare a retained Classic JSON/HTML artifact through structured fields.
+- Generate parity audit, retirement gate, replacement criteria, and field
+  verification.
+- Route each blocker to a real existing action.
 
-- Improve v2 as a production-grade shell rather than a static mockup.
-- Implement local SPA/WASM mode for users who cannot or do not want to run unsigned desktop binaries.
-- Define browser-extension permissions and a narrow connected-site signing workflow.
-- Promote Discovery from mock data to a real local/indexed data model.
-- Add richer health checks for RPC latency, throttling, and provider capability.
-- Add more explicit preflight checks for pool topology and price drift.
-- Improve report publishing status and retry handling.
+## NFT collection scope
 
-### P2
+The v2 plan currently includes:
 
-- Multi-launch dashboard.
-- Team/member Fee Key portfolio tracking.
-- In-app education for flywheel risks and discovery standards.
-- Optional external indexer integration.
-- Signed/notarized desktop builds once credentials exist.
+- collection name and symbol;
+- edition supply;
+- local manifest URI/source;
+- deterministic assignment seed;
+- ownership-gate and metadata-standard declarations;
+- a staged operation and pipeline UI.
 
-## Non-Goals
+This is configuration and product-contract work. Production acceptance for a
+live NFT collection requires, at minimum:
 
-- Trebuchet does not custody user funds.
-- Trebuchet does not guarantee token success, price performance, volume, or listings.
-- Trebuchet does not promote tokens.
-- Trebuchet should not hide irreversible on-chain actions behind marketing copy.
-- Discovery should not become paid placement.
-- Discovery should not ship social ratings or popularity mechanics in the MVP.
-- The app should not depend on a hosted Trebuchet backend for core launch execution.
+- a real on-chain handler;
+- collection and edition transaction signatures;
+- durable journal/recovery fields;
+- cost and partial-failure handling;
+- proof/dossier rows;
+- demo and non-demo tests;
+- release-gate validation.
 
-## Success Metrics
+Until then, the surface must remain visibly **Draft/Staged** and must not claim
+that a collection was minted.
 
-- Launch completion rate in Demo Mode and real mode.
-- Reduction in partial-launch failures caused by public RPC usage.
-- Successful resume rate after recoverable failures.
-- Number of launch reports downloaded or published.
-- Time from wallet generation to completed sweep.
-- Number of users who run a demo launch before mainnet.
-- Discovery: percentage of listed coins with complete evidence fields.
-- v2: task completion on mobile-width and desktop-width layouts without horizontal overflow.
+## Recovery requirements
 
-## Key Risks
+- Never auto-resume an unsafe unknown partial state.
+- Reconcile journal claims with on-chain facts before deciding work is done.
+- Preserve an original transaction ID when adopting already-landed work.
+- Do not delete a wallet because SOL is low if a token/NFT account still has a
+  balance or balance data is unavailable.
+- Show the full destination for a sweep.
+- Use the in-app typed confirmation dialog; never call browser `prompt()`.
+- Keep recoverable inventory separate from the active wallet hierarchy.
 
-- Solana/Raydium/Metaplex SDK changes can break launch flows.
-- Public RPC or weak RPC providers can cause expensive mid-flow failures.
-- Unsigned macOS artifacts can trigger “app is damaged” warnings.
-- Browser-only/WASM mode may not support every native or Node dependency.
-- Discovery scoring can create perceived endorsement or legal/reputational exposure.
-- App complexity can overwhelm first-time token creators.
+## Proof requirements
+
+A production-grade token launch proof must include:
+
+- non-demo launch journal identity and local wallet;
+- mint and authority posture;
+- exact pool IDs and create transactions;
+- exact position NFTs, open transactions, lock transactions, and Fee Key mints;
+- Fee Key recipient and transfer transaction where configured;
+- exact airdrop recipients/delivery transactions where configured;
+- report URI or local dossier bound to the same proof;
+- terminal destination, asset transfer evidence, wallet-empty state, and sweep
+  evidence hash;
+- complete launch-config snapshot.
+
+The production release gate must recompute proof identity outside renderer/app
+pass-state generation.
+
+## Security and trust requirements
+
+- Bind the server to loopback and reject untrusted Host headers.
+- Require the process API session on protected routes.
+- Apply CSP, frame denial, and MIME-sniff protection.
+- Do not expose wallet secrets from list endpoints.
+- Distinguish OS safeStorage, Recovery-PIN encryption, and plaintext fallback.
+- Validate upload type, bytes, dimensions, and size server-side.
+- Allow only parsed HTTPS external links.
+- Block critical dependency advisories in CI; record and disposition high
+  advisories before production.
+- Publish checksums and per-platform trust state.
+
+## Production v2 acceptance
+
+A production `v2.0.0` is acceptable only when:
+
+1. the exact v2-default commit has passed all PR/package/E2E checks;
+2. one authorized funded `mainnet-beta` launch completes the full token,
+   liquidity, Fee Key, distribution, report, and wallet-empty sweep path;
+3. its full field proof passes the independent production gate;
+4. a different reviewer approves the exact proof and raw Classic artifact
+   hashes within 30 days;
+5. the field-run commit is an ancestor of the release commit;
+6. macOS artifacts are signed and notarized;
+7. Windows artifacts are signed;
+8. current dependency advisories have an explicit production disposition;
+9. the NFT collection surface is either implemented and proven or clearly
+   scoped as staged/non-live;
+10. auto-release cannot publish the v2-default app under a `v1.x` tag.
+
+## Non-goals
+
+- Custodying user funds remotely.
+- Guaranteeing price, volume, success, listings, or route availability.
+- Hiding authority, preallocation, support, or fee-stream risk.
+- Paid token placement or social ranking.
+- Treating a wallet connection as permission for arbitrary transactions.
+- Making a browser-only implementation a prerequisite for core launch
+  execution.
+- Claiming AI/avatar runtime output without verifiable execution.
+
+## Success measures
+
+- Demo and live launch completion rate.
+- Safe resume rate after interruption.
+- Reduction in failures caused by public RPC use.
+- Percentage of completed launches with final proof/dossier.
+- Percentage of configured Fee Key recipients with transfer proof.
+- Exact airdrop delivery/proof completeness.
+- Time to identify and act on a recovery blocker.
+- Desktop/mobile critical-task completion without horizontal overflow.
+- Discovery records with clearly classified evidence availability.
+- Zero production releases that bypass field/signing gates.
+
+## Future opportunities
+
+After the production v2 token-launch gate is satisfied:
+
+- proof-backed NFT collection execution;
+- Fee Key portfolio tracking;
+- richer Discovery evidence providers;
+- multi-launch operations view;
+- more modular v2 renderer/proof packages;
+- browser-compatible read/configuration surfaces that do not weaken custody or
+  execution boundaries.
