@@ -13,8 +13,13 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const CONFIG_DIR = process.env.TREBUCHET_CONFIG_DIR || __dirname;
-const FILE = path.join(CONFIG_DIR, 'launchJournals.json');
+function configDir() {
+  return process.env.TREBUCHET_CONFIG_DIR || __dirname;
+}
+
+function journalFile() {
+  return path.join(configDir(), 'launchJournals.json');
+}
 const MAX_EVENTS = 200;
 const MAX_STRING_LENGTH = 8000;
 const MAX_STACK_LINES = 20;
@@ -140,8 +145,8 @@ function normalizeJournal(raw) {
 
 function readRaw() {
   try {
-    if (!fs.existsSync(FILE)) return [];
-    const parsed = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    if (!fs.existsSync(journalFile())) return [];
+    const parsed = JSON.parse(fs.readFileSync(journalFile(), 'utf8'));
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
     console.warn('launchJournal: failed to read, treating as empty:', e.message);
@@ -157,10 +162,11 @@ function load() {
 
 function persist(list) {
   try {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    const tmp = `${FILE}.${process.pid}.${Date.now()}.tmp`;
+    fs.mkdirSync(configDir(), { recursive: true });
+    const file = journalFile();
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(list, null, 2) + '\n');
-    fs.renameSync(tmp, FILE);
+    fs.renameSync(tmp, file);
   } catch (e) {
     console.error('launchJournal: failed to save:', e.message);
   }

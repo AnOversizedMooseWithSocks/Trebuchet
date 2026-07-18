@@ -25,8 +25,13 @@ const __dirname = path.dirname(__filename);
 // Allow the consumer (e.g. an Electron wrapper) to redirect persisted state
 // to a writable location outside the package directory. Defaults to
 // __dirname for backward compatibility with the standalone server use case.
-const CONFIG_DIR = process.env.TREBUCHET_CONFIG_DIR || __dirname;
-const CONFIG_FILE = path.join(CONFIG_DIR, 'rpcConfig.json');
+function configDir() {
+  return process.env.TREBUCHET_CONFIG_DIR || __dirname;
+}
+
+function configFile() {
+  return path.join(configDir(), 'rpcConfig.json');
+}
 
 // First-run default. Public mainnet works out of the box; users
 // should add their own dedicated endpoint (Helius / QuickNode /
@@ -46,8 +51,8 @@ let state = null;
 
 function load() {
   try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const raw = fs.readFileSync(CONFIG_FILE, 'utf8');
+    if (fs.existsSync(configFile())) {
+      const raw = fs.readFileSync(configFile(), 'utf8');
       state = JSON.parse(raw);
       // Quick sanity check
       if (!state.active || !Array.isArray(state.saved) || state.saved.length === 0) {
@@ -73,8 +78,8 @@ function persist() {
     // exists, so this is safe to call on every save. Necessary on first
     // run when CONFIG_DIR is e.g. an Electron userData path that hasn't
     // been touched yet.
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(state, null, 2) + '\n');
+    fs.mkdirSync(configDir(), { recursive: true });
+    fs.writeFileSync(configFile(), JSON.stringify(state, null, 2) + '\n');
   } catch (e) {
     console.error('rpcConfig: failed to save config:', e.message);
   }

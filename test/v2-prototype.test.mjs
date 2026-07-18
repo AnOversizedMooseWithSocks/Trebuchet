@@ -1808,7 +1808,15 @@ function loadFundingMeterHarness() {
   const sandbox = {
     console,
     state: harnessState,
-    baseTransactions: [{ cost: 0.2 }],
+    window: {
+      TrebuchetV2RuntimeState: {
+        fundingEstimate: ({ estimateMatches, estimatedSol }) => ({
+          available: Boolean(estimateMatches && Number.isFinite(Number(estimatedSol))),
+          value: estimateMatches && Number.isFinite(Number(estimatedSol)) ? Number(estimatedSol) : null,
+          label: estimateMatches && Number.isFinite(Number(estimatedSol)) ? 'Current estimate' : 'Estimate required',
+        }),
+      },
+    },
     selectedLaunchWalletPublicKey: () => harnessState.selectedWalletPublicKey,
     classicFundingEstimateStatus: () => ({ matchesConfig: true, stale: false, hasEstimate: true }),
     quoteAcquireRoutes: () => [],
@@ -3337,6 +3345,8 @@ test('v2 funding meter requires a selected-wallet detailed balance snapshot', ()
   assert.equal(snapshot.hasWalletBalance, false);
   assert.equal(snapshot.availableSol, 5);
   assert.equal(snapshot.availableLabel, 'Planned SOL');
+  assert.equal(snapshot.estimateAvailable, true);
+  assert.equal(snapshot.estimatedCost, 2);
 
   harness.state.manualPrefund = {
     walletPublicKey: 'Wallet111',
@@ -6036,7 +6046,7 @@ test('v2 manual run-next preserves classic finalization before sweep', () => {
 
   const guardIdx = runNext.indexOf('executeNextTransferFinalizationIssue(readiness, config)');
   const notifyIdx = runNext.indexOf('notify(finalizationIssue)');
-  const confirmIdx = runNext.indexOf('window.confirm');
+  const confirmIdx = runNext.indexOf('confirmOperatorAction');
   const apiIdx = runNext.indexOf('state.apiClient.executeNextRunOperation');
   assert.ok(guardIdx >= 0, 'Run next must check finalization before sweeping');
   assert.ok(notifyIdx > guardIdx, 'Run next must show the finalization issue');
@@ -6313,10 +6323,12 @@ test('v2 launch mechanism stages one Trebuchet-managed local wallet run', () => 
   assert.match(combined, /phases complete/);
   assert.match(combined, /Review run plan first/);
   assert.match(combined, /trebuchet-managed-launch-wallet/);
-  assert.match(combined, /Start local run/);
+  assert.match(combined, /Arm local run/);
   assert.match(combined, /run-launch/);
   assert.match(js, /tx-config/);
   assert.match(js, /tx-funding/);
+  assert.match(js, /No transaction has executed yet/);
+  assert.doesNotMatch(js.slice(js.indexOf('async function runLaunchEnvelope'), js.indexOf('async function checkForUpdates')), /status:\s*'completed'|tx\.status\s*=\s*'signed'/);
 });
 
 test('v2 Vanity CA candidates use a compact terminal list and Signal grade colors', () => {
@@ -6384,9 +6396,11 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
   assert.match(html, /styles\.css\?v=65/);
-  assert.match(html, /api-client\.js\?v=32/);
-  assert.match(html, /app\.js\?v=151/);
-  assert.doesNotMatch(html, /app\.js\?v=151" type="module"/);
+  assert.match(html, /runtime-state\.js\?v=1/);
+  assert.match(html, /api-client\.js\?v=33/);
+  assert.match(html, /app\.js\?v=152/);
+  assert.doesNotMatch(html, /app\.js\?v=152" type="module"/);
+  assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
   assert.doesNotMatch(`${html}\n${js}\n${apiClientJs}`, /\bon(?:click|load|error)=["']/i);

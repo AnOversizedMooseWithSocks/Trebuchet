@@ -286,8 +286,6 @@ const state = {
   activeHistoryPane: 'recovery',
   launchWorkspace: 'configure',
   verifyPanel: 'proof',
-  network: 'Mainnet',
-  connected: false,
   accountId: null,
   selectedDiscoveryId: null,
   discovery: {
@@ -357,6 +355,7 @@ const state = {
     reason: 'unlock',
   },
   prefs: {
+    demoMode: false,
     publishLaunchReport: true,
     checkForUpdatesOnStartup: true,
   },
@@ -495,13 +494,33 @@ let quoteAcquireTimer = null;
 let recoveryPinGatePromise = null;
 let recoveryPinGateResolve = null;
 let recoveryPinGateTimer = null;
+let recoveryPinReturnFocus = null;
 let operatorPromptResolver = null;
 let operatorPromptConfig = null;
+let operatorPromptReturnFocus = null;
+let sweepConfirmationReturnFocus = null;
+let activityLogReturnFocus = null;
 let solflareWalletProvider = null;
 let solflareStandardProvider = null;
 let solflareWalletStandardListenersStarted = false;
 const solflareWalletStandardWallets = [];
 const SOLFLARE_PROVIDER_WAIT_MS = 1500;
+
+function walletIsUnlocked() {
+  return window.TrebuchetV2RuntimeState?.walletUnlocked({
+    wallet: selectedManagedWallet(),
+    secretPin: state.secretPin,
+    demoActive: state.demoActive,
+  }) === true;
+}
+
+function authoritativeNetworkLabel() {
+  return window.TrebuchetV2RuntimeState?.networkLabel({
+    demoActive: state.demoActive,
+    rpcName: state.rpcName,
+    rpcActiveUrl: state.rpcActiveUrl,
+  }) || 'RPC unavailable';
+}
 
 function v2LocalStorage() {
   try {
@@ -2853,7 +2872,7 @@ function secretPinMeta() {
       label: 'Preview',
       className: 'warn',
       detail: 'Open through the local Trebuchet app.',
-      primaryAction: 'noop',
+      primaryAction: 'retry-local-api',
       primaryLabel: 'Local app',
       disabled: true,
     };
@@ -2891,7 +2910,39 @@ function secretPinMeta() {
 }
 
 function operatorPromptControl() {
+  if (operatorPromptConfig?.hideInput) return null;
   return operatorPromptConfig?.multiline ? $('#operatorPromptTextarea') : $('#operatorPromptInput');
+}
+
+function focusableDialogElements(root) {
+  if (!root) return [];
+  return $$('button:not([disabled]), input:not([disabled]):not([hidden]), textarea:not([disabled]):not([hidden]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])', root)
+    .filter((element) => !element.hidden && element.getAttribute('aria-hidden') !== 'true');
+}
+
+function trapDialogFocus(event, root) {
+  if (event.key !== 'Tab') return false;
+  const focusable = focusableDialogElements(root);
+  if (!focusable.length) return false;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && (document.activeElement === first || !root.contains(document.activeElement))) {
+    event.preventDefault();
+    last.focus();
+    return true;
+  }
+  if (!event.shiftKey && (document.activeElement === last || !root.contains(document.activeElement))) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+  return false;
+}
+
+function restoreDialogFocus(element) {
+  if (element?.isConnected && typeof element.focus === 'function') {
+    window.requestAnimationFrame(() => element.focus());
+  }
 }
 
 function setOperatorPromptMessage(message, { error = false } = {}) {
@@ -2920,10 +2971,14 @@ function closeOperatorPrompt(value = null) {
     control.removeAttribute('aria-invalid');
   });
   document.body.classList.remove('operator-prompt-open');
+  $('.operator-prompt-field')?.removeAttribute('hidden');
   const resolve = operatorPromptResolver;
+  const returnFocus = operatorPromptReturnFocus;
   operatorPromptResolver = null;
   operatorPromptConfig = null;
+  operatorPromptReturnFocus = null;
   if (resolve) resolve(value);
+  restoreDialogFocus(returnFocus);
 }
 
 function submitOperatorPrompt() {
@@ -2955,8 +3010,9 @@ function openOperatorPrompt(options = {}) {
 
   operatorPromptConfig = {
     multiline: options.multiline === true,
+    hideInput: options.hideInput === true,
     readOnly: options.readOnly === true,
-    required: options.required !== false,
+    required: options.hideInput === true ? false : options.required !== false,
     trim: options.trim !== false,
     validate: options.validate,
     emptyMessage: options.emptyMessage,
@@ -2973,9 +3029,11 @@ function openOperatorPrompt(options = {}) {
   const input = $('#operatorPromptInput');
   const textarea = $('#operatorPromptTextarea');
   const control = operatorPromptConfig.multiline ? textarea : input;
-  $('.operator-prompt-field').htmlFor = control.id;
-  input.hidden = operatorPromptConfig.multiline;
-  textarea.hidden = !operatorPromptConfig.multiline;
+  const field = $('.operator-prompt-field');
+  field.htmlFor = control.id;
+  field.toggleAttribute('hidden', operatorPromptConfig.hideInput);
+  input.hidden = operatorPromptConfig.hideInput || operatorPromptConfig.multiline;
+  textarea.hidden = operatorPromptConfig.hideInput || !operatorPromptConfig.multiline;
   input.type = options.type === 'password' ? 'password' : 'text';
   input.inputMode = options.inputMode || 'text';
   input.removeAttribute('maxlength');
@@ -2994,14 +3052,43 @@ function openOperatorPrompt(options = {}) {
   gate.hidden = false;
   gate.setAttribute('aria-hidden', 'false');
   document.body.classList.add('operator-prompt-open');
+  operatorPromptReturnFocus = document.activeElement;
 
   return new Promise((resolve) => {
     operatorPromptResolver = resolve;
     window.requestAnimationFrame(() => {
-      control.focus();
-      if (operatorPromptConfig?.readOnly) control.select();
+      const initialFocus = operatorPromptConfig?.hideInput ? submit : control;
+      initialFocus.focus();
+      if (!operatorPromptConfig?.hideInput && operatorPromptConfig?.readOnly) control.select();
     });
   });
+}
+
+async function confirmOperatorAction({
+  title,
+  detail,
+  confirmLabel = 'Confirm',
+  danger = false,
+  confirmationText = null,
+  message = 'Review the effect before continuing.',
+} = {}) {
+  const typed = typeof confirmationText === 'string' && confirmationText.length > 0;
+  const result = await openOperatorPrompt({
+    eyebrow: danger ? 'Irreversible action' : 'Operator confirmation',
+    title,
+    detail,
+    label: typed ? `Type ${confirmationText}` : 'Confirmation',
+    placeholder: typed ? confirmationText : '',
+    confirmLabel,
+    danger,
+    hideInput: !typed,
+    required: typed,
+    message,
+    validate: typed
+      ? (value) => value === confirmationText ? null : `Type ${confirmationText} exactly to continue.`
+      : undefined,
+  });
+  return result !== null;
 }
 
 function handleOperatorPromptInput(event) {
@@ -3094,6 +3181,7 @@ function openRecoveryPinGate({ reason = 'unlock' } = {}) {
     message: 'Enter your four-digit Recovery PIN.',
     reason,
   };
+  recoveryPinReturnFocus = document.activeElement;
   recoveryPinGatePromise = new Promise((resolve) => {
     recoveryPinGateResolve = resolve;
   });
@@ -3117,8 +3205,11 @@ function settleRecoveryPinGate(unlocked) {
     message: 'Enter your four-digit Recovery PIN.',
     reason: 'unlock',
   };
+  const returnFocus = recoveryPinReturnFocus;
+  recoveryPinReturnFocus = null;
   renderAll();
   if (resolve) resolve(unlocked === true);
+  restoreDialogFocus(returnFocus);
 }
 
 function cancelRecoveryPinGate() {
@@ -4069,8 +4160,6 @@ function applyLaunchPlan(plan, config = currentLaunchConfig()) {
     : stampLaunchPlanConfigFingerprint(rawPlan, config);
   const transactions = operationsToTransactions(effectivePlan?.operations);
   state.launchPlan = effectivePlan;
-  state.connected = true;
-  state.simulated = true;
   state.launchStage = Math.max(state.launchStage, 1);
   state.transactions = transactions.length
     ? transactions
@@ -4195,7 +4284,7 @@ function renderGlobalStrip() {
       : 'Static preview';
   const recoveryLabel = `${state.recovery.activeJournalCount} active / ${state.recovery.pendingWalletCount} wallets`;
   $('#globalStrip').innerHTML = [
-    ['Wallet', state.connected ? `${current.name} ${current.address}` : 'Locked'],
+    ['Wallet', walletIsUnlocked() ? `${current.name} ${current.address}` : 'Locked'],
     ['Run', `${signed}/${total} done / ${pending} queued`],
     ['API', apiLabel],
     ['Recovery', recoveryLabel],
@@ -4261,10 +4350,12 @@ function fundingMeterSnapshot(config = currentLaunchConfig()) {
   const hasWalletBalance = walletBalanceFresh && Number.isFinite(walletSol) && state.apiStatus === 'connected';
   const availableSol = hasWalletBalance ? walletSol : launchSol;
   const fundingEstimateStatus = classicFundingEstimateStatus(config);
-  const estimatedCost = (fundingEstimateStatus.matchesConfig ? Number(state.classicFundingEstimate?.totalSol) : 0)
-    || Number(state.launchPlan?.funding?.estimatedSolCost)
-    || baseTransactions.reduce((total, tx) => total + tx.cost, 0);
-  const missingSol = Math.max(0, estimatedCost - availableSol);
+  const estimate = window.TrebuchetV2RuntimeState?.fundingEstimate({
+    estimateMatches: fundingEstimateStatus.matchesConfig,
+    estimatedSol: state.classicFundingEstimate?.totalSol,
+  }) || { available: false, value: null, label: 'Estimate required' };
+  const estimatedCost = estimate.value;
+  const missingSol = estimate.available ? Math.max(0, estimatedCost - availableSol) : null;
   const routes = quoteAcquireRoutes();
   const quoteStatus = quoteAcquireStatus(config);
   const acquire = quoteStatus.progress;
@@ -4305,7 +4396,9 @@ function fundingMeterSnapshot(config = currentLaunchConfig()) {
   const manualLabel = manualItems.length
     ? `${manualItems.length} token${manualItems.length === 1 ? '' : 's'} / ${manual.label}`
     : 'None';
-  const badge = state.quoteAcquire.error
+  const badge = !estimate.available
+    ? { label: 'Estimate first', className: 'warn' }
+    : state.quoteAcquire.error
     ? { label: 'Acquire error', className: 'danger' }
     : fundingEstimateStatus.matchesConfig && !hasWalletBalance
       ? { label: walletBalanceStale ? 'Stale balance' : 'Check wallet', className: 'warn' }
@@ -4327,10 +4420,12 @@ function fundingMeterSnapshot(config = currentLaunchConfig()) {
     walletBalanceFresh,
     walletBalanceStale,
     walletBalanceCheckedAt: detailedBalance?.checkedAt || null,
+    estimateAvailable: estimate.available,
+    estimateLabel: estimate.label,
     estimatedCost,
-    fundedPercent: estimatedCost > 0 ? clampPercent((availableSol / estimatedCost) * 100) : 0,
+    fundedPercent: estimate.available && estimatedCost > 0 ? clampPercent((availableSol / estimatedCost) * 100) : 0,
     missingSol,
-    missingClass: missingSol > 0.001 ? 'warn' : '',
+    missingClass: estimate.available && missingSol > 0.001 ? 'warn' : '',
     acquireLabel,
     acquireClass,
     manualLabel,
@@ -4556,8 +4651,8 @@ function renderChartDeck() {
     <div class="funding-track" aria-label="Funding progress">
       <span style="width:${funding.fundedPercent}%"></span>
     </div>
-    <div class="funding-row ${escapeHtml(funding.availableClass)}"><span>${escapeHtml(funding.availableLabel)}</span><strong>${funding.availableSol.toFixed(2)} / ${funding.estimatedCost.toFixed(2)} SOL</strong></div>
-    <div class="funding-row ${escapeHtml(funding.missingClass)}"><span>Missing SOL</span><strong>${funding.missingSol.toFixed(2)} SOL</strong></div>
+    <div class="funding-row ${escapeHtml(funding.availableClass)}"><span>${escapeHtml(funding.availableLabel)}</span><strong>${funding.estimateAvailable ? `${funding.availableSol.toFixed(2)} / ${funding.estimatedCost.toFixed(2)} SOL` : `${funding.availableSol.toFixed(2)} SOL planned`}</strong></div>
+    <div class="funding-row ${escapeHtml(funding.missingClass)}"><span>${funding.estimateAvailable ? 'Missing SOL' : 'Cost estimate'}</span><strong>${funding.estimateAvailable ? `${funding.missingSol.toFixed(2)} SOL` : 'Run estimator first'}</strong></div>
     <div class="funding-row ${escapeHtml(funding.acquireClass)}"><span>Acquired quotes</span><strong>${escapeHtml(funding.acquireLabel)}</strong></div>
     <div class="funding-row ${escapeHtml(funding.manualClass)}"><span>Manual quote</span><strong>${escapeHtml(funding.manualLabel)}</strong></div>
     <div class="funding-row ${escapeHtml(funding.observedClass)}"><span>Observed spend</span><strong>${escapeHtml(funding.observedLabel)}</strong></div>
@@ -11375,7 +11470,7 @@ function renderFinalizationPanel() {
         <button class="${state.verifyPanel === 'audit' ? 'is-selected' : ''}" type="button" role="tab" aria-selected="${state.verifyPanel === 'audit' ? 'true' : 'false'}" data-action="select-verify-panel" data-verify-panel="audit">Parity audit</button>
       </nav>
       <div class="verify-panel-stage">
-      <div class="proof-review-panel" data-verify-panel-view="proof" ${state.verifyPanel === 'proof' ? '' : 'hidden'}>
+      <div class="proof-review-panel" id="proofExplorer" data-verify-panel-view="proof" ${state.verifyPanel === 'proof' ? '' : 'hidden'}>
         <div class="proof-review-head">
           <span>
             <span class="eyebrow">Proof review</span>
@@ -11501,7 +11596,7 @@ function renderClassicBridge() {
   const ladderCount = topology.pools.reduce((sum, pool) => sum + Number(pool.ladder?.bandCount || pool.ladder?.bands?.length || 0), 0);
   const fundingEstimateStatus = classicFundingEstimateStatus(config);
   const estimate = fundingEstimateStatus.matchesConfig ? state.classicFundingEstimate : null;
-  const totalSol = Number(estimate?.totalSol || state.launchPlan?.funding?.estimatedSolCost || 0);
+  const totalSol = Number(estimate?.totalSol || 0);
   const routeCount = estimate?.autoSwapPlan?.length || 0;
   const readiness = state.executionReadiness;
   const readinessMeta = readinessBadge(readiness);
@@ -11711,6 +11806,7 @@ function renderActivityLogDrawer() {
 
   drawer.classList.toggle('is-open', state.activityLog.open);
   drawer.setAttribute('aria-hidden', state.activityLog.open ? 'false' : 'true');
+  drawer.inert = !state.activityLog.open;
   drawer.innerHTML = `
     <button class="activity-drawer-backdrop" type="button" data-action="close-activity-log" aria-label="Close activity log"></button>
     <section class="activity-drawer-panel" role="dialog" aria-modal="true" aria-label="Activity log">
@@ -11902,7 +11998,7 @@ function renderSignaturePanel() {
               : state.transactions.length || context.isLive ? 'pending' : 'draft';
         const actionAttrs = state.transactions.length
           ? `data-action="review" data-tx="${escapeHtml(tx.id)}"`
-          : `data-action="noop" data-message="${escapeHtml(context.isLive ? (tx.effects?.[0] || tx.label) : 'Review the launch plan first')}"`;
+          : 'data-action="review-plan"';
         return `
           <button class="signature-step ${stateLabel}" type="button" title="${escapeHtml(tx.label)}" ${actionAttrs}>
             <span class="signature-index">${index + 1}</span>
@@ -12012,7 +12108,7 @@ function renderFieldRunbookSummary(context, rows) {
 function fieldRunbookActionControl(action = '', stage = {}) {
   const detail = stage.detail || stage.firstBlocker?.detail || 'Review the current field-verification blocker.';
   const fallback = (label, message = detail) => ({
-    dataAction: 'noop',
+    dataAction: 'inspect-runbook-blocker',
     label,
     message,
     disabled: false,
@@ -13668,8 +13764,11 @@ function renderParityPanel() {
 function renderWallet() {
   const current = account();
   const pinMeta = secretPinMeta();
-  $('#walletLabel').textContent = state.connected ? `${current.name} ${current.address}` : 'Unlock Trebuchet wallet';
-  $('.wallet-led').classList.toggle('is-on', state.connected);
+  const unlocked = walletIsUnlocked();
+  $('#walletLabel').textContent = selectedLaunchWalletPublicKey()
+    ? `${current.name} ${unlocked ? current.address : 'Locked'}`
+    : 'Choose Trebuchet wallet';
+  $('.wallet-led').classList.toggle('is-on', unlocked);
   const walletRows = walletAccounts();
   const selectedPublicKey = selectedLaunchWalletPublicKey();
   const selectedRow = (
@@ -13737,18 +13836,21 @@ function renderWallet() {
   const proofReportUri = proof?.report?.jsonUri || proof?.reportPublish?.jsonUri || null;
   const proofAssets = proof ? [
     proofMint ? {
+      kind: 'token',
       type: 'Token proof',
       name: proof?.token?.symbol || shortAddress(proofMint),
       detail: proofMint,
       state: proof?.demo ? 'Demo' : 'Verified',
     } : null,
     proofPools.length ? {
+      kind: 'liquidity',
       type: 'Liquidity proof',
       name: `${proofPools.length} recorded pool${proofPools.length === 1 ? '' : 's'}`,
       detail: proofPools.map(shortAddress).join(', '),
       state: 'Verified',
     } : null,
     proofReportUri ? {
+      kind: 'report',
       type: 'Launch report',
       name: 'Published report artifact',
       detail: proofReportUri,
@@ -13919,7 +14021,7 @@ function renderWallet() {
           <p>${escapeHtml(item.type)} / ${escapeHtml(item.detail)}</p>
         </span>
         <span class="risk-badge ${stateClass(item.state)}">${escapeHtml(item.state)}</span>
-        <button class="pill-button" type="button" data-action="noop" data-message="${escapeHtml(item.name)} selected">Inspect</button>
+        <button class="pill-button" type="button" data-action="inspect-proof-asset" data-proof-kind="${escapeHtml(item.kind)}" ${item.kind === 'report' ? `data-url="${escapeHtml(item.detail)}"` : ''}>Inspect</button>
       </article>
     `).join('')}
   ` : '';
@@ -14118,25 +14220,30 @@ function approvalHtml() {
       <div class="approval-head">
         <span>
           <span class="eyebrow">Trebuchet wallet</span>
-          <h2>${state.connected ? 'Unlocked' : 'Locked'}</h2>
+          <h2>${walletIsUnlocked() ? 'Unlocked' : 'Locked'}</h2>
         </span>
-        <span class="badge">${escapeHtml(state.network)}</span>
+        <span class="badge">${escapeHtml(authoritativeNetworkLabel())}</span>
       </div>
       <div class="approval-body">
         <div class="kv-row"><span>Origin</span><strong>makesometokens.com</strong></div>
-        <div class="kv-row"><span>Wallet</span><strong>${state.connected ? escapeHtml(current.name) : 'Locked'}</strong></div>
+        <div class="kv-row"><span>Wallet</span><strong>${walletIsUnlocked() ? escapeHtml(current.name) : 'Locked'}</strong></div>
         <div class="kv-row"><span>Policy</span><strong>Fund, simulate, arm</strong></div>
         <p>No run is armed. Review the run plan after funding the launch wallet.</p>
       </div>
       <div class="approval-actions">
         <button class="secondary-button" type="button" data-action="close-approval">Close</button>
-        <button class="primary-button" type="button" data-action="toggle-wallet">${state.connected ? 'Lock' : 'Unlock'}</button>
+        <button class="primary-button" type="button" data-action="toggle-wallet">${walletIsUnlocked() ? 'Lock' : 'Unlock'}</button>
       </div>
     `;
   }
   const rows = signatureRows();
   const pendingRows = rows.filter((item) => item.state === 'pending');
-  const totalCost = rows.reduce((sum, item) => sum + Number(item.cost || 0), 0);
+  const config = currentLaunchConfig();
+  const fundingStatus = classicFundingEstimateStatus(config);
+  const currentEstimate = window.TrebuchetV2RuntimeState?.fundingEstimate({
+    estimateMatches: fundingStatus.matchesConfig,
+    estimatedSol: state.classicFundingEstimate?.totalSol,
+  }) || { available: false, value: null, label: 'Estimate required' };
 
   return `
     <div class="approval-head">
@@ -14149,8 +14256,8 @@ function approvalHtml() {
     <div class="approval-body">
       <div class="kv-row"><span>Origin</span><strong>makesometokens.com</strong></div>
       <div class="kv-row"><span>Signing wallet</span><strong>${escapeHtml(current.name)}</strong></div>
-      <div class="kv-row"><span>Network</span><strong>${escapeHtml(state.network)}</strong></div>
-      <div class="kv-row"><span>Estimated envelope</span><strong>${fmtSol(totalCost)}</strong></div>
+      <div class="kv-row"><span>Network</span><strong>${escapeHtml(authoritativeNetworkLabel())}</strong></div>
+      <div class="kv-row"><span>Funding estimate</span><strong>${currentEstimate.available ? fmtSol(currentEstimate.value) : 'Run estimator first'}</strong></div>
       <div class="kv-row"><span>Local signer</span><strong>Encrypted Trebuchet key</strong></div>
       <div class="kv-row"><span>Simulation</span><strong>Decoded</strong></div>
       <div class="kv-row"><span>Plan source</span><strong>${escapeHtml(tx.source || 'static-preview')}</strong></div>
@@ -14159,7 +14266,7 @@ function approvalHtml() {
     </div>
     <div class="approval-actions">
       <button class="secondary-button" type="button" data-action="close-approval">Cancel</button>
-      <button class="primary-button" type="button" data-action="run-launch">Start local run</button>
+      <button class="primary-button" type="button" data-action="run-launch">Arm local run</button>
     </div>
   `;
 }
@@ -14228,7 +14335,8 @@ function applyRpcConfig(config = {}) {
   state.rpcSaved = Array.isArray(config.saved) ? config.saved : state.rpcSaved;
   const active = state.rpcSaved.find((item) => item?.url === state.rpcActiveUrl);
   state.rpcName = active?.name || (state.rpcActiveUrl ? safeRpcUrl(state.rpcActiveUrl) : state.rpcName);
-  $('#networkLabel').textContent = state.demoActive ? 'Demo' : state.rpcName;
+  $('#networkLabel').textContent = authoritativeNetworkLabel();
+  if ($('#environmentLabel')) $('#environmentLabel').textContent = state.demoActive ? 'DEMO' : 'RPC';
 }
 
 function renderRpcSettingsPanel() {
@@ -14302,6 +14410,13 @@ function renderSettings() {
   const pinMeta = secretPinMeta();
   const modeRows = [
     {
+      title: 'Execution mode',
+      detail: state.demoActive
+        ? 'Practice adapter active. Chain-touching operations are simulated.'
+        : 'Live adapter active. Guarded operations use the configured RPC.',
+      state: state.demoActive ? 'Practice' : 'Live',
+    },
+    {
       title: 'Recovery PIN',
       detail: pinMeta.detail,
       state: pinMeta.label,
@@ -14329,6 +14444,17 @@ function renderSettings() {
   ];
 
   $('#settingsList').innerHTML = `
+    <article class="setting-row ${state.demoActive ? '' : 'warn'}">
+      <span>
+        <h3>${state.demoActive ? 'Practice mode' : 'Live mode'}</h3>
+        <p>${state.demoActive
+          ? 'All chain-touching API operations use the simulated demo ledger.'
+          : 'Actions can spend real assets through the authoritative RPC after readiness confirmation.'}</p>
+      </span>
+      <button class="pill-button ${state.demoActive ? '' : 'danger'}" type="button" data-action="toggle-demo-mode" ${state.apiStatus === 'connected' ? '' : 'disabled'}>
+        ${state.demoActive ? 'Switch to live' : 'Switch to Practice'}
+      </button>
+    </article>
     <article class="secret-pin-panel ${escapeHtml(pinMeta.className)}">
       <span>
         <span class="eyebrow">Recovery PIN</span>
@@ -14606,7 +14732,7 @@ function recoveryWizardModel({
 
   const unlockActions = [];
   if (state.apiStatus !== 'connected') {
-    unlockActions.push({ label: 'Open local app', action: 'noop', icon: 'fa-desktop' });
+    unlockActions.push({ label: 'Retry local API', action: 'retry-local-api', icon: 'fa-rotate-right' });
   } else if (!state.secretPin.configured) {
     unlockActions.push({ label: 'Set Recovery PIN', action: 'setup-secret-pin', icon: 'fa-key' });
   } else if (secretLocked && recoverableCount > 0) {
@@ -15076,7 +15202,7 @@ function renderHistory() {
           <span class="risk-badge ${stateClass(item.status)}">${escapeHtml(item.status)}</span>
           ${canResumeJournal(item.journal) ? `<button class="pill-button" type="button" data-action="resume-journal" data-journal-id="${escapeHtml(item.id)}" ${state.recoveryActionId === item.id ? 'disabled' : ''}>${state.recoveryActionId === item.id ? 'Resuming' : 'Resume'}</button>` : ''}
           ${item.resumePlan?.manualRecoveryRequired ? '<span class="risk-badge danger">Manual recovery</span>' : ''}
-          ${state.demoActive && !isTerminalJournal(item.journal) ? '<button class="pill-button" type="button" data-action="noop" data-message="Disable demo mode to resume real journals">Demo on</button>' : ''}
+          ${state.demoActive && !isTerminalJournal(item.journal) ? '<button class="pill-button" type="button" data-action="toggle-demo-mode">Switch to live</button>' : ''}
           ${canDismissJournal(item.journal) ? `<button class="pill-button" type="button" data-action="dismiss-journal" data-journal-id="${escapeHtml(item.id)}" ${state.recoveryActionId === item.id ? 'disabled' : ''}>Dismiss</button>` : ''}
         </span>
         <div class="journal-resume-plan ${stateClass(item.resumePlan?.state)}">
@@ -16561,10 +16687,13 @@ async function runV2Airdrop({ retry = false, skipConfirm = false, quiet = false,
     if (!quiet) notify(retry ? 'No failed airdrop recipients to retry' : 'Attach airdrop recipients first');
     return;
   }
-  if (!skipConfirm && typeof window.confirm === 'function') {
-    const ok = window.confirm(
-      `${retry ? 'Retry failed airdrop recipients' : 'Run airdrop before final sweep'}?\n\nTrebuchet will sign token transfers from the managed launch wallet.`,
-    );
+  if (!skipConfirm) {
+    const ok = await confirmOperatorAction({
+      title: retry ? 'Retry failed airdrop recipients' : 'Run airdrop before final sweep',
+      detail: 'Trebuchet will sign token transfers from the managed launch wallet.',
+      confirmLabel: retry ? 'Retry airdrop' : 'Run airdrop',
+      danger: true,
+    });
     if (!ok) return;
   }
 
@@ -16698,10 +16827,14 @@ async function startQuoteAcquire() {
     notify('Quote acquire requires the local Trebuchet app');
     return;
   }
-  if (!state.demoActive && typeof window.confirm === 'function') {
-    const ok = window.confirm(
-      `Acquire ${routes.length} quote-token route${routes.length === 1 ? '' : 's'} from the selected Trebuchet-managed wallet? This can spend SOL from that wallet.`,
-    );
+  if (!state.demoActive) {
+    const ok = await confirmOperatorAction({
+      title: 'Acquire quote tokens',
+      detail: `Acquire ${routes.length} route${routes.length === 1 ? '' : 's'} from the selected managed wallet. This can spend real SOL.`,
+      confirmLabel: 'Acquire tokens',
+      danger: true,
+      confirmationText: 'SPEND SOL',
+    });
     if (!ok) return;
   }
 
@@ -16787,11 +16920,34 @@ async function stageTransactions() {
   }
 }
 
-function simulateLaunch() {
-  state.simulated = true;
-  state.launchStage = Math.min(launchStages.length - 1, state.launchStage + 1);
+async function setDemoMode(next, { announce = true } = {}) {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.setUserPrefs) {
+    notify('Practice mode requires the local Trebuchet app');
+    return false;
+  }
+  const prefs = await state.apiClient.setUserPrefs({ demoMode: next === true });
+  state.prefs.demoMode = prefs.demoMode === true;
+  await refreshLocalApiState();
+  state.launchMode = state.demoActive ? 'dry-run' : 'guarded';
+  if (announce) {
+    notify(state.demoActive
+      ? 'Practice mode active: chain operations are simulated'
+      : 'Live mode active: guarded operations use the configured RPC');
+  }
   renderAll();
-  notify('Simulation refreshed');
+  return state.demoActive === (next === true);
+}
+
+async function simulateLaunch() {
+  try {
+    if (!state.demoActive && !(await setDemoMode(true, { announce: false }))) return;
+    state.launchMode = 'dry-run';
+    await stageTransactions();
+    setLaunchWorkspace('execute', { focus: true });
+    notify('Practice mode active; review the plan and run the demo');
+  } catch (error) {
+    notify(error.message || 'Could not enable Practice mode');
+  }
 }
 
 function addManagedWallet(wallet, { select = true } = {}) {
@@ -16802,7 +16958,6 @@ function addManagedWallet(wallet, { select = true } = {}) {
   if (select) {
     state.selectedWalletPublicKey = wallet.publicKey;
     state.accountId = wallet.publicKey;
-    state.connected = wallet.hasSecretKey !== false;
     resetManualPrefundState();
     resetFundingWalletState();
   }
@@ -17110,10 +17265,13 @@ async function revealWalletSecret(publicKey = selectedLaunchWalletPublicKey()) {
     notify('Secret reveal requires the local Trebuchet app');
     return;
   }
-  if (typeof window.confirm === 'function') {
-    const ok = window.confirm('Reveal the recovery secret for this launch wallet? Only do this when you are ready to back it up or recover manually.');
-    if (!ok) return;
-  }
+  const revealConfirmed = await confirmOperatorAction({
+    title: 'Reveal recovery secret',
+    detail: 'Only reveal this secret when you are ready to back it up or recover manually. Keep it out of screenshots and support logs.',
+    confirmLabel: 'Reveal secret',
+    danger: true,
+  });
+  if (!revealConfirmed) return;
 
   state.revealingWalletPublicKey = publicKey;
   state.revealError = null;
@@ -17182,7 +17340,6 @@ async function discardSelectedWallet(publicKey = selectedLaunchWalletPublicKey()
     const nextWallet = state.managedWallets[0] || null;
     state.selectedWalletPublicKey = nextWallet?.publicKey || null;
     state.accountId = nextWallet?.publicKey || 'launch';
-    state.connected = nextWallet?.hasSecretKey === true;
     await refreshLocalApiState();
     notify('Local wallet recovery entry discarded');
   } catch (error) {
@@ -17287,8 +17444,11 @@ function closeSweepConfirmation(result = null) {
   }
   document.body.classList.remove('sweep-confirm-open');
   const resolve = sweepConfirmationResolver;
+  const returnFocus = sweepConfirmationReturnFocus;
   sweepConfirmationResolver = null;
+  sweepConfirmationReturnFocus = null;
   if (resolve) resolve(result);
+  restoreDialogFocus(returnFocus);
 }
 
 function submitSweepConfirmation() {
@@ -17330,6 +17490,7 @@ function openSweepConfirmation({ publicKey, defaultDestination = '' } = {}) {
   if (sweepConfirmationResolver) closeSweepConfirmation(null);
 
   gate.dataset.publicKey = publicKey;
+  sweepConfirmationReturnFocus = document.activeElement;
   $('#sweepConfirmSource').textContent = publicKey;
   $('#sweepConfirmDestination').value = defaultDestination;
   $('#sweepConfirmTypedAddress').value = '';
@@ -17531,8 +17692,13 @@ async function removeVanityCandidateByPublicKey(publicKey, { confirm = true } = 
     notify('Select a saved Vanity CA first');
     return false;
   }
-  if (confirm && typeof window.confirm === 'function') {
-    const ok = window.confirm(`Remove saved Vanity CA ${shortAddress(publicKey)} from local options?`);
+  if (confirm) {
+    const ok = await confirmOperatorAction({
+      title: 'Remove saved Vanity CA',
+      detail: `Remove ${shortAddress(publicKey)} from local options?`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
     if (!ok) return false;
   }
   if (state.apiStatus === 'connected' && state.apiClient?.removeVanityCandidate && candidate.persisted !== false) {
@@ -17558,8 +17724,13 @@ async function pruneHiddenVanityCandidates() {
     notify('No hidden Vanity CAs to prune');
     return;
   }
-  if (typeof window.confirm === 'function') {
-    const ok = window.confirm(`Prune ${hidden.length} hidden saved Vanity CA option${hidden.length === 1 ? '' : 's'}? The selected and most recent visible options stay available.`);
+  {
+    const ok = await confirmOperatorAction({
+      title: 'Prune hidden Vanity CAs',
+      detail: `Remove ${hidden.length} hidden saved option${hidden.length === 1 ? '' : 's'}? The selected and most recent visible options stay available.`,
+      confirmLabel: 'Prune',
+      danger: true,
+    });
     if (!ok) return;
   }
   for (const candidate of hidden) {
@@ -17639,7 +17810,7 @@ async function startVanityGrind() {
 
   try {
     const token = await state.apiClient.getSessionToken();
-    const params = new URLSearchParams({ token });
+    const params = new URLSearchParams({ token, client: 'v2' });
     if (vanity.prefix) params.set('prefix', vanity.prefix);
     if (vanity.suffix) params.set('suffix', vanity.suffix);
     const source = new EventSource(`/api/generate-vanity-wallet-stream?${params.toString()}`);
@@ -17747,16 +17918,7 @@ async function estimateClassicFunding() {
       return;
     }
   }
-  state.classicFundingEstimate = stampClassicFundingEstimate({
-    totalSol: Number(state.launchPlan?.funding?.estimatedSolCost || 0)
-      || baseTransactions.reduce((total, tx) => total + tx.cost, 0),
-    autoSwapPlan: [],
-    byQuote: {},
-  }, config);
-  resetQuoteAcquireState();
-  resetManualPrefundState();
-  renderAll();
-  notify('Static funding estimate staged');
+  notify('Funding estimates require the authenticated local Trebuchet app');
 }
 
 async function resolveCustomQuoteToken(poolId) {
@@ -18026,10 +18188,14 @@ async function executeNextRunOperation() {
     return;
   }
 
-  if (typeof window.confirm === 'function') {
-    const ok = window.confirm(
-      `${readiness.nextAction}\n\nTrebuchet will run ${readiness.nextEndpoint} with the managed local wallet ${shortAddress(walletPublicKey)}. This can send real mainnet transactions.`,
-    );
+  {
+    const ok = await confirmOperatorAction({
+      title: readiness.nextAction || 'Execute next launch operation',
+      detail: `Trebuchet will run ${readiness.nextEndpoint} with ${shortAddress(walletPublicKey)}. This can send a real transaction through the configured RPC.`,
+      confirmLabel: 'Execute operation',
+      danger: true,
+      confirmationText: 'EXECUTE',
+    });
     if (!ok) return;
   }
 
@@ -18362,10 +18528,14 @@ async function runFullLaunch() {
     return;
   }
 
-  if (typeof window.confirm === 'function') {
-    const ok = window.confirm(
-      `Run full launch?\n\nTrebuchet will keep using the managed local wallet ${shortAddress(walletPublicKey)} until the classic launch flow reaches sweep or a blocker appears. This can send multiple real mainnet transactions.`,
-    );
+  {
+    const ok = await confirmOperatorAction({
+      title: 'Run full launch',
+      detail: `Trebuchet will use ${shortAddress(walletPublicKey)} until sweep or a blocker. This can send multiple real transactions through the configured RPC.`,
+      confirmLabel: 'Run live launch',
+      danger: true,
+      confirmationText: 'RUN LIVE',
+    });
     if (!ok) return;
   }
 
@@ -18534,38 +18704,34 @@ async function runFullLaunch() {
 async function runLaunchEnvelope() {
   if (!state.transactions.length) return;
   const walletPublicKey = state.selectedWalletPublicKey || account().publicKey || account().id;
-  if (state.apiStatus === 'connected' && state.apiClient?.armRunEnvelope) {
-    try {
-      state.lastRunEnvelope = await state.apiClient.armRunEnvelope({
-        walletPublicKey,
-        config: currentLaunchConfig(),
-      });
-    } catch (error) {
-      notify(error.message || 'Could not arm local run');
-      return;
-    }
-  } else {
-    state.lastRunEnvelope = {
-      id: `static-run-${Date.now()}`,
-      walletPublicKey,
-      signer: 'static-preview',
-      status: 'armed',
-      operationCount: state.transactions.length,
-    };
+  if (state.apiStatus !== 'connected' || !state.apiClient?.armRunEnvelope) {
+    notify('Arming requires the authenticated local Trebuchet app');
+    return;
   }
-  state.transactions.forEach((tx) => {
-    if (tx.state !== 'signed') tx.state = 'signed';
-  });
-  state.launchStage = launchStages.length - 1;
+  if (!walletIsUnlocked()) {
+    notify('Unlock the selected managed wallet before arming');
+    setView('wallet');
+    return;
+  }
+  try {
+    state.lastRunEnvelope = await state.apiClient.armRunEnvelope({
+      walletPublicKey,
+      config: currentLaunchConfig(),
+    });
+  } catch (error) {
+    notify(error.message || 'Could not arm local run');
+    return;
+  }
+  state.launchStage = Math.max(state.launchStage, 2);
   state.activeApprovalId = null;
   state.approvalOpen = false;
   history.unshift({
-    title: `${($('#tokenSymbol').value || 'TOK').toUpperCase()} local run completed`,
-    detail: `${state.transactions.length} operations signed by ${account().name}; envelope ${state.lastRunEnvelope.id}.`,
+    title: `${($('#tokenSymbol').value || 'TOK').toUpperCase()} local run armed`,
+    detail: `${state.transactions.length} operations reviewed for ${account().name}; envelope ${state.lastRunEnvelope.id}. No transaction has executed yet.`,
     time: 'Just now',
   });
   renderAll();
-  notify('Local run completed');
+  notify('Local run armed; execute only after readiness passes');
 }
 
 async function checkForUpdates() {
@@ -18772,8 +18938,13 @@ async function removeRpcEndpoint(url) {
     notify('RPC management requires the local Trebuchet app');
     return;
   }
-  if (typeof window.confirm === 'function') {
-    const ok = window.confirm(`Remove saved RPC ${safeRpcUrl(url)}?`);
+  {
+    const ok = await confirmOperatorAction({
+      title: 'Remove saved RPC',
+      detail: `Remove ${safeRpcUrl(url)} from local settings?`,
+      confirmLabel: 'Remove RPC',
+      danger: true,
+    });
     if (!ok) return;
   }
   state.rpcBusy = 'remove';
@@ -18801,7 +18972,6 @@ function applyBootState(boot) {
   state.apiStatus = boot.api.status || (boot.api.available ? 'connected' : 'static');
   state.apiDetail = boot.api.detail || 'Static preview; local API is unavailable.';
   state.demoActive = boot.demo?.active === true;
-  state.network = state.demoActive ? 'Demo' : 'Mainnet';
   state.rpcActiveUrl = boot.rpc?.activeUrl || null;
   state.rpcSaved = Array.isArray(boot.rpc?.saved) ? boot.rpc.saved : [];
   state.rpcName = boot.rpc?.label || 'Unknown RPC';
@@ -18816,6 +18986,7 @@ function applyBootState(boot) {
   state.updateCheck.available = boot.app?.updateCheckAvailable === true;
   applySecretPinStatus(boot.secretPin || {});
   state.prefs = {
+    demoMode: boot.prefs?.demoMode === true,
     publishLaunchReport: boot.prefs?.publishLaunchReport !== false,
     checkForUpdatesOnStartup: boot.prefs?.checkForUpdatesOnStartup !== false,
   };
@@ -18844,9 +19015,9 @@ function applyBootState(boot) {
   if (state.managedWallets.length && !state.selectedWalletPublicKey) {
     state.selectedWalletPublicKey = state.managedWallets[0].publicKey;
     state.accountId = state.selectedWalletPublicKey;
-    state.connected = state.managedWallets[0].hasSecretKey === true;
   }
-  $('#networkLabel').textContent = state.demoActive ? 'Demo' : state.rpcName;
+  $('#networkLabel').textContent = authoritativeNetworkLabel();
+  if ($('#environmentLabel')) $('#environmentLabel').textContent = state.demoActive ? 'DEMO' : 'RPC';
 }
 
 async function bootLocalApi() {
@@ -19008,12 +19179,15 @@ async function resumeJournal(journalId) {
     notify('Automatic resume is blocked for this journal; use manual recovery.');
     return;
   }
-  if (typeof window.confirm === 'function') {
+  {
     const planRows = plan.items.slice(0, 4).map((item) => `- ${item}`).join('\n');
-    const ok = window.confirm(
-      `${plan.title}\n\n${plan.detail}\n\n${planRows}\n\n` +
-        'This can send real transactions from the recovered launch wallet.',
-    );
+    const ok = await confirmOperatorAction({
+      title: plan.title,
+      detail: `${plan.detail}\n${planRows}\nThis can send real transactions from the recovered launch wallet.`,
+      confirmLabel: 'Resume journal',
+      danger: true,
+      confirmationText: 'RESUME',
+    });
     if (!ok) return;
   }
   if (state.apiStatus !== 'connected' || !state.apiClient?.resumeLaunchJournal) {
@@ -19039,8 +19213,13 @@ async function dismissJournal(journalId) {
   if (!journalId) return;
   const journal = state.recovery.journals.find((item) => item.id === journalId);
   if (!canDismissJournal(journal)) return;
-  if (typeof window.confirm === 'function') {
-    const ok = window.confirm('Dismiss this launch journal from the active recovery list?');
+  {
+    const ok = await confirmOperatorAction({
+      title: 'Dismiss launch journal',
+      detail: 'Remove this journal from the active recovery list? This does not sweep assets.',
+      confirmLabel: 'Dismiss journal',
+      danger: true,
+    });
     if (!ok) return;
   }
   if (state.apiStatus !== 'connected' || !state.apiClient?.dismissLaunchJournal) {
@@ -19262,7 +19441,11 @@ function handleClick(event) {
     if (actionWorkspace) setLaunchWorkspace(actionWorkspace);
   }
   if (action === 'review') {
-    state.connected = true;
+    if (!walletIsUnlocked()) {
+      setView('wallet');
+      notify(selectedLaunchWalletPublicKey() ? 'Unlock the managed wallet before review' : 'Generate or select a managed wallet first');
+      return;
+    }
     state.activeApprovalId = actionTarget.dataset.tx;
     state.approvalOpen = true;
     renderAll();
@@ -19389,14 +19572,19 @@ function handleClick(event) {
   }
 
   if (action === 'open-activity-log') {
+    activityLogReturnFocus = actionTarget;
     state.activityLog.open = true;
     renderActivityLogDrawer();
+    window.requestAnimationFrame(() => $('#activityLogDrawer .activity-drawer-head button')?.focus());
     return;
   }
 
   if (action === 'close-activity-log') {
     state.activityLog.open = false;
     renderActivityLogDrawer();
+    const returnFocus = activityLogReturnFocus;
+    activityLogReturnFocus = null;
+    restoreDialogFocus(returnFocus);
     return;
   }
 
@@ -19571,6 +19759,35 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'retry-local-api') {
+    bootLocalApi().catch((error) => notify(error.message || 'Local API retry failed'));
+    return;
+  }
+
+  if (action === 'inspect-proof-asset') {
+    const url = actionTarget.dataset.url;
+    if (url) {
+      window.open?.(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    setView('launch');
+    state.verifyPanel = 'proof';
+    setLaunchWorkspace('verify', { focus: true });
+    renderAll();
+    window.requestAnimationFrame(() => document.getElementById('proofExplorer')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    return;
+  }
+
+  if (action === 'inspect-runbook-blocker') {
+    setView('launch');
+    state.verifyPanel = 'audit';
+    setLaunchWorkspace('verify', { focus: true });
+    renderAll();
+    notify(actionTarget.dataset.message || 'Review the active field-verification blocker');
+    window.requestAnimationFrame(() => $('#stageList .is-active')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+    return;
+  }
+
   if (action === 'import-wallet') {
     importManagedWallet().catch((error) => notify(error.message || 'Wallet import failed'));
     return;
@@ -19583,10 +19800,22 @@ function handleClick(event) {
   }
 
   if (action === 'toggle-wallet') {
-    state.connected = !state.connected;
     state.approvalOpen = false;
-    renderAll();
-    notify(state.connected ? 'Wallet unlocked' : 'Wallet locked');
+    if (!selectedLaunchWalletPublicKey()) {
+      setView('wallet');
+      notify('Generate or select a managed wallet first');
+      return;
+    }
+    if (!state.secretPin.configured) {
+      setView('wallet');
+      notify('Set a Recovery PIN to add explicit wallet lock controls');
+      return;
+    }
+    if (state.secretPin.locked) {
+      unlockSecretPin().catch((error) => notify(error.message || 'Wallet unlock failed'));
+    } else {
+      lockSecretPin().catch((error) => notify(error.message || 'Wallet lock failed'));
+    }
     return;
   }
 
@@ -19599,7 +19828,6 @@ function handleClick(event) {
     state.revealError = null;
     resetManualPrefundState();
     resetFundingWalletState();
-    state.connected = true;
     renderAll();
     notify(`${account().name} selected`);
     return;
@@ -19746,6 +19974,11 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'toggle-demo-mode') {
+    setDemoMode(!state.demoActive).catch((error) => notify(error.message || 'Execution mode change failed'));
+    return;
+  }
+
   if (action === 'test-rpc') {
     testRpcEndpoint();
     return;
@@ -19803,9 +20036,6 @@ function handleClick(event) {
     return;
   }
 
-  if (action === 'noop') {
-    notify(actionTarget.dataset.message || 'Selected');
-  }
 }
 
 function bindEvents() {
@@ -19814,6 +20044,7 @@ function bindEvents() {
   document.addEventListener('keydown', (event) => {
     const operatorPromptGate = $('#operatorPromptGate');
     if (operatorPromptGate && !operatorPromptGate.hidden) {
+      if (trapDialogFocus(event, operatorPromptGate)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         closeOperatorPrompt(null);
@@ -19829,6 +20060,7 @@ function bindEvents() {
 
     const sweepConfirmGate = $('#sweepConfirmGate');
     if (sweepConfirmGate && !sweepConfirmGate.hidden) {
+      if (trapDialogFocus(event, sweepConfirmGate)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         closeSweepConfirmation(null);
@@ -19840,6 +20072,7 @@ function bindEvents() {
     }
 
     if (state.recoveryPinGate.open) {
+      if (trapDialogFocus(event, $('#recoveryPinGate'))) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         cancelRecoveryPinGate();
@@ -19847,9 +20080,15 @@ function bindEvents() {
       return;
     }
 
-    if (event.key === 'Escape' && state.activityLog.open) {
-      state.activityLog.open = false;
-      renderActivityLogDrawer();
+    if (state.activityLog.open) {
+      if (trapDialogFocus(event, $('#activityLogDrawer'))) return;
+      if (event.key === 'Escape') {
+        state.activityLog.open = false;
+        renderActivityLogDrawer();
+        const returnFocus = activityLogReturnFocus;
+        activityLogReturnFocus = null;
+        restoreDialogFocus(returnFocus);
+      }
       return;
     }
 
@@ -19881,10 +20120,9 @@ function bindEvents() {
   });
 
   $('#networkButton').addEventListener('click', () => {
-    state.network = state.network === 'Mainnet' ? 'Devnet' : 'Mainnet';
-    $('#networkLabel').textContent = state.network;
-    renderAll();
-    notify(`${state.network} selected`);
+    setView('settings');
+    window.requestAnimationFrame(() => $('.rpc-settings-panel')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    notify('RPC changes are made in authoritative settings');
   });
 
   $('#themeButton').addEventListener('click', () => {
@@ -19893,9 +20131,8 @@ function bindEvents() {
   });
 
   $('#walletButton').addEventListener('click', () => {
-    state.connected = !state.connected;
-    renderAll();
-    notify(state.connected ? 'Wallet connected' : 'Wallet disconnected');
+    setView('wallet');
+    notify(selectedLaunchWalletPublicKey() ? 'Managed wallet opened' : 'Generate or import a managed wallet');
   });
 
   $('#stageButton').addEventListener('click', stageTransactions);
@@ -19913,13 +20150,20 @@ function bindEvents() {
   });
 
   $$('.mode-button').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.launchMode = button.dataset.mode;
-      $$('.mode-button').forEach((item) => item.classList.toggle('is-selected', item === button));
-      renderLaunchPreview();
-      renderQueue();
-      renderGlobalStrip();
-      notify(`${button.dataset.label || button.textContent.trim()} selected`);
+    button.addEventListener('click', async () => {
+      try {
+        if (button.dataset.mode === 'dry-run') {
+          await simulateLaunch();
+        } else {
+          if (state.demoActive) await setDemoMode(false, { announce: false });
+          state.launchMode = 'guarded';
+          renderAll();
+          notify('Guarded live mode selected');
+        }
+        $$('.mode-button').forEach((item) => item.classList.toggle('is-selected', item === button));
+      } catch (error) {
+        notify(error.message || 'Execution mode change failed');
+      }
     });
   });
 

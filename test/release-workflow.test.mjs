@@ -70,6 +70,12 @@ test('main merges automatically create patch, minor, or major release tags', () 
   });
   assert.equal(nextRelease('1.2.3', ['v1.3.9'], ['minor']).version, '1.4.0');
   assert.equal(nextRelease('1.2.3', ['v1.3.9'], ['major']).version, '2.0.0');
+  assert.deepEqual(nextRelease('1.0.0', ['v1.0.48'], [], { minimumMajor: 2 }), {
+    releaseType: 'major',
+    version: '2.0.0',
+    tag: 'v2.0.0',
+  });
+  assert.match(workflow, /TREBUCHET_MIN_RELEASE_MAJOR:\s+2/);
 });
 
 test('release workflow publishes the GitHub package for each tag', () => {

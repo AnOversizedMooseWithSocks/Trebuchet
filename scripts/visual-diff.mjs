@@ -11,7 +11,7 @@
 //   node scripts/visual-diff.mjs --threshold 0.01 # custom threshold
 
 import { execSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -55,6 +55,14 @@ const [{ default: pixelmatch }, { PNG }] = await Promise.all([
 
 const goldenFiles = readdirSync(goldenDir).filter(f => f.endsWith('.png')).sort();
 let passed = 0, failed = 0;
+
+// Diff images are run artifacts, not durable evidence. Clear stale failures
+// before comparison so a later green run (and CI artifact upload) cannot
+// accidentally report diffs from an older build.
+mkdirSync(diffDir, { recursive: true });
+for (const filename of readdirSync(diffDir).filter((file) => file.endsWith('.png'))) {
+  unlinkSync(join(diffDir, filename));
+}
 
 if (goldenFiles.length === 0) {
   console.error('No golden images found. Run: node scripts/visual-diff.mjs --golden');

@@ -48,6 +48,7 @@ jobs:
         id: next
         env:
           PR_LABELS_JSON: ${{ steps.pr.outputs.labels }}
+          TREBUCHET_MIN_RELEASE_MAJOR: 2
         run: |
           git fetch --tags origin
           tags_json="$(

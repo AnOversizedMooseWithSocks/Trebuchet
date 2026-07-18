@@ -81,6 +81,11 @@ import {
   discoveryRpcCandidates,
   isMissingMintRpcError,
 } from './discoveryService.js';
+import {
+  redactSensitiveLogArgs,
+  redactSensitiveText,
+  redactUrl,
+} from './logRedaction.js';
 
 // In-flight airdrop guard. Maps wallet public key → boolean (currently
 // running). Used to reject concurrent /api/transfer-assets and
@@ -377,7 +382,7 @@ let _serverLogSeq = 0;
 function _captureLog(level, args) {
   let msg = '';
   try {
-    msg = args
+    msg = redactSensitiveLogArgs(args)
       .map((a) => {
         if (typeof a === 'string') return a;
         if (a instanceof Error) return a.stack || a.message;
@@ -414,15 +419,15 @@ const _origConsoleWarn = console.warn.bind(console);
 const _origConsoleError = console.error.bind(console);
 console.log = (...args) => {
   try { _captureLog('info', args); } catch (_) { /* ignore */ }
-  _origConsoleLog(...args);
+  _origConsoleLog(...redactSensitiveLogArgs(args));
 };
 console.warn = (...args) => {
   try { _captureLog('warn', args); } catch (_) { /* ignore */ }
-  _origConsoleWarn(...args);
+  _origConsoleWarn(...redactSensitiveLogArgs(args));
 };
 console.error = (...args) => {
   try { _captureLog('error', args); } catch (_) { /* ignore */ }
-  _origConsoleError(...args);
+  _origConsoleError(...redactSensitiveLogArgs(args));
 };
 
 // __dirname equivalent in ES modules
@@ -1212,7 +1217,7 @@ app.post('/api/vanity-ca-candidates/remove', (req, res) => {
 
 // SSE streaming endpoint for vanity CA grind progress
 app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
-  let { prefix, suffix, threads, blockhash, token } = req.query;
+  let { prefix, suffix, threads, blockhash, token, client } = req.query;
   prefix = typeof prefix === 'string' ? prefix.trim() : '';
   suffix = typeof suffix === 'string' ? suffix.trim() : '';
 
@@ -1399,8 +1404,12 @@ app.get('/api/generate-vanity-wallet-stream', async (req, res) => {
       success: true,
       wallet: {
         publicKey: walletInfo.publicKey,
-        secretKey: walletInfo.secretKey,
-        secretKeyB58: secretKeyToBase58(walletInfo.secretKey),
+        ...(client === 'v2' ? {} : {
+          // Classic still consumes the secret in its legacy renderer flow.
+          // The v2 client keeps the key server-side in the persisted store.
+          secretKey: walletInfo.secretKey,
+          secretKeyB58: secretKeyToBase58(walletInfo.secretKey),
+        }),
         mnemonic: null,
         vanity: true,
         qrCode,
@@ -3941,9 +3950,10 @@ app.post('/api/v2/run-envelope/arm', (req, res) => {
         signer: 'trebuchet-managed-launch-wallet',
         status: 'armed',
         operationCount: plan.operations.length,
+        executedOperationCount: 0,
         estimatedSolCost: plan.funding.estimatedSolCost,
         maxSpendSol: plan.funding.estimatedSolCost,
-        requiresUserAction: 'fund-and-arm',
+        requiresUserAction: 'check-readiness-and-execute',
         plan,
       },
     });
@@ -5218,6 +5228,33 @@ app.post('/api/quote-token-info', async (req, res) => {
     const { quoteToken } = req.body;
     if (!quoteToken) throw new Error('quoteToken required');
 
+    if (isDemoMode()) {
+      const upper = String(quoteToken).toUpperCase();
+      const known = KNOWN_QUOTES[upper] ? { ...KNOWN_QUOTES[upper] } : null;
+      const address = known?.address || String(quoteToken);
+      return res.json({
+        success: true,
+        info: {
+          ...(known || {}),
+          address,
+          symbol: known?.symbol || 'DEMO',
+          decimals: known?.decimals ?? 6,
+          priceUsd: upper === 'SOL' ? '200' : '1',
+          priceSource: 'demo-ledger',
+          compatible: true,
+          isToken2022: false,
+          extensions: [],
+          disallowedNames: [],
+          freezeAuthorityDisabled: true,
+          mintAuthorityRenounced: true,
+          freezeAuthorityBlock: false,
+          mintAuthorityWarning: false,
+          raydiumTradeable: 'yes',
+          demo: true,
+        },
+      });
+    }
+
     // Resolve identity / metadata first (existing logic), then run a
     // separate Raydium-CLMM compatibility check at the end. The compat
     // check requires the on-chain mint to exist; for known symbols we
@@ -5551,6 +5588,10 @@ app.post('/api/estimate-lp-funding', async (req, res) => {
       allocations,
       targetMarketCapUsd,
       publishLaunchReport: reportEnabled,
+      ...(isDemoMode() ? {
+        priceOracle: async (mint) => new Decimal(mint === KNOWN_QUOTES.SOL.address ? 200 : 1),
+        routeDiscovery: async () => null,
+      } : {}),
     });
     res.json({ success: true, estimate });
   } catch (error) {
@@ -5932,6 +5973,28 @@ app.post('/api/preflight-create-lp', async (req, res) => {
     }
     if (!tokenTotalSupply || !targetMarketCapUsd) {
       throw new Error('tokenTotalSupply and targetMarketCapUsd required');
+    }
+
+    if (isDemoMode()) {
+      const launchedTokenUsd = new Decimal(targetMarketCapUsd).div(tokenTotalSupply);
+      const resolvedPrices = allocations.map((allocation, allocationIndex) => {
+        const upper = String(allocation.quoteToken || '').toUpperCase();
+        const known = KNOWN_QUOTES[upper] || null;
+        const quoteUsd = new Decimal(allocation.quoteUsdOverride || (upper === 'SOL' ? 200 : 1));
+        return {
+          allocationIndex,
+          quoteMint: known?.address || allocation.quoteMint || allocation.quoteToken,
+          quoteSymbol: allocation.quoteSymbolOverride || known?.symbol || 'DEMO',
+          quoteUsd: quoteUsd.toString(),
+          source: 'demo-ledger',
+          driftPct: 0,
+          initialPrice: launchedTokenUsd.div(quoteUsd).toString(),
+        };
+      });
+      return res.json({
+        success: true,
+        preflight: { resolvedPrices, solUsd: '200', demo: true },
+      });
     }
 
     const result = await preflightCreatePoolsAndPositions({
@@ -7840,7 +7903,7 @@ app.listen(PORT, '127.0.0.1', () => {
   const cfg = getRpcConfig();
   const active = cfg.saved.find((r) => r.url === cfg.active);
   console.log(`Server running on http://127.0.0.1:${PORT}`);
-  console.log(`Active RPC: ${active ? active.name : '(unnamed)'} — ${cfg.active}`);
+  console.log(`Active RPC: ${redactSensitiveText(active ? active.name : '(unnamed)')} — ${redactUrl(cfg.active)}`);
   console.log(`Saved RPCs: ${cfg.saved.length} (manage in the UI)`);
   console.log('\nIMPORTANT: For pool creation, use a dedicated RPC (Helius, Triton, QuickNode — free tier is plenty).');
   console.log('Free public RPC endpoints will rate-limit you out of CLMM creation.\n');

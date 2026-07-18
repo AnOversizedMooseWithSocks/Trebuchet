@@ -4896,7 +4896,13 @@ export async function estimateRequiredFunding({
   // Arweave. The endpoint resolves the effective value from the request body
   // (live cost preview) or the saved preference; defaults off for direct callers.
   publishLaunchReport = false,
+  // Dependency injection for deterministic demo/offline execution. Production
+  // callers omit these and use the real price/route services.
+  priceOracle = null,
+  routeDiscovery = null,
 }) {
+  const lookupPrice = priceOracle || _estGetUsdPrice;
+  const discoverRoute = routeDiscovery || _estDiscoverRaydiumRoute;
   const solBreakdown = [];
   const quoteBreakdown = [];
   const byQuote = {};
@@ -4951,7 +4957,7 @@ export async function estimateRequiredFunding({
   let solUsd;
   try {
     // getUsdPrice returns a Decimal or null
-    const p = await _estGetUsdPrice(WSOL_MINT);
+    const p = await lookupPrice(WSOL_MINT);
     solUsd = p || new Decimal(FALLBACK_SOL_USD);
   } catch (e) {
     console.warn(`estimateRequiredFunding: SOL price fallback (${e.message})`);
@@ -5165,7 +5171,7 @@ export async function estimateRequiredFunding({
       // viable and we get a usable price in the same call.
       let route = null;
       try {
-        route = await _estDiscoverRaydiumRoute({
+        route = await discoverRoute({
           quoteMint: quoteAddr,
           quoteDecimals,
           solUsd,
@@ -5191,7 +5197,7 @@ export async function estimateRequiredFunding({
         quoteUsdSource = 'raydium-probe';
       } else {
         try {
-          quoteUsd = await _estGetUsdPrice(quoteAddr);
+          quoteUsd = await lookupPrice(quoteAddr);
           if (quoteUsd && quoteUsd.gt(0)) {
             quoteUsdSource = 'oracle';
           } else {

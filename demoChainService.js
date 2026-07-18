@@ -103,9 +103,17 @@ function sleep(ms) {
 
 // base58 alphabet (Bitcoin/Solana) — no 0, O, I, or l.
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+let deterministicDemoValue = 0;
 
 function randomBase58(len) {
   let out = '';
+  if (process.env.TREBUCHET_E2E_DETERMINISTIC === '1') {
+    const value = deterministicDemoValue++;
+    for (let i = 0; i < len; i++) {
+      out += BASE58[(value * 17 + i * 13) % BASE58.length];
+    }
+    return out;
+  }
   for (let i = 0; i < len; i++) {
     out += BASE58[Math.floor(Math.random() * BASE58.length)];
   }

@@ -123,28 +123,24 @@ Command: `npm audit --audit-level=high --json`
 | Severity | Package entries |
 | --- | ---: |
 | Critical | 0 |
-| High | 11 |
-| Moderate | 2 |
-| Low | 15 |
-| Total | 28 |
+| High | 7 |
+| Moderate | 0 |
+| Low | 16 |
+| Total | 23 |
 
-CI blocks critical findings. High findings are currently reported but
-non-blocking, so production approval needs an explicit disposition rather than
+CI runs `npm run check:audit` and blocks every critical or high advisory except
+the explicitly pinned upstream `bigint-buffer` advisory
+`GHSA-3GC7-FJRX-P6MG`. A registry failure also fails the gate. Production
+approval still needs an explicit disposition for this residual rather than
 assuming a green CI job means zero high-risk advisories.
 
-### Actionable compatible updates
+### Compatible updates applied
 
-The current audit reports ordinary fixes for paths including:
-
-- direct `multer@2.1.1` (deep field names and aborted-upload cleanup);
-- overridden `tmp@0.2.6` (path-validation bypass; `0.2.7` is outside the
-  currently installed lockfile);
-- `form-data@4.0.5`;
-- Electron/electron-builder transitives containing affected `undici`;
-- affected `tar` and `js-yaml` transitives.
-
-Apply these through a reviewed dependency update, not by editing the lockfile by
-hand. Rerun package, upload, Electron, and launch tests after resolution.
+The reviewed dependency update moved `multer` to `2.2.0`, `tmp` to `0.2.7`,
+`form-data` to `4.0.6`, `tar` to `7.5.20`, `js-yaml` to `4.3.0`, and affected
+Electron/electron-builder `undici` paths to patched releases. The coordinated
+Metaplex/Umi uploader stack is now on the compatible `1.5.x` line. Package,
+upload, Electron, and launch tests remain required whenever these pins move.
 
 ### Coupled or major-line residuals
 
@@ -160,19 +156,16 @@ npm proposes `@solana/spl-token@0.1.8`, which is a functional downgrade from
 the current `^0.4.14` line and removes APIs Trebuchet uses. Do not accept that
 force fix without redesign and full compatibility validation.
 
-The Irys uploader path remains coupled:
+The Irys uploader remains a coupled stack and is pinned together:
 
 ```text
-@metaplex-foundation/umi-uploader-irys@0.9.2
+@metaplex-foundation/umi-uploader-irys@1.5.0
   └─ @irys/sdk
-      ├─ aptos / form-data
-      └─ arbundles / ethers / elliptic
+      └─ metadata upload transport
 ```
 
-npm proposes `@metaplex-foundation/umi-uploader-irys@1.5.0`, crossing from the
-Umi `0.9.x` stack to `1.x`. That requires coordinated Umi/MPL/Irys migration and
-live metadata-upload validation. `elliptic` itself is currently reported as low
-severity, while the aggregate Irys path remains high.
+Do not update one Umi/MPL/Irys package in isolation. Future moves require a
+coordinated version change plus live metadata-upload validation.
 
 Do not run `npm audit fix --force` and assume the result is safe.
 

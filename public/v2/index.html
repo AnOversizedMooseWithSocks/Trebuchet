@@ -43,10 +43,10 @@
 
       <div class="sidebar-footer">
         <span class="eyebrow">Network</span>
-        <button class="network-button" type="button" id="networkButton">
+        <button class="network-button" type="button" id="networkButton" aria-label="Open authoritative RPC settings">
           <span class="status-dot"></span>
           <span id="networkLabel">Mainnet</span>
-          <i class="fa-solid fa-chevron-down"></i>
+          <i class="fa-solid fa-sliders"></i>
         </button>
       </div>
     </aside>
@@ -55,7 +55,7 @@
       <section class="terminal-tape" aria-label="Trebuchet terminal status">
         <span class="terminal-ident"><i aria-hidden="true"></i><strong>TBCHT // OPS</strong><small>V2.0</small></span>
         <span><small>CHAIN</small><strong>SOLANA</strong></span>
-        <span><small>ENV</small><strong>MAINNET</strong></span>
+        <span><small>ENV</small><strong id="environmentLabel">RPC</strong></span>
         <span><small>SIGNER</small><strong>LOCAL</strong></span>
         <span class="terminal-tape-wide"><small>POLICY</small><strong>GUARDED EXECUTION</strong></span>
         <span class="terminal-tape-end"><small>KEY CUSTODY</small><strong>ON DEVICE</strong></span>
@@ -76,7 +76,7 @@
           <button class="icon-button" type="button" id="themeButton" aria-label="Toggle contrast">
             <i class="fa-solid fa-circle-half-stroke"></i>
           </button>
-          <button class="wallet-button" type="button" id="walletButton">
+          <button class="wallet-button" type="button" id="walletButton" aria-label="Open managed wallet">
             <span class="wallet-led"></span>
             <span id="walletLabel">Trebuchet wallet</span>
           </button>
@@ -280,7 +280,7 @@
                     </label>
                   </div>
                   <div class="candidate-strip" id="vanityCandidates">
-                    <button class="pill-button is-active" type="button" data-action="noop" data-message="Random mint selected">Random CA</button>
+                    <button class="pill-button is-active" type="button" data-action="select-vanity" data-public-key="" aria-pressed="true">Random CA</button>
                     <button class="pill-button" type="button" data-action="start-vanity">Grind CA</button>
                   </div>
                 </section>
@@ -650,7 +650,8 @@
   <div class="activity-drawer" id="activityLogDrawer" aria-hidden="true"></div>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
-  <script src="./api-client.js?v=32"></script>
-  <script src="./app.js?v=151"></script>
+  <script src="./runtime-state.js?v=1"></script>
+  <script src="./api-client.js?v=33"></script>
+  <script src="./app.js?v=152"></script>
 </body>
 </html>

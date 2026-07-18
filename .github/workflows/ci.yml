@@ -60,23 +60,8 @@ jobs:
           TREBUCHET_SMOKE_TEST_RPC: ${{ secrets.SMOKE_TEST_RPC }}
         run: node --test test/smoke-launch.test.mjs
 
-      # F17: critical issues block the build outright.
-      - name: Critical audit gate
-        run: npm audit --audit-level=critical
-
-      # F17: high-severity issues are reported on every PR but do NOT block
-      # yet — the sole finding is an unfixed upstream vulnerability
-      # (GHSA-3gc7-fjrx-p6mg: bigint-buffer buffer overflow in toBigIntLE()).
-      # bigint-buffer 1.1.5 is current; @solana/buffer-layout-utils uses the
-      # vulnerable decode path for parsing on-chain data layouts.  In
-      # Trebuchet the attack surface is limited to reading trusted RPC data.
-      #
-      # No upstream fix is available as of 2026-06.  When a fix ships (in
-      # bigint-buffer or buffer-layout-utils), remove continue-on-error and
-      # make high-severity blocking like critical.
-      - name: High audit report (non-blocking — unfixed upstream vuln)
-        continue-on-error: true
-        run: npm audit --audit-level=high
+      - name: Blocking dependency audit policy
+        run: npm run check:audit
 
   build:
     name: Build ${{ matrix.name }}
@@ -170,7 +155,6 @@ jobs:
         run: npm run test:v2:viewport
 
       - name: Visual regression test
-        continue-on-error: true
         run: npm run test:visual
 
       - name: Upload visual diff artifacts

@@ -45,6 +45,7 @@
     "build:js": "node scripts/build-app-js.mjs",
     "build:c": "node scripts/build-c.mjs",
     "check:package": "node scripts/check-package-files.mjs",
+    "check:audit": "node scripts/audit-policy.mjs",
     "release:gate": "node scripts/production-release-gate.mjs"
   },
   "files": [
@@ -82,6 +83,7 @@
     "updateCheckBridge.js",
     "v2LaunchPlan.js",
     "discoveryService.js",
+    "logRedaction.js",
     "validators.js",
     "metadata.json",
     "README.md",
@@ -89,11 +91,11 @@
     "c/build/**/*"
   ],
   "dependencies": {
-    "@metaplex-foundation/mpl-token-metadata": "^3.2.1",
-    "@metaplex-foundation/umi": "^0.9.2",
-    "@metaplex-foundation/umi-bundle-defaults": "^0.9.2",
-    "@metaplex-foundation/umi-uploader-irys": "^0.9.2",
-    "@metaplex-foundation/umi-web3js-adapters": "^0.9.2",
+    "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
+    "@metaplex-foundation/umi": "^1.5.1",
+    "@metaplex-foundation/umi-bundle-defaults": "^1.5.1",
+    "@metaplex-foundation/umi-uploader-irys": "^1.5.0",
+    "@metaplex-foundation/umi-web3js-adapters": "^1.5.1",
     "@raydium-io/raydium-sdk-v2": "0.1.144-alpha",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
@@ -106,7 +108,7 @@
     "ed25519-hd-key": "^1.3.0",
     "express": "^4.22.2",
     "marked": "^14.1.4",
-    "multer": "^2.1.1",
+    "multer": "^2.2.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
@@ -120,9 +122,16 @@
   "overrides": {
     "axios": "^1.16.1",
     "bn.js": "^5.2.3",
-    "form-data": "^4.0.5",
-    "tar": "^7.5.15",
-    "tmp": "^0.2.6",
+    "form-data": "^4.0.6",
+    "js-yaml": "^4.3.0",
+    "tar": "^7.5.20",
+    "tmp": "^0.2.7",
+    "@electron/get": {
+      "undici": "^7.28.0"
+    },
+    "node-gyp": {
+      "undici": "^6.27.0"
+    },
     "uuid": "^11.1.1",
     "ws": "^8.21.0"
   },
@@ -161,13 +170,14 @@
       "pendingWallets.js",
       "vanityCaStore.js",
       "launchJournal.js",
-    "launchReportService.js",
+      "launchReportService.js",
       "metadataUploadService.js",
       "userPrefs.js",
       "updateCheck.js",
       "updateCheckBridge.js",
       "v2LaunchPlan.js",
       "discoveryService.js",
+      "logRedaction.js",
       "validators.js",
       "metadata.json",
       "README.md",

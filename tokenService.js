@@ -138,7 +138,18 @@ export function resetMetadataFactoriesForTests() {
 // a key, so any such wallet can only be recovered by copying the raw
 // secret bytes. A mnemonic is far more user-friendly: 12 words a user
 // can write down accurately and paste into any wallet app.
+let _temporaryWalletGeneratorForTests = null;
+
+export function setTemporaryWalletGeneratorForTests(fn) {
+  _temporaryWalletGeneratorForTests = typeof fn === 'function' ? fn : null;
+}
+
+export function resetTemporaryWalletGeneratorForTests() {
+  _temporaryWalletGeneratorForTests = null;
+}
+
 export async function generateTemporaryWallet() {
+  if (_temporaryWalletGeneratorForTests) return await _temporaryWalletGeneratorForTests();
   const mnemonic = bip39.generateMnemonic();          // 12 words, 128 bits of entropy
   const seed = bip39.mnemonicToSeedSync(mnemonic);    // 64-byte seed
   // Solana's BIP44 path: m / 44' / 501' / 0' / 0'.

@@ -11,20 +11,24 @@ import net from 'node:net';
 
 const TMP = fs.mkdtempSync(path.join(tmpdir(), 'treb-e2e-'));
 process.env.TREBUCHET_CONFIG_DIR = TMP;
+process.env.TREBUCHET_E2E_DETERMINISTIC = '1';
+process.env.DEMO_TIME_SCALE = '0';
 // Enable demo mode so token/LP creation uses the fast in-memory handler.
 // Without this, fake test tokens can't resolve through Jupiter and the
 // real token-creation path fails because the temp wallets have no SOL.
-fs.writeFileSync(TMP + '/userPrefs.json', JSON.stringify({ demoMode: true }));
+fs.writeFileSync(TMP + '/userPrefs.json', JSON.stringify({ demoMode: true, coinPreviewParked: true }));
 process.env.PORT = String(await new Promise((res, rej) => {
   const s = net.createServer(); s.unref(); s.on('error', rej);
   s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); });
 }));
 
-import { Keypair, PublicKey, Transaction } from '@solana/web3.js';
-import * as tokenService from '../../tokenService.js';
-import * as lpService from '../../lpService.js';
-import * as walletHelpers from '../../walletHelpers.js';
-import * as swapService from '../../swapService.js';
+const { Keypair, PublicKey, Transaction } = await import('@solana/web3.js');
+const tokenService = await import('../../tokenService.js');
+const lpService = await import('../../lpService.js');
+const walletHelpers = await import('../../walletHelpers.js');
+const swapService = await import('../../swapService.js');
+const bip39 = await import('bip39');
+const { derivePath } = await import('ed25519-hd-key');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VIDEOS = path.join(__dirname, 'videos');
@@ -53,6 +57,17 @@ const fUmi = () => ({ identity: { publicKey: 'f' }, eddsa: { createKeypairFromSe
 const mRay = () => ({ connection: fC(), clmm: { async createPool() { const id = fB58(); return { execute: async () => ({ txId: 't' + (++_tc) }), extInfo: { address: { id } } }; }, async getPoolInfoFromRpc(id) { return { poolInfo: { id, mintA: { address: fB58(), decimals: 9 }, mintB: { address: 'So11111111111111111111111111111111111111112', decimals: 9 }, config: { tickSpacing: 60 } }, poolKeys: { id } }; }, async getRpcClmmPoolInfo() { return { tickCurrent: 0, sqrtPriceX64: '79228162514264337593543950336', liquidity: '0' }; }, async openPositionFromBase() { return { execute: async () => ({ txId: 't' + (++_tc) }), extInfo: { nftMint: fB58() } }; }, async lockPosition() { return { execute: async () => ({ txId: 't' + (++_tc) }), extInfo: { nftMint: fB58() } }; } }, api: { async getClmmConfigs() { return [{ id: 'c1', index: 0, tickSpacing: 60, tradeFeeRate: 2500, protocolFeeRate: 120000, fundFeeRate: 40000 }]; } }, account: { async fetchWalletTokenAccounts() { return { tokenAccounts: [], tokenAccountRawInfos: [] }; } } });
 
 tokenService.setConnectionFactoryForTests(() => fC());
+tokenService.setTemporaryWalletGeneratorForTests(async () => {
+  const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+  const seed = bip39.mnemonicToSeedSync(mnemonic);
+  const derivedSeed = derivePath("m/44'/501'/0'/0'", seed.toString('hex')).key;
+  const keypair = Keypair.fromSeed(derivedSeed);
+  return {
+    publicKey: keypair.publicKey.toBase58(),
+    secretKey: Array.from(keypair.secretKey),
+    mnemonic,
+  };
+});
 tokenService.setUmiFactoryForTests(() => fUmi());
 tokenService.setUploaderForTests(async () => 'https://a.test/i');
 tokenService.refreshConnection();
@@ -144,6 +159,11 @@ async function withPage(fn, size = 'desktop') {
     // Capture a screenshot after the flow for visual regression
     if (GOLDEN_MODE || SCREENSHOT_MODE) {
       const dest = GOLDEN_MODE ? SCREENSHOTS : tmpScreenshots;
+      await p.addStyleTag({
+        content: '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}',
+      });
+      await p.evaluate(() => window.scrollTo(0, 0));
+      await p.waitForTimeout(500);
       await p.screenshot({ path: path.join(dest, shotLabel + '.png'), fullPage: false });
     }
     return true;
@@ -160,21 +180,34 @@ async function textOf(p, s) { return p.textContent(s).then(x => (x || '').trim()
 async function stepIs(p, n) { await p.waitForSelector('#step' + n + '-card.is-active', { timeout: 15000 }); }
 function ok(cond, msg) { if (!cond) throw new Error(msg); }
 
-// Force-click a disabled button by stripping its disabled attr first.
-// The app disables continue buttons until async price resolution
-// (Jupiter/GeckoTerminal) completes — but fake test tokens never
-// resolve, so the buttons stay disabled forever.
-async function forceClick(p, selector) {
-  await p.waitForSelector(selector, { state: 'attached', timeout: 30000 });
-  await p.evaluate((sel) => {
-    const b = document.querySelector(sel);
-    if (b) { b.disabled = false; b.click(); }
-  }, selector);
+// Follow the same readiness contract as an operator: a flow fails if the app
+// never enables the control. Demo endpoints are deterministic and offline.
+async function clickWhenReady(p, selector) {
+  await p.waitForSelector(selector, { state: 'visible', timeout: 30000 });
+  await p.waitForFunction((sel) => {
+    const button = document.querySelector(sel);
+    return button instanceof HTMLButtonElement && button.disabled === false;
+  }, selector, { timeout: 30000 });
+  await p.click(selector);
 }
 
 // Shared: generate wallet and advance to step 2
 async function genWallet(p) {
   await p.click('#generateWalletBtn'); await stepIs(p, 2);
+}
+
+async function fundDemoWallet(p) {
+  await clickWhenReady(p, '#demoFundBtn');
+  await p.waitForFunction(() => {
+    const button = document.querySelector('#continueToTokenBtn');
+    return button instanceof HTMLButtonElement && button.disabled === false;
+  }, { timeout: 30000 });
+}
+
+async function createPoolsAfterReview(p) {
+  await clickWhenReady(p, '#createLpBtn');
+  await p.waitForSelector('#createLpConfirmModal.is-active', { state: 'visible', timeout: 30000 });
+  await clickWhenReady(p, '#createLpConfirmProceedBtn');
 }
 
 const flows = {
@@ -217,7 +250,7 @@ const flows = {
     async run(p) {
       await genWallet(p);
       await p.fill('#tokenName', 'FundT'); await p.fill('#tokenSymbol', 'FND');
-      await forceClick(p, '#continueToFundingBtn'); await stepIs(p, 3);
+      await clickWhenReady(p, '#continueToFundingBtn'); await stepIs(p, 3);
       const addrText = await textOf(p, '#step3WalletAddr');
       ok(addrText.length > 20, 'addr missing');
       ok(/^[1-9A-HJ-NP-Za-km-z]+$/.test(addrText), 'step 3 addr not base58');
@@ -231,11 +264,12 @@ const flows = {
     async run(p) {
       await genWallet(p);
       await p.fill('#tokenName', 'MkToken'); await p.fill('#tokenSymbol', 'MKT');
-      await forceClick(p, '#continueToFundingBtn'); await stepIs(p, 3);
+      await clickWhenReady(p, '#continueToFundingBtn'); await stepIs(p, 3);
+      await fundDemoWallet(p);
       await p.locator('#continueToTokenBtn').scrollIntoViewIfNeeded();
-      await forceClick(p, '#continueToTokenBtn'); await stepIs(p, 4);      await p.waitForTimeout(1000);
+      await clickWhenReady(p, '#continueToTokenBtn'); await stepIs(p, 4);      await p.waitForTimeout(1000);
       await p.locator('#createTokenBtn').scrollIntoViewIfNeeded();
-      await forceClick(p, '#createTokenBtn');
+      await clickWhenReady(p, '#createTokenBtn');
       await p.waitForSelector('#tokenCreatedInfo', { state: 'visible', timeout: 60000 });
       ok((await textOf(p, '#tokenMintAddress')).length > 30, 'mint missing');
     },
@@ -245,21 +279,23 @@ const flows = {
     async run(p) {
       await genWallet(p);
       await p.fill('#tokenName', 'LPToken'); await p.fill('#tokenSymbol', 'LPT');
-      await forceClick(p, '#continueToFundingBtn'); await stepIs(p, 3);
+      await clickWhenReady(p, '#continueToFundingBtn'); await stepIs(p, 3);
+      await fundDemoWallet(p);
       await p.locator('#continueToTokenBtn').scrollIntoViewIfNeeded();
-      await forceClick(p, '#continueToTokenBtn'); await stepIs(p, 4);      await p.waitForTimeout(1000);
+      await clickWhenReady(p, '#continueToTokenBtn'); await stepIs(p, 4);      await p.waitForTimeout(1000);
       await p.locator('#createTokenBtn').scrollIntoViewIfNeeded();
-      await forceClick(p, '#createTokenBtn');
+      await clickWhenReady(p, '#createTokenBtn');
       await p.waitForSelector('#tokenCreatedInfo', { state: 'visible', timeout: 60000 });
       try { await stepIs(p, 5); } catch {
-        await p.locator('#continueToLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#continueToLpBtn'); await stepIs(p, 5);
+        await p.locator('#continueToLpBtn').scrollIntoViewIfNeeded(); await clickWhenReady(p, '#continueToLpBtn'); await stepIs(p, 5);
       }
-      await p.locator('#createLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#createLpBtn');
+      await p.locator('#createLpBtn').scrollIntoViewIfNeeded(); await createPoolsAfterReview(p);
       const done = await Promise.race([
         p.waitForSelector('#lpDoneInfo', { state: 'visible', timeout: 60000 }).then(() => 'ok'),
         p.waitForSelector('#lpFailInfo', { state: 'visible', timeout: 60000 }).then(() => 'fail'),
       ]).catch(() => null);
-      ok(done !== null, 'LP did not complete');
+      const failureDetail = done === 'fail' ? await textOf(p, '#lpFailInfo') : '';
+      ok(done === 'ok', `LP did not complete successfully${failureDetail ? `: ${failureDetail}` : ''}`);
     },
   },
   '06': {
@@ -267,34 +303,20 @@ const flows = {
     async run(p) {
       await genWallet(p);
       await p.fill('#tokenName', 'XferTkn'); await p.fill('#tokenSymbol', 'XFR');
-      await forceClick(p, '#continueToFundingBtn'); await stepIs(p, 3);
+      await clickWhenReady(p, '#continueToFundingBtn'); await stepIs(p, 3);
+      await fundDemoWallet(p);
       await p.locator('#continueToTokenBtn').scrollIntoViewIfNeeded();
-      await forceClick(p, '#continueToTokenBtn'); await stepIs(p, 4);      await p.waitForTimeout(1000);
+      await clickWhenReady(p, '#continueToTokenBtn'); await stepIs(p, 4);      await p.waitForTimeout(1000);
       await p.locator('#createTokenBtn').scrollIntoViewIfNeeded();
-      await forceClick(p, '#createTokenBtn');
+      await clickWhenReady(p, '#createTokenBtn');
       await p.waitForSelector('#tokenCreatedInfo', { state: 'visible', timeout: 60000 });
       try { await stepIs(p, 5); } catch {
-        await p.locator('#continueToLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#continueToLpBtn'); await stepIs(p, 5);
+        await p.locator('#continueToLpBtn').scrollIntoViewIfNeeded(); await clickWhenReady(p, '#continueToLpBtn'); await stepIs(p, 5);
       }
-      await p.locator('#createLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#createLpBtn');
-      await Promise.race([
-        p.waitForSelector('#lpDoneInfo', { state: 'visible', timeout: 60000 }),
-        p.waitForSelector('#lpFailInfo', { state: 'visible', timeout: 60000 }),
-      ]).catch(() => {});
-      // LP may complete with a preflight warning but still show one of
-      // the transfer buttons.  Wait for either, then force-click.
-      await p.waitForSelector('#continueToTransferBtn, #continueToTransferAfterFailBtn', {
-        state: 'attached', timeout: 60000,
-      });
-      await p.evaluate(() => {
-        const b = document.querySelector('#continueToTransferBtn')
-               || document.querySelector('#continueToTransferAfterFailBtn');
-        if (b) { b.disabled = false; b.click(); }
-      });
-      // The transfer button click may not activate step 6 if lpResult
-      // is malformed after a preflight error, but the button itself was
-      // found and clicked — the full pipeline exercised successfully.
-      try { await stepIs(p, 6); } catch { /* preflight error left step 6 inactive */ }
+      await p.locator('#createLpBtn').scrollIntoViewIfNeeded(); await createPoolsAfterReview(p);
+      await p.waitForSelector('#lpDoneInfo', { state: 'visible', timeout: 60000 });
+      await clickWhenReady(p, '#continueToTransferBtn');
+      await stepIs(p, 6);
     },
   },
   '07': {

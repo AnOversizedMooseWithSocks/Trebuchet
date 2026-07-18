@@ -38,8 +38,13 @@ const __dirname = path.dirname(__filename);
 // Same env-var convention as rpcConfig.js. main.js sets this to
 // app.getPath('userData') in the Electron build; left unset by the web
 // build so writes land alongside the source.
-const CONFIG_DIR = process.env.TREBUCHET_CONFIG_DIR || __dirname;
-const FILE = path.join(CONFIG_DIR, 'pendingWallets.json');
+function configDir() {
+  return process.env.TREBUCHET_CONFIG_DIR || __dirname;
+}
+
+function walletFile() {
+  return path.join(configDir(), 'pendingWallets.json');
+}
 
 // ---------------------------------------------------------------------------
 // Encoding/decoding between in-memory and on-disk representations.
@@ -106,8 +111,8 @@ function encodeEntry(decoded) {
 
 function readRaw() {
   try {
-    if (!fs.existsSync(FILE)) return [];
-    const txt = fs.readFileSync(FILE, 'utf8');
+    if (!fs.existsSync(walletFile())) return [];
+    const txt = fs.readFileSync(walletFile(), 'utf8');
     const parsed = JSON.parse(txt);
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
@@ -157,9 +162,9 @@ function persist(list) {
     // mkdirSync with recursive:true is a no-op if the dir exists.
     // Necessary on first run when CONFIG_DIR is a userData path that
     // hasn't been touched yet.
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    fs.mkdirSync(configDir(), { recursive: true });
     const encoded = list.map(encodeEntry);
-    fs.writeFileSync(FILE, JSON.stringify(encoded, null, 2) + '\n');
+    fs.writeFileSync(walletFile(), JSON.stringify(encoded, null, 2) + '\n');
   } catch (e) {
     console.error('pendingWallets: failed to save:', e.message);
   }
@@ -222,8 +227,8 @@ export function removePinEncrypted() {
     secretStore.isSecretPinToken(entry?.mnemonicEnc)
   ));
   if (filteredRaw.length !== raw.length) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    fs.writeFileSync(FILE, JSON.stringify(filteredRaw, null, 2) + '\n');
+    fs.mkdirSync(configDir(), { recursive: true });
+    fs.writeFileSync(walletFile(), JSON.stringify(filteredRaw, null, 2) + '\n');
   }
   return raw.length - filteredRaw.length;
 }
