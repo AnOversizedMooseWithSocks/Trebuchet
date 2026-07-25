@@ -3,6 +3,12 @@ name: CI
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      update_visual_baseline:
+        description: Generate canonical Linux visual baselines as an artifact
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -127,7 +133,12 @@ jobs:
 
   e2e:
     name: E2E UI Flows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble
+      env:
+        LANG: C.UTF-8
+        TZ: UTC
 
     steps:
       - name: Checkout
@@ -146,29 +157,50 @@ jobs:
         run: npx playwright install chromium
 
       - name: Run Classic E2E tests
+        if: ${{ !inputs.update_visual_baseline }}
         run: node test/e2e/ui-flows.mjs 01 02 03 04 05 06 07 08 09 --mobile
 
       - name: Run v2 API-backed E2E test
+        if: ${{ !inputs.update_visual_baseline }}
         run: npm run test:e2e:v2
 
       - name: Run v2 desktop and mobile viewport smoke
+        if: ${{ !inputs.update_visual_baseline }}
         run: npm run test:v2:viewport
 
       - name: Visual regression test
+        if: ${{ !inputs.update_visual_baseline }}
         run: npm run test:visual
 
+      - name: Generate canonical Linux visual baselines
+        if: ${{ inputs.update_visual_baseline }}
+        run: npm run test:visual:golden:linux
+
+      - name: Upload canonical Linux visual baselines
+        if: ${{ inputs.update_visual_baseline }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: visual-golden-linux
+          path: test/ui/golden-linux
+          if-no-files-found: error
+
       - name: Upload visual diff artifacts
-        if: failure()
+        if: ${{ failure() && !inputs.update_visual_baseline }}
         uses: actions/upload-artifact@v7
         with:
           name: visual-diffs
-          path: test/ui/diffs
+          path: |
+            test/ui/diffs
+            test/ui/actual
           if-no-files-found: ignore
 
       - name: Convert videos to GIF
         if: always()
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq ffmpeg
+          fi
           for f in test/e2e/videos/*.webm; do
             [ -s "$f" ] || { echo "::warning::Skipping empty video $f"; continue; }
             name="${f%.webm}"

@@ -99,6 +99,32 @@ For a `v2+` release, the production gate:
 This protects against stale, mutually consistent, hand-thinned, or hand-edited
 release packets. It does not replace human review of public transaction links.
 
+## Funded devnet E2E
+
+`.github/workflows/devnet-e2e.yml` is a manual, protected transaction test. It
+must not run on `pull_request` or `pull_request_target`; GitHub intentionally
+withholds secrets from fork pull requests, and untrusted pull-request code must
+never receive a signing key.
+
+Configure the `devnet-e2e` GitHub environment with required reviewers and:
+
+| Name | Kind | Value |
+| --- | --- | --- |
+| `DEVNET_RPC_URL` | Environment secret | Dedicated Solana devnet RPC URL. |
+| `DEVNET_FUNDING_WALLET_SECRET_B64` | Environment secret | Base64 of the wallet's 64-byte JSON keypair array. |
+| `DEVNET_FUNDING_WALLET_PUBLIC_KEY` | Environment variable | Expected public key for the secret. |
+
+Use a devnet-only wallet and keep mainnet assets off the same keypair. The
+harness verifies the Solana devnet genesis hash before signing, refuses a
+secret/public-key mismatch, caps the permitted treasury spend at 0.1 SOL,
+serializes runs, funds a fresh child signer, and sweeps recoverable SOL back.
+The child performs real mint, mint-to, authority-revocation, burn, token-account
+close, and confirmation operations.
+
+Raydium CLMM creation is intentionally excluded: Trebuchet's Raydium runtime is
+currently mainnet-only. Adding a devnet LP test requires a separately reviewed
+cluster abstraction and verified devnet program/config addresses.
+
 ## Upload and remote-content handling
 
 Logo upload is constrained by:

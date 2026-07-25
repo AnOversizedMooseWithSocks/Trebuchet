@@ -11,15 +11,32 @@
 //   node scripts/visual-diff.mjs --threshold 0.01 # custom threshold
 
 import { execSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  unlinkSync,
+  rmSync,
+} from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
-const goldenDir = join(root, 'test', 'ui', 'golden');
+const platformIdx = process.argv.indexOf('--platform');
+const visualPlatform = platformIdx >= 0 && process.argv[platformIdx + 1]
+  ? process.argv[platformIdx + 1]
+  : (process.env.TREBUCHET_VISUAL_PLATFORM || process.platform);
+const goldenDir = join(
+  root,
+  'test',
+  'ui',
+  visualPlatform === 'linux' ? 'golden-linux' : 'golden',
+);
 const diffDir = join(root, 'test', 'ui', 'diffs');
+const actualDir = join(root, 'test', 'ui', 'actual');
 
 const goldenMode = process.argv.includes('--golden');
 const thresholdIdx = process.argv.indexOf('--threshold');
@@ -28,23 +45,28 @@ const threshold = thresholdIdx >= 0
   : 0.005;
 
 if (goldenMode) {
-  console.log('Regenerating golden screenshots...');
-  try { execSync(`rm -rf "${goldenDir}"`, { stdio: 'ignore' }); } catch {}
+  console.log(`Regenerating ${visualPlatform} golden screenshots...`);
+  rmSync(goldenDir, { recursive: true, force: true });
   mkdirSync(goldenDir, { recursive: true });
-  execSync(`node test/e2e/ui-flows.mjs --golden`, {
+  execSync(`node test/e2e/ui-flows.mjs --golden --platform ${visualPlatform}`, {
     cwd: root, stdio: 'inherit',
+    env: { ...process.env, TREBUCHET_VISUAL_PLATFORM: visualPlatform },
   });
-  console.log('Golden screenshots updated in test/ui/golden/');
+  console.log(`Golden screenshots updated in ${goldenDir}`);
   process.exit(0);
 }
 
-// Capture screenshots to a temp directory
-const tmpDir = join(tmpdir(), 'treb-visual-' + Date.now());
-mkdirSync(tmpDir, { recursive: true });
+// Keep captured screenshots in a stable ignored directory. CI uploads both
+// these images and the pixel diffs when a comparison fails, which makes
+// baseline drift diagnosable without reconstructing a runner.
+rmSync(actualDir, { recursive: true, force: true });
+mkdirSync(actualDir, { recursive: true });
 
-console.log('Capturing UI screenshots...');
-execSync(`node test/e2e/ui-flows.mjs --screenshots ${tmpDir}`, {
-  cwd: root, stdio: 'inherit',
+console.log(`Capturing ${visualPlatform} UI screenshots...`);
+execSync(`node test/e2e/ui-flows.mjs --screenshots ${actualDir} --platform ${visualPlatform}`, {
+  cwd: root,
+  stdio: 'inherit',
+  env: { ...process.env, TREBUCHET_VISUAL_PLATFORM: visualPlatform },
 });
 
 // Compare each screenshot against its golden counterpart
@@ -71,7 +93,7 @@ if (goldenFiles.length === 0) {
 
 for (const filename of goldenFiles) {
   const goldenPath = join(goldenDir, filename);
-  const capturedPath = join(tmpDir, filename);
+  const capturedPath = join(actualDir, filename);
 
   if (!existsSync(capturedPath)) {
     console.log(`  ${filename}: MISSING (not captured)`);

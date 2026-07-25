@@ -230,10 +230,12 @@ Common commands:
 | `npm test` | Run the Node test suite. |
 | `npm run test:e2e` | Run the Classic Playwright flow. |
 | `npm run test:e2e:v2` | Run the API-backed v2 flow. |
+| `npm run test:e2e:devnet` | Run the secret-gated funded devnet transaction smoke. |
 | `npm run test:v2:viewport` | Verify desktop/mobile cockpit layout and proof contract. |
 | `npm run test:electron:v2` | Smoke the v2 Electron runtime. |
 | `npm run test:electron:v2:packaged` | Smoke a packaged v2 application. |
 | `npm run test:visual` | Compare UI screenshots with visual goldens. |
+| `npm run test:visual:golden:linux` | Regenerate canonical Linux goldens in the pinned CI container. |
 | `npm run shots` | Regenerate the Classic reference walkthrough. |
 | `npm run smoke:mainnet:readonly` | Run read-only mainnet compatibility probes. |
 | `npm run build:c` | Build the native Vanity CA helper. |

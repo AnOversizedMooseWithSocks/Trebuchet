@@ -33,7 +33,18 @@ const { derivePath } = await import('ed25519-hd-key');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VIDEOS = path.join(__dirname, 'videos');
 fs.mkdirSync(VIDEOS, { recursive: true });
-const SCREENSHOTS = path.join(__dirname, '..', '..', 'test', 'ui', 'golden');
+const visualPlatformArgIdx = process.argv.indexOf('--platform');
+const VISUAL_PLATFORM = visualPlatformArgIdx >= 0 && process.argv[visualPlatformArgIdx + 1]
+  ? process.argv[visualPlatformArgIdx + 1]
+  : (process.env.TREBUCHET_VISUAL_PLATFORM || process.platform);
+const SCREENSHOTS = path.join(
+  __dirname,
+  '..',
+  '..',
+  'test',
+  'ui',
+  VISUAL_PLATFORM === 'linux' ? 'golden-linux' : 'golden',
+);
 const GOLDEN_MODE = process.argv.includes('--golden');
 const SCREENSHOT_MODE = process.argv.includes('--screenshots');
 let tmpScreenshots = null;
@@ -88,12 +99,26 @@ for (let i = 0; i < 50 && !SERVER; i++) await new Promise(r => setTimeout(r, 100
 console.log = _o;
 if (!SERVER) { console.error('Server did not start'); process.exit(1); }
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  args: [
+    '--font-render-hinting=none',
+    '--force-device-scale-factor=1',
+  ],
+});
 let passed = 0, failed = 0;
 
 async function withPage(fn, size = 'desktop') {
   const vp = size === 'mobile' ? { width: 390, height: 844 } : { width: 1280, height: 900 };
-  const ctx = await browser.newContext({ viewport: vp, recordVideo: { dir: VIDEOS, size: vp } });
+  const ctx = await browser.newContext({
+    viewport: vp,
+    deviceScaleFactor: 1,
+    colorScheme: 'light',
+    reducedMotion: 'reduce',
+    locale: 'en-US',
+    timezoneId: 'UTC',
+    recordVideo: { dir: VIDEOS, size: vp },
+  });
   const p = await ctx.newPage();
   const shotLabel = withPage._shotLabel || '';
   try {
@@ -163,6 +188,9 @@ async function withPage(fn, size = 'desktop') {
         content: '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}',
       });
       await p.evaluate(() => window.scrollTo(0, 0));
+      await p.evaluate(async () => {
+        if (document.fonts?.ready) await document.fonts.ready;
+      });
       await p.waitForTimeout(500);
       await p.screenshot({ path: path.join(dest, shotLabel + '.png'), fullPage: false });
     }
