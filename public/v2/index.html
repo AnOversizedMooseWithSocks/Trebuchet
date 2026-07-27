@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TREBUCHET · makesometokens</title>
   <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="./styles.css?v=65">
+  <link rel="stylesheet" href="./styles.css?v=66">
 </head>
 <body>
   <div class="app-shell">
@@ -482,22 +482,21 @@
           <section class="surface surface-main">
             <div class="section-heading">
               <div>
-                <span class="eyebrow">Live Solana evidence</span>
-                <h2>Token registry</h2>
+                <span class="eyebrow">Market + chain evidence</span>
+                <h2>Token explorer</h2>
               </div>
               <span class="badge" id="discoveryRegistryCount">0 saved</span>
             </div>
             <form class="discovery-inspect-bar" id="discoveryInspectForm">
-              <label for="discoveryMintInput">Token mint</label>
+              <label class="visually-hidden" for="discoveryMintInput">Token mint</label>
               <input id="discoveryMintInput" name="mint" type="text" placeholder="Paste a Solana token mint" autocomplete="off" spellcheck="false">
               <button class="primary-button" id="discoveryInspectButton" type="submit">
                 <i class="fa-solid fa-magnifying-glass-chart"></i>
-                <span>Inspect mint</span>
+                <span>Analyze token</span>
               </button>
             </form>
             <div class="discovery-error" id="discoveryError" aria-live="polite"></div>
             <div class="discovery-source-banner" id="discoverySourceBanner"></div>
-            <div class="standards-strip" id="standardsStrip"></div>
             <div class="discovery-toolbar">
               <label>
                 <i class="fa-solid fa-magnifying-glass"></i>
@@ -514,12 +513,6 @@
           </section>
           <aside class="rail">
             <section class="surface">
-              <div class="section-heading">
-                <div>
-                  <span class="eyebrow">Selected token</span>
-                  <h2 id="selectedDiscoveryTitle">--</h2>
-                </div>
-              </div>
               <div class="evidence-panel" id="evidencePanel"></div>
             </section>
           </aside>
@@ -652,6 +645,6 @@
 
   <script src="./runtime-state.js?v=1"></script>
   <script src="./api-client.js?v=33"></script>
-  <script src="./app.js?v=152"></script>
+  <script src="./app.js?v=153"></script>
 </body>
 </html>

@@ -3,6 +3,10 @@ const PUBLIC_MAINNET_RPC = Object.freeze({
   name: 'Public mainnet',
   url: 'https://api.mainnet-beta.solana.com',
 });
+const GECKO_SOLANA_BASE = 'https://api.geckoterminal.com/api/v2/networks/solana';
+const MARKET_CACHE_TTL_MS = 60 * 1000;
+const MARKET_CACHE_MAX_ENTRIES = 100;
+const marketCache = new Map();
 
 function rpcClusterHint(entry = {}) {
   const hint = `${entry.name || ''} ${entry.url || ''}`.toLowerCase();
@@ -35,7 +39,7 @@ export function discoveryRpcCandidates(config = {}) {
   const savedUnknown = saved.filter((entry) => rpcClusterHint(entry) === 'unknown');
 
   if (active && activeCluster !== 'non-mainnet') {
-    return uniqueRpcEntries([active, ...savedMainnet, ...savedUnknown]);
+    return uniqueRpcEntries([active, ...savedMainnet, ...savedUnknown, PUBLIC_MAINNET_RPC]);
   }
 
   const mainnetCandidates = savedMainnet.length ? savedMainnet : [PUBLIC_MAINNET_RPC];
@@ -53,6 +57,174 @@ function safeBigInt(value) {
   } catch {
     return 0n;
   }
+}
+
+function finiteNumber(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function positiveNumber(value) {
+  const parsed = finiteNumber(value);
+  return parsed != null && parsed > 0 ? parsed : null;
+}
+
+function relationshipMatchesMint(relationship, mint) {
+  return relationship?.data?.id === `solana_${mint}`;
+}
+
+export function parseDiscoveryMarketPool(mint, payload) {
+  const pools = Array.isArray(payload?.data) ? payload.data : [];
+  for (const pool of pools) {
+    const attributes = pool?.attributes;
+    const relationships = pool?.relationships;
+    if (!attributes) continue;
+
+    const isBase = relationshipMatchesMint(relationships?.base_token, mint);
+    const isQuote = relationshipMatchesMint(relationships?.quote_token, mint);
+    if (!isBase && !isQuote) continue;
+
+    const priceUsd = positiveNumber(
+      isBase ? attributes.base_token_price_usd : attributes.quote_token_price_usd,
+    );
+    const priceChange = attributes.price_change_percentage || {};
+    const volume = attributes.volume_usd || {};
+    const transactions = attributes.transactions || {};
+    const h24Transactions = transactions.h24 || {};
+    const address = String(
+      attributes.address
+        || String(pool.id || '').replace(/^solana_/, ''),
+    ).trim();
+
+    return {
+      source: 'GeckoTerminal',
+      available: true,
+      priceUsd,
+      priceChange: {
+        m5: finiteNumber(priceChange.m5),
+        h1: finiteNumber(priceChange.h1),
+        h6: finiteNumber(priceChange.h6),
+        h24: finiteNumber(priceChange.h24),
+      },
+      liquidityUsd: finiteNumber(attributes.reserve_in_usd),
+      volume24hUsd: finiteNumber(volume.h24),
+      fdvUsd: finiteNumber(attributes.fdv_usd),
+      marketCapUsd: finiteNumber(attributes.market_cap_usd),
+      transactions24h: {
+        buys: finiteNumber(h24Transactions.buys),
+        sells: finiteNumber(h24Transactions.sells),
+        buyers: finiteNumber(h24Transactions.buyers),
+        sellers: finiteNumber(h24Transactions.sellers),
+      },
+      pool: {
+        address: address || null,
+        name: attributes.name || null,
+        dex: relationships?.dex?.data?.id || null,
+        createdAt: attributes.pool_created_at || null,
+      },
+      history: null,
+    };
+  }
+  return null;
+}
+
+export function parseDiscoveryOhlcv(payload) {
+  const rows = Array.isArray(payload?.data?.attributes?.ohlcv_list)
+    ? payload.data.attributes.ohlcv_list
+    : [];
+  const points = rows
+    .map((row) => {
+      if (!Array.isArray(row) || row.length < 6) return null;
+      const time = finiteNumber(row[0]);
+      const open = positiveNumber(row[1]);
+      const high = positiveNumber(row[2]);
+      const low = positiveNumber(row[3]);
+      const close = positiveNumber(row[4]);
+      const volume = finiteNumber(row[5]);
+      if (time == null || open == null || high == null || low == null || close == null) return null;
+      return {
+        time: new Date(time * 1000).toISOString(),
+        open,
+        high,
+        low,
+        close,
+        volume: volume == null ? 0 : Math.max(0, volume),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
+    .slice(-48);
+
+  if (!points.length) return null;
+  const first = points[0];
+  const last = points.at(-1);
+  const open = first.open;
+  const changePercent = open > 0 ? ((last.close - open) / open) * 100 : null;
+
+  return {
+    timeframe: '7D',
+    candle: '4H',
+    points,
+    highUsd: Math.max(...points.map((point) => point.high)),
+    lowUsd: Math.min(...points.map((point) => point.low)),
+    volumeUsd: points.reduce((total, point) => total + point.volume, 0),
+    changePercent,
+    asOf: last.time,
+  };
+}
+
+function trimMarketCache() {
+  while (marketCache.size > MARKET_CACHE_MAX_ENTRIES) {
+    marketCache.delete(marketCache.keys().next().value);
+  }
+}
+
+export async function fetchDiscoveryMarketData(mint, { fetchImpl = globalThis.fetch } = {}) {
+  const cached = marketCache.get(mint);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (typeof fetchImpl !== 'function') throw new Error('Market data fetch is unavailable');
+
+  const headers = {
+    Accept: 'application/json',
+    Version: '20230302',
+  };
+  const poolResponse = await fetchImpl(
+    `${GECKO_SOLANA_BASE}/tokens/${encodeURIComponent(mint)}/pools?include=base_token,quote_token,dex&page=1`,
+    { headers },
+  );
+  if (!poolResponse.ok) {
+    if (poolResponse.status === 404) return null;
+    throw new Error(`GeckoTerminal pool lookup returned HTTP ${poolResponse.status}`);
+  }
+
+  const market = parseDiscoveryMarketPool(mint, await poolResponse.json());
+  if (!market?.pool?.address) return market;
+
+  try {
+    const historyUrl = new URL(
+      `${GECKO_SOLANA_BASE}/pools/${encodeURIComponent(market.pool.address)}/ohlcv/hour`,
+    );
+    historyUrl.searchParams.set('aggregate', '4');
+    historyUrl.searchParams.set('limit', '42');
+    historyUrl.searchParams.set('currency', 'usd');
+    historyUrl.searchParams.set('token', mint);
+    historyUrl.searchParams.set('include_empty_intervals', 'true');
+    const historyResponse = await fetchImpl(historyUrl, { headers });
+    if (historyResponse.ok) {
+      market.history = parseDiscoveryOhlcv(await historyResponse.json());
+    }
+  } catch {
+    // The current market snapshot is still useful when OHLCV is unavailable.
+  }
+
+  market.url = `https://www.geckoterminal.com/solana/pools/${market.pool.address}`;
+  marketCache.set(mint, {
+    value: market,
+    expiresAt: Date.now() + MARKET_CACHE_TTL_MS,
+  });
+  trimMarketCache();
+  return market;
 }
 
 function decimalPercent(numerator, denominator) {
@@ -84,6 +256,7 @@ export function buildDiscoveryRecord({
   compatibility = null,
   supply = null,
   largestAccounts = null,
+  market = null,
   journal = null,
   inspectedAt = new Date().toISOString(),
   rpcName = 'Configured RPC',
@@ -101,7 +274,9 @@ export function buildDiscoveryRecord({
   const mintAuthorityRenounced = compatibility?.mintAuthorityRenounced;
   const freezeAuthorityDisabled = compatibility?.freezeAuthorityDisabled;
   const compatible = compatibility?.compatible;
-  const priceUsd = metadata?.priceUsd == null ? null : String(metadata.priceUsd);
+  const indexedPriceUsd = positiveNumber(market?.priceUsd);
+  const metadataPriceUsd = positiveNumber(metadata?.priceUsd);
+  const priceUsd = indexedPriceUsd ?? metadataPriceUsd;
   const decimals = Number.isFinite(Number(supply?.decimals))
     ? Number(supply.decimals)
     : Number.isFinite(Number(metadata?.decimals)) ? Number(metadata.decimals) : null;
@@ -111,7 +286,7 @@ export function buildDiscoveryRecord({
   if (mintAuthorityRenounced === true) score += 15;
   if (freezeAuthorityDisabled === true) score += 15;
   if (compatible === true) score += 10;
-  if (priceUsd) score += 5;
+  if (priceUsd != null) score += 5;
   if (topTenPercent != null) {
     if (topTenPercent <= 35) score += 10;
     else if (topTenPercent <= 50) score += 6;
@@ -147,7 +322,7 @@ export function buildDiscoveryRecord({
     color: DEFAULT_COLOR,
     imageUrl: metadata?.imageUrl || null,
     decimals,
-    priceUsd,
+    priceUsd: priceUsd == null ? null : String(priceUsd),
     score,
     status,
     confidence,
@@ -160,8 +335,17 @@ export function buildDiscoveryRecord({
       largestAccounts: topRows.length,
       topTenPercent,
       program: compatibility?.isToken2022 ? 'Token-2022' : compatibility ? 'SPL Token' : 'Unknown',
-      priceUsd,
+      priceUsd: priceUsd == null ? null : String(priceUsd),
+      liquidityUsd: finiteNumber(market?.liquidityUsd),
+      volume24hUsd: finiteNumber(market?.volume24hUsd),
+      marketCapUsd: finiteNumber(market?.marketCapUsd),
+      fdvUsd: finiteNumber(market?.fdvUsd),
+      change24h: finiteNumber(market?.priceChange?.h24),
     },
+    market: market ? {
+      ...market,
+      priceUsd: indexedPriceUsd,
+    } : null,
     compatibility: compatibility ? {
       compatible: compatible ?? null,
       isToken2022: compatibility.isToken2022 === true,
@@ -187,8 +371,8 @@ export function buildDiscoveryRecord({
       },
       {
         label: 'Market price',
-        value: priceUsd ? `$${priceUsd}` : 'No indexed price',
-        state: priceUsd ? 'pass' : 'unknown',
+        value: priceUsd != null ? `$${priceUsd}` : 'No indexed price',
+        state: priceUsd != null ? 'pass' : 'unknown',
       },
       {
         label: 'Trebuchet provenance',

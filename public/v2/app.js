@@ -250,12 +250,6 @@ const DISCOVERY_STORAGE_KEY = 'trebuchet:v2:discovery-registry:v1';
 const DISCOVERY_STORAGE_MAX_ENTRIES = 40;
 const DISCOVERY_STORAGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
-const standards = [
-  { title: 'Identity', detail: 'On-chain mint metadata and token program' },
-  { title: 'Authority', detail: 'Mint, freeze, and CLMM compatibility audit' },
-  { title: 'Distribution', detail: 'Supply and largest token-account concentration' },
-  { title: 'Provenance', detail: 'Local Trebuchet launch journal and report links' },
-];
 const signingPolicies = [
   { title: 'Encrypted local keys', detail: 'Trebuchet stores launch-wallet secrets behind the Recovery PIN and device protection.', state: 'pass' },
   { title: 'Managed wallet import', detail: 'Imported mnemonic, base58, or JSON keypairs become Trebuchet-controlled launch wallets after Recovery PIN unlock.', state: 'pass' },
@@ -553,6 +547,15 @@ function normalizeDiscoveryRecord(record, { restoring = false } = {}) {
     warnings: Array.isArray(record.warnings)
       ? record.warnings.slice(0, 8).map((warning) => String(warning).slice(0, 1200))
       : [],
+    market: record.market && typeof record.market === 'object' ? {
+      ...record.market,
+      history: record.market.history && typeof record.market.history === 'object' ? {
+        ...record.market.history,
+        points: Array.isArray(record.market.history.points)
+          ? record.market.history.points.slice(-48)
+          : [],
+      } : null,
+    } : null,
   };
 }
 
@@ -620,6 +623,13 @@ function discoveryLocalProvenance(record) {
 
 function discoveryWarningSummary(warning) {
   const raw = String(warning || '').trim();
+  if (/market data/i.test(raw)) {
+    return {
+      title: 'Market feed unavailable',
+      detail: 'On-chain checks completed, but price, liquidity, or chart data needs another refresh.',
+      raw,
+    };
+  }
   if (/concentration/i.test(raw)) {
     return {
       title: 'Concentration check delayed',
@@ -1972,8 +1982,75 @@ function formatDiscoveryPrice(value) {
   const price = Number(value);
   if (!Number.isFinite(price)) return 'No indexed price';
   return `$${new Intl.NumberFormat(undefined, {
-    maximumFractionDigits: price < 1 ? 6 : 4,
+    maximumFractionDigits: price < 0.000001 ? 12 : price < 0.01 ? 8 : price < 1 ? 6 : 4,
   }).format(price)}`;
+}
+
+function formatDiscoveryUsd(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return '—';
+  return `$${new Intl.NumberFormat(undefined, {
+    notation: Math.abs(amount) >= 1000 ? 'compact' : 'standard',
+    maximumFractionDigits: Math.abs(amount) >= 1000 ? 2 : 0,
+  }).format(amount)}`;
+}
+
+function formatDiscoveryPercent(value, fallback = '—') {
+  const percent = Number(value);
+  if (!Number.isFinite(percent)) return fallback;
+  const sign = percent > 0 ? '+' : '';
+  return `${sign}${percent.toFixed(Math.abs(percent) >= 100 ? 0 : 2)}%`;
+}
+
+function discoveryTrendClass(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number === 0) return 'is-flat';
+  return number > 0 ? 'is-up' : 'is-down';
+}
+
+function discoveryTokenMark(token, className = '') {
+  const image = token?.imageUrl
+    ? `<img src="${escapeHtml(token.imageUrl)}" alt="">`
+    : escapeHtml(String(token?.symbol || '--').slice(0, 2));
+  return `<span class="token-mark ${className}">${image}</span>`;
+}
+
+function discoveryPriceChart(market) {
+  const points = Array.isArray(market?.history?.points)
+    ? market.history.points
+      .map((point) => ({
+        time: point?.time,
+        close: Number(point?.close),
+      }))
+      .filter((point) => point.time && Number.isFinite(point.close) && point.close > 0)
+    : [];
+  if (points.length < 2) return '';
+
+  const width = 320;
+  const height = 108;
+  const inset = 5;
+  const prices = points.map((point) => point.close);
+  const low = Math.min(...prices);
+  const high = Math.max(...prices);
+  const span = high - low || Math.max(high * 0.01, 1e-12);
+  const coordinates = points.map((point, index) => {
+    const x = inset + (index / (points.length - 1)) * (width - inset * 2);
+    const y = inset + ((high - point.close) / span) * (height - inset * 2);
+    return [x, y];
+  });
+  const line = coordinates
+    .map(([x, y], index) => `${index ? 'L' : 'M'}${x.toFixed(2)},${y.toFixed(2)}`)
+    .join(' ');
+  const area = `${line} L${coordinates.at(-1)[0].toFixed(2)},${height} L${coordinates[0][0].toFixed(2)},${height} Z`;
+  const trend = market.history?.changePercent ?? market.priceChange?.h24;
+  const label = `${market.history?.timeframe || '7 day'} price history, ${formatDiscoveryPercent(trend, 'unchanged')}`;
+
+  return `
+    <svg class="market-sparkline ${discoveryTrendClass(trend)}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
+      <path class="market-sparkline-area" d="${area}"></path>
+      <path class="market-sparkline-line" d="${line}"></path>
+    </svg>
+  `;
 }
 
 function formatAge(value) {
@@ -14036,25 +14113,19 @@ function renderDiscovery() {
   const inspectButton = $('#discoveryInspectButton');
 
   $('#discoverySourceBanner').innerHTML = `
-    <span class="risk-badge ${connected ? '' : 'warn'}">${connected ? 'Live RPC' : 'Offline'}</span>
+    <span class="risk-badge ${connected ? '' : 'warn'}">${connected ? 'Live' : 'Offline'}</span>
     <span>${connected
-      ? 'On-demand mint metadata, authority, supply, concentration, and local Trebuchet provenance.'
-      : 'Connect through the local Trebuchet app to inspect live Solana mint evidence.'}</span>
+      ? 'Solana RPC chain facts · GeckoTerminal market history · local launch provenance'
+      : 'Connect through the local Trebuchet app to analyze Solana tokens.'}</span>
   `;
-  $('#standardsStrip').innerHTML = standards.map((item) => `
-    <span class="standard-chip">
-      <strong>${escapeHtml(item.title)}</strong>
-      <span>${escapeHtml(item.detail)}</span>
-    </span>
-  `).join('');
 
   if (queryInput && queryInput.value !== state.discovery.query) queryInput.value = state.discovery.query;
   if (mintInput && state.discovery.lastInspectedMint && !mintInput.value) mintInput.value = state.discovery.lastInspectedMint;
   if (inspectButton) {
     inspectButton.disabled = state.discovery.inspecting || !connected;
     inspectButton.innerHTML = state.discovery.inspecting
-      ? '<i class="fa-solid fa-spinner fa-spin"></i><span>Inspecting</span>'
-      : '<i class="fa-solid fa-magnifying-glass-chart"></i><span>Inspect mint</span>';
+      ? '<i class="fa-solid fa-spinner fa-spin"></i><span>Analyzing</span>'
+      : '<i class="fa-solid fa-magnifying-glass-chart"></i><span>Analyze token</span>';
   }
   $('#discoveryRegistryCount').textContent = `${state.discovery.records.length} saved`;
   document.querySelectorAll('[data-discovery-filter]').forEach((button) => {
@@ -14065,26 +14136,26 @@ function renderDiscovery() {
     : '';
 
   $('#discoveryTable').innerHTML = rows.length ? rows.map((token) => {
-    const rawTopTen = token.metrics?.topTenPercent;
-    const topTen = rawTopTen == null ? null : Number(rawTopTen);
-    const supply = token.metrics?.supply
-      ? compactAmount(Number(token.metrics.supply))
-      : 'Supply unavailable';
+    const change24h = token.market?.priceChange?.h24 ?? token.metrics?.change24h;
+    const liquidityUsd = token.market?.liquidityUsd ?? token.metrics?.liquidityUsd;
+    const volume24hUsd = token.market?.volume24hUsd ?? token.metrics?.volume24hUsd;
     const provenance = discoveryLocalProvenance(token);
     return `
       <button class="discovery-row ${token.id === state.selectedDiscoveryId ? 'is-active' : ''}" type="button" data-action="select-discovery" data-token="${escapeHtml(token.id)}">
-        <span class="token-mark">${escapeHtml(token.symbol.slice(0, 2))}</span>
+        ${discoveryTokenMark(token)}
         <span class="discovery-copy">
           <h3>${escapeHtml(token.name)} <span class="muted">${escapeHtml(token.symbol)}</span></h3>
-          <span class="metric-line">
-            <span>${escapeHtml(supply)}</span>
-            <span>${topTen != null && Number.isFinite(topTen) ? `${topTen.toFixed(2)}% top 10 accounts` : 'Concentration unavailable'}</span>
-            <span>${escapeHtml(token.metrics?.program || 'Token program unknown')}</span>
-            <span>${provenance.proof || provenance.journal ? 'Local provenance' : 'RPC evidence'}</span>
+          <span class="market-line">
+            <strong>${formatDiscoveryPrice(token.priceUsd)}</strong>
+            <span class="${discoveryTrendClass(change24h)}">${formatDiscoveryPercent(change24h, '24h —')}</span>
+            <span>Liquidity ${formatDiscoveryUsd(liquidityUsd)}</span>
+            <span>Volume ${formatDiscoveryUsd(volume24hUsd)}</span>
+            ${provenance.proof || provenance.journal ? '<span class="has-provenance">Local proof</span>' : ''}
           </span>
         </span>
         <span class="score-block">
           <strong>${token.score}</strong>
+          <small>evidence</small>
           <span class="meter"><span style="width:${token.score}%"></span></span>
         </span>
         <span class="source-block">
@@ -14097,23 +14168,45 @@ function renderDiscovery() {
   }).join('') : `
     <div class="discovery-empty">
       <i class="fa-solid fa-satellite-dish"></i>
-      <strong>${state.discovery.records.length ? 'No saved tokens match this filter' : 'Inspect your first mint'}</strong>
+      <strong>${state.discovery.records.length ? 'No saved tokens match this filter' : 'Analyze your first token'}</strong>
       <span>${state.discovery.records.length
         ? 'Change the search or evidence filter.'
-        : 'Paste a Solana mint above. Results stay in this local browser profile.'}</span>
+        : 'Paste a Solana mint to load price history, liquidity, holders, and authority data.'}</span>
     </div>
   `;
 
-  $('#selectedDiscoveryTitle').textContent = selected?.symbol || '--';
   if (!selected) {
-    $('#evidencePanel').innerHTML = '<div class="empty-state">Select or inspect a mint to see its evidence report.</div>';
+    $('#evidencePanel').innerHTML = `
+      <div class="discovery-detail-empty">
+        <i class="fa-solid fa-chart-line"></i>
+        <strong>No token selected</strong>
+        <span>Analyze a mint or choose a saved token to open its market and chain report.</span>
+      </div>
+    `;
     return;
   }
 
   const provenance = discoveryLocalProvenance(selected);
   const evidence = Array.isArray(selected.evidence)
-    ? selected.evidence.filter((item) => item.label !== 'Trebuchet provenance')
+    ? selected.evidence.filter((item) => !['Trebuchet provenance', 'Market price'].includes(item.label))
     : [];
+  const market = selected.market || null;
+  const marketPrice = market?.priceUsd ?? selected.priceUsd;
+  const change24h = market?.priceChange?.h24 ?? selected.metrics?.change24h;
+  const change7d = market?.history?.changePercent;
+  const marketTrend = change7d ?? change24h;
+  const supply = selected.metrics?.supply
+    ? compactAmount(Number(selected.metrics.supply))
+    : '—';
+  const topTenValue = selected.metrics?.topTenPercent == null
+    ? '—'
+    : `${Number(selected.metrics.topTenPercent).toFixed(2)}%`;
+  const transactions = market?.transactions24h || {};
+  const buys = Number(transactions.buys);
+  const sells = Number(transactions.sells);
+  const tradeCount = (Number.isFinite(buys) ? buys : 0) + (Number.isFinite(sells) ? sells : 0);
+  const marketChart = discoveryPriceChart(market);
+  const dexName = String(market?.pool?.dex || 'DEX pool').replaceAll('_', ' ');
   const inspectionSource = String(selected.source || 'Configured RPC')
     .replace(/\s*\+\s*local Trebuchet journals$/i, '');
   const warningSummaries = (selected.warnings || []).map(discoveryWarningSummary);
@@ -14134,37 +14227,74 @@ function renderDiscovery() {
 
   $('#evidencePanel').innerHTML = `
     <div class="evidence-head">
-      <span class="token-mark">${escapeHtml(selected.symbol.slice(0, 2))}</span>
-      <span>
-        <h3>${escapeHtml(selected.name)}</h3>
-        <p>${escapeHtml(selected.summary || 'Live token evidence inspection.')}</p>
+      ${discoveryTokenMark(selected)}
+      <span class="evidence-identity">
+        <small>Selected asset</small>
+        <h3>${escapeHtml(selected.name)} <span>${escapeHtml(selected.symbol)}</span></h3>
+        <code title="${escapeHtml(selected.mint)}">${escapeHtml(shortAddress(selected.mint))}</code>
+      </span>
+      <span class="evidence-price">
+        <strong>${formatDiscoveryPrice(marketPrice)}</strong>
+        <small class="${discoveryTrendClass(change24h)}">${formatDiscoveryPercent(change24h, '24h —')}</small>
       </span>
     </div>
-    <div class="evidence-summary-strip">
-      <span><small>Score</small><strong>${selected.score} · ${escapeHtml(selected.status)}</strong></span>
-      <span><small>Confidence</small><strong>${escapeHtml(selected.confidence)}</strong></span>
-      <span><small>Decimals</small><strong>${selected.decimals ?? '—'}</strong></span>
+    <section class="market-card" aria-label="Token market history">
+      <div class="market-card-head">
+        <span><small>Price history</small><strong>7 days · 4 hour candles</strong></span>
+        <span class="${discoveryTrendClass(marketTrend)}">${formatDiscoveryPercent(change7d, 'No 7D change')}</span>
+      </div>
+      ${marketChart || `
+        <div class="market-chart-empty">
+          <i class="fa-solid fa-chart-area"></i>
+          <span><strong>No pool history indexed</strong><small>The chain audit remains available below.</small></span>
+        </div>
+      `}
+      ${marketChart ? `
+        <div class="market-chart-range">
+          <span><small>7D low</small><strong>${formatDiscoveryPrice(market?.history?.lowUsd)}</strong></span>
+          <span><small>Latest candle</small><strong>${formatAge(market?.history?.asOf)}</strong></span>
+          <span><small>7D high</small><strong>${formatDiscoveryPrice(market?.history?.highUsd)}</strong></span>
+        </div>
+      ` : ''}
+    </section>
+    <div class="market-stats">
+      <span><small>Liquidity</small><strong>${formatDiscoveryUsd(market?.liquidityUsd)}</strong></span>
+      <span><small>24H volume</small><strong>${formatDiscoveryUsd(market?.volume24hUsd)}</strong></span>
+      <span><small>${market?.marketCapUsd != null ? 'Market cap' : 'FDV'}</small><strong>${formatDiscoveryUsd(market?.marketCapUsd ?? market?.fdvUsd)}</strong></span>
+      <span><small>24H trades</small><strong>${tradeCount || '—'}</strong></span>
     </div>
-    <div class="evidence-mint-line">
-      <small>Mint</small>
-      <code title="${escapeHtml(selected.mint)}">${escapeHtml(selected.mint)}</code>
+    <div class="market-source">
+      <i class="fa-solid fa-wave-square"></i>
+      <span><strong>${market ? 'GeckoTerminal' : 'Market feed not indexed'}</strong><small>${market?.pool?.address
+        ? `${escapeHtml(dexName)} · ${escapeHtml(shortAddress(market.pool.address))}`
+        : 'Refresh later for price, liquidity, and pool history.'}</small></span>
+      <span class="risk-badge ${market ? '' : 'warn'}">${market ? 'Live market' : 'No pool'}</span>
+    </div>
+    <div class="detail-section-label">
+      <span>Chain audit</span>
+      <small>Solana RPC</small>
+    </div>
+    <div class="evidence-summary-strip">
+      <span><small>Evidence</small><strong>${selected.score} · ${escapeHtml(selected.status)}</strong></span>
+      <span><small>Confidence</small><strong>${escapeHtml(selected.confidence)}</strong></span>
+      <span><small>Supply</small><strong>${escapeHtml(supply)}</strong></span>
+      <span><small>Top 10</small><strong>${escapeHtml(topTenValue)}</strong></span>
     </div>
     <div class="evidence-facts">
-      ${evidence.map((item) => {
-        const value = item.label === 'Market price' && selected.priceUsd
-          ? formatDiscoveryPrice(selected.priceUsd)
-          : item.value;
-        return `
-          <div class="evidence-fact">
-            <span>${escapeHtml(item.label)}</span>
-            <strong><span class="evidence-dot ${escapeHtml(item.state || 'unknown')}"></span>${escapeHtml(value)}</strong>
-          </div>
-        `;
-      }).join('')}
+      ${evidence.map((item) => `
+        <div class="evidence-fact">
+          <span>${escapeHtml(item.label)}</span>
+          <strong><span class="evidence-dot ${escapeHtml(item.state || 'unknown')}"></span>${escapeHtml(item.value)}</strong>
+        </div>
+      `).join('')}
+    </div>
+    <div class="evidence-mint-line">
+      <small>Mint address</small>
+      <code title="${escapeHtml(selected.mint)}">${escapeHtml(selected.mint)}</code>
     </div>
     <div class="discovery-actions">
       <button class="secondary-button compact" type="button" data-action="refresh-discovery" data-token="${escapeHtml(selected.mint)}" ${state.discovery.inspecting ? 'disabled' : ''}>
-        <i class="fa-solid fa-rotate"></i><span>Refresh</span>
+        <i class="fa-solid fa-rotate"></i><span>Refresh data</span>
       </button>
       <button class="secondary-button compact" type="button" data-action="copy-discovery-mint" data-token="${escapeHtml(selected.mint)}">
         <i class="fa-solid fa-copy"></i><span>Copy mint</span>
@@ -14172,6 +14302,10 @@ function renderDiscovery() {
       <button class="secondary-button compact danger-button" type="button" data-action="remove-discovery" data-token="${escapeHtml(selected.mint)}">
         <i class="fa-solid fa-trash"></i><span>Remove</span>
       </button>
+    </div>
+    <div class="detail-section-label">
+      <span>Sources &amp; notes</span>
+      <small>${escapeHtml(selected.confidence)} confidence</small>
     </div>
     <div class="discovery-audit">
       <div class="audit-line">

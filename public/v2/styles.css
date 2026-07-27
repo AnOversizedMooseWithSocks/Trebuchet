@@ -10775,3 +10775,516 @@ input[type="number"]::-webkit-outer-spin-button {
   background: color-mix(in srgb, var(--wallet-rarity) 7%, transparent);
   color: var(--wallet-rarity);
 }
+
+/* -------------------------------------------------------------------------
+   Discovery market workspace
+
+   Market data leads the detail view; chain safety evidence remains compact
+   and scannable below it. This intentionally replaces the old static
+   Identity / Authority / Distribution / Provenance explainer strip.
+   ------------------------------------------------------------------------- */
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: 0 !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+}
+
+#view-discovery .discovery-inspect-bar {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+#view-discovery .discovery-source-banner {
+  min-height: 22px;
+  margin: 5px 0 8px;
+  font-size: 9px;
+}
+
+#view-discovery .discovery-table {
+  border-top-color: var(--line-strong);
+}
+
+#view-discovery .discovery-row {
+  grid-template-columns: 36px minmax(0, 1fr) 72px 88px;
+  gap: 10px;
+  padding: 9px 7px;
+}
+
+#view-discovery .discovery-row .token-mark,
+#view-discovery .evidence-head .token-mark {
+  overflow: hidden;
+  background: color-mix(in srgb, var(--green) 4%, var(--panel-strong));
+}
+
+#view-discovery .token-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+#view-discovery .discovery-copy h3 {
+  font-size: 11px;
+}
+
+.market-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.25;
+}
+
+.market-line > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-line strong {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.market-line .has-provenance {
+  color: var(--green);
+}
+
+.is-up {
+  color: var(--green) !important;
+}
+
+.is-down {
+  color: var(--red) !important;
+}
+
+.is-flat {
+  color: var(--muted) !important;
+}
+
+#view-discovery .score-block {
+  gap: 1px;
+}
+
+#view-discovery .score-block strong {
+  font-size: 16px;
+}
+
+#view-discovery .score-block small,
+#view-discovery .source-block {
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+#view-discovery .source-block {
+  gap: 3px;
+}
+
+#view-discovery .source-block .risk-badge {
+  min-height: 20px;
+  padding: 3px 6px;
+  font-size: 8px;
+}
+
+#view-discovery .evidence-panel {
+  border-top: 0;
+}
+
+#view-discovery .evidence-head {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 9px;
+  padding: 2px 0 9px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+#view-discovery .evidence-head .token-mark {
+  width: 34px;
+  height: 34px;
+}
+
+.evidence-identity {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.evidence-identity > small,
+.evidence-identity code {
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+#view-discovery .evidence-identity h3 {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-identity h3 span {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.evidence-price {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  min-width: 0;
+  text-align: right;
+}
+
+.evidence-price strong {
+  max-width: 145px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-price small {
+  font-size: 9px;
+}
+
+.market-card {
+  display: grid;
+  margin-top: 8px;
+  border: 1px solid var(--line-strong);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--green) 4%, transparent), transparent 62%),
+    color-mix(in srgb, var(--panel-strong) 76%, transparent);
+}
+
+.market-card-head,
+.market-chart-range {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.market-card-head {
+  padding: 7px 8px 4px;
+}
+
+.market-card-head > span:first-child,
+.market-chart-range span {
+  display: grid;
+  gap: 1px;
+}
+
+.market-card-head small,
+.market-chart-range small,
+.market-stats small,
+.market-source small,
+.detail-section-label small {
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.market-card-head strong,
+.market-card-head > span:last-child {
+  font-size: 9px;
+}
+
+.market-sparkline {
+  display: block;
+  width: 100%;
+  height: 108px;
+  padding: 0 4px;
+}
+
+.market-sparkline-area {
+  fill: color-mix(in srgb, var(--green) 10%, transparent);
+}
+
+.market-sparkline-line {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.market-sparkline.is-down .market-sparkline-area {
+  fill: color-mix(in srgb, var(--red) 9%, transparent);
+}
+
+.market-sparkline.is-down .market-sparkline-line {
+  stroke: var(--red);
+}
+
+.market-chart-range {
+  padding: 4px 8px 7px;
+  border-top: 1px solid var(--line);
+}
+
+.market-chart-range span:nth-child(2) {
+  justify-items: center;
+  text-align: center;
+}
+
+.market-chart-range span:last-child {
+  justify-items: end;
+  text-align: right;
+}
+
+.market-chart-range strong {
+  font-size: 8px;
+}
+
+.market-chart-empty {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 86px;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--subtle);
+}
+
+.market-chart-empty span {
+  display: grid;
+  gap: 2px;
+}
+
+.market-chart-empty strong {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.market-chart-empty small {
+  color: var(--subtle);
+  font-size: 8px;
+}
+
+.market-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.market-stats > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px;
+  border-right: 1px solid var(--line);
+}
+
+.market-stats > span:last-child {
+  border-right: 0;
+}
+
+.market-stats strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-source {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 0;
+  color: var(--muted);
+}
+
+.market-source > i {
+  color: var(--green);
+  font-size: 9px;
+}
+
+.market-source > span:nth-child(2) {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.market-source strong {
+  color: var(--ink);
+  font-size: 9px;
+}
+
+.market-source .risk-badge {
+  min-height: 20px;
+  padding: 3px 6px;
+  font-size: 8px;
+}
+
+.detail-section-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 5px;
+  padding: 7px 0 4px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.detail-section-label > span {
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+#view-discovery .evidence-summary-strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+}
+
+#view-discovery .evidence-summary-strip > span {
+  min-width: 0;
+  padding: 6px;
+  border-right: 1px solid var(--line);
+}
+
+#view-discovery .evidence-summary-strip > span:last-child {
+  border-right: 0;
+}
+
+#view-discovery .evidence-summary-strip strong {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#view-discovery .evidence-facts {
+  column-gap: 8px;
+  padding: 4px 0;
+}
+
+#view-discovery .evidence-fact {
+  padding: 4px 0;
+}
+
+#view-discovery .evidence-mint-line {
+  padding: 6px 0;
+}
+
+#view-discovery .discovery-actions {
+  padding: 6px 0 2px;
+}
+
+#view-discovery .discovery-actions .compact {
+  min-height: 28px;
+  padding: 5px 7px;
+  font-size: 8px;
+}
+
+.discovery-detail-empty {
+  display: grid;
+  place-items: center;
+  gap: 7px;
+  min-height: 260px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.discovery-detail-empty i {
+  color: var(--green);
+  font-size: 22px;
+}
+
+.discovery-detail-empty strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.discovery-detail-empty span {
+  max-width: 32ch;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+@media (min-width: 901px) {
+  #view-discovery .discovery-grid {
+    grid-template-columns: minmax(0, 1.2fr) minmax(340px, .8fr);
+  }
+
+  #view-discovery .surface-main {
+    overflow: hidden;
+  }
+
+  #view-discovery .discovery-table {
+    min-height: 0;
+    overflow: hidden auto;
+  }
+}
+
+@media (max-width: 900px) {
+  #view-discovery .discovery-inspect-bar {
+    grid-template-columns: 1fr;
+  }
+
+  #view-discovery .discovery-inspect-bar .primary-button {
+    width: 100%;
+  }
+
+  #view-discovery .discovery-row {
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+  }
+
+  #view-discovery .source-block {
+    grid-column: 2 / -1;
+    grid-template-columns: auto auto auto;
+    align-items: center;
+    justify-content: start;
+  }
+
+  #view-discovery .evidence-head {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  #view-discovery .evidence-price {
+    grid-column: 2;
+    grid-template-columns: auto auto;
+    justify-content: start;
+    justify-items: start;
+    align-items: baseline;
+    gap: 8px;
+    text-align: left;
+  }
+
+  .market-stats,
+  #view-discovery .evidence-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .market-stats > span:nth-child(2),
+  #view-discovery .evidence-summary-strip > span:nth-child(2) {
+    border-right: 0;
+  }
+
+  .market-stats > span:nth-child(-n + 2),
+  #view-discovery .evidence-summary-strip > span:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
+  }
+}

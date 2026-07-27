@@ -79,6 +79,7 @@ import { buildV2ExecutionReadiness, buildV2LaunchPlan } from './v2LaunchPlan.js'
 import {
   buildDiscoveryRecord,
   discoveryRpcCandidates,
+  fetchDiscoveryMarketData,
   isMissingMintRpcError,
 } from './discoveryService.js';
 import {
@@ -879,16 +880,18 @@ app.post('/api/v2/discovery/inspect', async (req, res) => {
     }
 
     const { connection } = inspectionRpc;
-    const [metadataResult, compatibilityResult, largestResult] = await Promise.allSettled([
+    const [metadataResult, compatibilityResult, largestResult, marketResult] = await Promise.allSettled([
       getTokenMetadata(mint, { rpcUrl: inspectionRpc.url }),
       getMintCompatibilityWithRaydiumClmm(connection, mintPublicKey),
       connection.getTokenLargestAccounts(mintPublicKey, 'confirmed'),
+      fetchDiscoveryMarketData(mint),
     ]);
 
     const warnings = [];
     if (metadataResult.status === 'rejected') warnings.push(`Metadata: ${metadataResult.reason?.message || 'lookup failed'}`);
     if (compatibilityResult.status === 'rejected') warnings.push(`Authority audit: ${compatibilityResult.reason?.message || 'lookup failed'}`);
     if (largestResult.status === 'rejected') warnings.push(`Concentration: ${largestResult.reason?.message || 'lookup failed'}`);
+    if (marketResult.status === 'rejected') warnings.push(`Market data: ${marketResult.reason?.message || 'lookup failed'}`);
     if (inspectionRpc.url !== rpcConfig.active) {
       const activeName = rpcConfig.saved?.find((entry) => entry.url === rpcConfig.active)?.name || 'active RPC';
       warnings.push(`Read-only inspection used ${inspectionRpc.name} because ${activeName} is on another network or did not contain the mint.`);
@@ -905,6 +908,7 @@ app.post('/api/v2/discovery/inspect', async (req, res) => {
       compatibility: compatibilityResult.status === 'fulfilled' ? compatibilityResult.value : null,
       supply,
       largestAccounts: largestResult.status === 'fulfilled' ? largestResult.value?.value : null,
+      market: marketResult.status === 'fulfilled' ? marketResult.value : null,
       journal: matchingJournal,
       rpcName: inspectionRpc.name,
       warnings,

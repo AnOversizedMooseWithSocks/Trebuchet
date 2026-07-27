@@ -1326,7 +1326,7 @@ function loadV2ReportPositionCardHarness() {
 
 function loadV2ReportFeeTierHarness(tiers = null) {
   const defaultStart = js.indexOf('const DEFAULT_CLMM_FEE_TIERS');
-  const defaultEnd = js.indexOf('\n\nconst standards', defaultStart);
+  const defaultEnd = js.indexOf('\n\nconst DISCOVERY_STORAGE_KEY', defaultStart);
   const numberStart = js.indexOf('function numberOrNull');
   const numberEnd = js.indexOf('\nfunction stableHashString', numberStart);
   const normalizeStart = js.indexOf('function normalizeClmmFeeTier');
@@ -1962,11 +1962,15 @@ test('v2 is the Electron default with an explicit tested Classic fallback', () =
 test('v2 Discovery is a live, locally persisted evidence registry without social mechanics', () => {
   const combined = `${html}\n${css}\n${js}`;
 
-  assert.match(combined, /Live Solana evidence/);
-  assert.match(combined, /Token registry/);
+  assert.match(combined, /Market \+ chain evidence/);
+  assert.match(combined, /Token explorer/);
   assert.match(combined, /inspectDiscoveryToken/);
-  assert.match(combined, /Live RPC/);
-  assert.match(combined, /top 10 accounts/i);
+  assert.match(combined, /Solana RPC chain facts/);
+  assert.match(combined, /GeckoTerminal market history/);
+  assert.match(combined, /Price history/);
+  assert.match(combined, /24H volume/);
+  assert.match(combined, /Liquidity/);
+  assert.match(combined, /Top 10/);
   assert.match(combined, /local launch journal/i);
   assert.match(combined, /DISCOVERY_STORAGE_KEY/);
   assert.match(combined, /confidence/i);
@@ -1978,9 +1982,10 @@ test('v2 Discovery is a live, locally persisted evidence registry without social
   assert.match(js, /evidence-summary-strip/);
   assert.match(js, /evidence-facts/);
   assert.match(js, /Stored only in this browser profile/);
+  assert.doesNotMatch(html, /standardsStrip/);
   assert.doesNotMatch(html, /selectedChatTitle|id="chatPanel"/);
-  assert.match(js, /rawTopTen == null \? null : Number\(rawTopTen\)/);
-  assert.match(js, /topTen != null && Number\.isFinite\(topTen\)/);
+  assert.match(js, /selected\.metrics\?\.topTenPercent == null/);
+  assert.match(js, /formatDiscoveryUsd\(market\?\.liquidityUsd\)/);
   assert.doesNotMatch(combined, /Mock dataset/);
   assert.doesNotMatch(combined, /Mock sample/);
   assert.doesNotMatch(combined, /Transaction Room/);
@@ -6395,11 +6400,11 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=65/);
+  assert.match(html, /styles\.css\?v=66/);
   assert.match(html, /runtime-state\.js\?v=1/);
   assert.match(html, /api-client\.js\?v=33/);
-  assert.match(html, /app\.js\?v=152/);
-  assert.doesNotMatch(html, /app\.js\?v=152" type="module"/);
+  assert.match(html, /app\.js\?v=153/);
+  assert.doesNotMatch(html, /app\.js\?v=153" type="module"/);
   assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
