@@ -7,6 +7,7 @@ import {
   COST_TOKEN_CREATE_SOL,
   COST_TRANSFER_SOL,
   COST_TX_BUFFER_SOL,
+  estimateAirdropExecutionCostSol,
 } from './lpConstants.js';
 import {
   detectLogoImageDimensions,
@@ -422,7 +423,10 @@ function fundingBalanceIssues({
     positiveFinite(estimate?.solCreditedForCompletedSwaps, 0),
     acquiredAutoSwapCreditSol,
   );
-  const airdropExecutionSol = positiveFinite(plan?.poolTopology?.airdrop?.executionCostSol, 0);
+  const estimateIncludesAirdrop = estimate?.includesAirdropExecutionCost === true;
+  const airdropExecutionSol = estimateIncludesAirdrop
+    ? 0
+    : positiveFinite(plan?.poolTopology?.airdrop?.executionCostSol, 0);
   const solNeeded = Math.max(0, baseSolNeeded - completedSol - creditedSwapSol) + airdropExecutionSol;
   if (solNeeded > 0 && walletSol + 0.000000001 < solNeeded) {
     issues.push({
@@ -523,7 +527,10 @@ function normalizePoolTopology(input = {}) {
       budgetTokens: Math.max(0, numeric(input.airdrop.budgetTokens, 0)),
       explicitTokens: Math.max(0, numeric(input.airdrop.explicitTokens, 0)),
       remainingTokens: Math.max(0, numeric(input.airdrop.remainingTokens, 0)),
-      executionCostSol: roundSol(Math.max(0, numeric(input.airdrop.executionCostSol, 0))),
+      executionCostSol: roundSol(Math.max(
+        Math.max(0, numeric(input.airdrop.executionCostSol, 0)),
+        estimateAirdropExecutionCostSol(input.airdrop.recipientCount),
+      )),
       budgetError: typeof input.airdrop.budgetError === 'string' && input.airdrop.budgetError.trim()
         ? input.airdrop.budgetError.trim()
         : null,
@@ -1221,7 +1228,9 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
     + (feeKeyTransferCount * COST_TRANSFER_SOL)
     + (nonSolPoolCount > 0 ? COST_BS_QUOTE_SOL : 0)
     + COST_TX_BUFFER_SOL;
-  const reportCost = COST_LAUNCH_REPORT_SOL + COST_TX_BUFFER_SOL;
+  const reportCost = COST_LAUNCH_REPORT_SOL
+    + COST_TX_BUFFER_SOL
+    + poolTopology.airdrop.executionCostSol;
   const supplyUsed = roundSol(
     poolTopology.totalPoolPercent
       + poolTopology.preallocation.supplyPercent
@@ -1249,7 +1258,10 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
       stage: 'fund',
       label: 'Estimate funding and quote acquire',
       risk: launchSol > 0 ? 'Medium' : 'Low',
-      costSol: launchSol,
+      // Funding reserves capital in the managed wallet; that same launch SOL
+      // is spent once when liquidity opens. Excluding it here prevents the
+      // envelope maximum from counting the reserve twice.
+      costSol: 0,
       effects: [
         `Reserves ${launchSol.toFixed(3)} SOL for launch liquidity`,
         `${poolCount} pool${poolCount === 1 ? '' : 's'} / ${nonSolPoolCount} quote-token acquire path${nonSolPoolCount === 1 ? '' : 's'}`,

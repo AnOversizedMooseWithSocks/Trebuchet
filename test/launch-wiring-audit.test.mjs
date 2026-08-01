@@ -720,6 +720,14 @@ test('transfer-assets validates destination before resolving a saved signer', ()
   assert.ok(requiredIndex < signerIndex && validIndex < signerIndex, 'destination validation must happen before signer resolution');
 });
 
+test('transfer-assets response exposes authoritative sweep verification', () => {
+  const handlerStart = serverSrc.indexOf('async function transferAssetsHandler(');
+  const handlerEnd = serverSrc.indexOf("app.post('/api/transfer-assets'", handlerStart);
+  const handler = serverSrc.slice(handlerStart, handlerEnd);
+
+  assert.match(handler, /res\.json\(\{[\s\S]*?walletEmpty,[\s\S]*?hasPartialFailure,/);
+});
+
 test('index.html has no duplicate element ids', () => {
   const html = readFileSync(path.join(REPO, 'public', 'index.html'), 'utf8');
   const ids = [...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);

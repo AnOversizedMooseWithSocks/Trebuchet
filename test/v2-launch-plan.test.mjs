@@ -169,7 +169,18 @@ test('buildV2LaunchPlan returns a normalized local-wallet run contract', () => {
   assert.equal(Object.hasOwn(plan, 'avatarCollection'), false);
   assert.equal(plan.funding.launchSol, 3.5);
   assert.ok(plan.funding.estimatedSolCost > 3.5);
+  assert.ok(plan.funding.estimatedSolCost < 7, 'launch SOL must not be counted twice');
   assert.equal(plan.operations.length, 7);
+  assert.equal(plan.operations.find((item) => item.id === 'v2-funding-check')?.costSol, 0);
+  assert.ok(
+    plan.operations.find((item) => item.id === 'v2-report-sweep')?.costSol
+      >= plan.poolTopology.airdrop.executionCostSol,
+    'the staged envelope includes airdrop execution cost',
+  );
+  assert.equal(
+    plan.funding.estimatedSolCost,
+    Number(plan.operations.reduce((sum, item) => sum + item.costSol, 0).toFixed(6)),
+  );
   assert.ok(plan.operations.every((item) => item.kind === 'local-wallet-operation'));
   assert.ok(plan.operations.every((item) => item.source === 'v2-launch-plan'));
   assert.ok(plan.operations.every((item) => item.signer === 'trebuchet-managed-launch-wallet'));
@@ -811,6 +822,45 @@ test('buildV2ExecutionReadiness blocks server-enforced execution when wallet fun
   assert.match(blockerIds, /funding-quote-short-1/);
   assert.match(blockerIds, /funding-quote-short-2/);
   assert.match(readiness.blockers.map((item) => item.detail).join('\n'), /Classic needs/);
+});
+
+test('server funding gate does not add airdrop execution cost twice', () => {
+  const input = {
+    token: { name: 'MoonKit', symbol: 'MKT', supply: '1000' },
+    poolTopology: {
+      targetMarketCapUsd: 250000,
+      sweepDestination: VALID_SWEEP_DESTINATION,
+      airdrop: {
+        enabled: true,
+        recipientCount: 10,
+        supplyPercent: 2,
+        executionCostSol: 0.0204428,
+        recipients: Array.from({ length: 10 }, (_, index) => ({
+          wallet: index % 2 === 0 ? VALID_AIRDROP_WALLET_ONE : VALID_AIRDROP_WALLET_TWO,
+          tokens: 1,
+        })),
+      },
+    },
+    funding: {
+      estimate: {
+        totalSol: 2.0204428,
+        subtotalSol: 2.0204428,
+        includesAirdropExecutionCost: true,
+      },
+    },
+  };
+  const readiness = buildV2ExecutionReadiness(input, {
+    demoMode: false,
+    walletPublicKey: '11111111111111111111111111111111',
+    walletAvailable: true,
+    secretAvailable: true,
+    secretPinLocked: false,
+    requireFundingBalance: true,
+    walletBalance: { sol: 2.0204428, tokens: {} },
+    now: '2026-06-20T12:00:00.000Z',
+  });
+
+  assert.doesNotMatch(readiness.blockers.map((item) => item.id).join(','), /funding-sol-short/);
 });
 
 test('buildV2ExecutionReadiness credits acquired quote swaps for the server funding gate', () => {
@@ -2590,6 +2640,14 @@ test('server exposes the v2 launch-plan contract as an authenticated API route',
   assert.match(serverSource, /app\.post\('\/api\/v2\/wallets\/import'/);
   assert.match(serverSource, /app\.post\('\/api\/v2\/run-envelope\/arm'/);
   assert.match(serverSource, /app\.post\('\/api\/v2\/run-envelope\/execute-next'/);
+  assert.match(serverSource, /const v2RunEnvelopes = new Map\(\)/);
+  assert.match(serverSource, /requireV2RunEnvelope\(/);
+  assert.match(serverSource, /String\(req\.body\?\.runEnvelopeId \|\| ''\)\.trim\(\)/);
+  assert.match(serverSource, /runEnvelope\.configFingerprint === readiness\.plan\?\.v2LaunchConfigFingerprint/);
+  assert.match(serverSource, /runEnvelope\.fundingEstimateHash === v2RunEnvelopeFundingHash\(req\.body\?\.fundingEstimate\)/);
+  assert.match(serverSource, /result\?\.walletEmpty === true/);
+  assert.match(serverSource, /result\?\.hasPartialFailure !== true/);
+  assert.match(serverSource, /v2RunEnvelopes\.delete\(runEnvelope\.id\)/);
   assert.match(serverSource, /app\.get\('\/api\/v2\/viewport-smoke-proof'/);
   assert.match(serverSource, /readV2ViewportSmokeProof/);
   assert.match(serverSource, /currentV2ViewportSmokeAssetHashes/);
@@ -2615,7 +2673,7 @@ test('server exposes the v2 launch-plan contract as an authenticated API route',
   assert.match(serverSource, /buildV2LaunchPlan\(req\.body \|\| \{\}/);
   assert.match(
     serverSource,
-    /const plan = buildV2LaunchPlan\(\{\s+\.\.\.\(req\.body\?\.config \|\| \{\}\),\s+walletPublicKey,\s+\}, \{/,
+    /const plan = buildV2LaunchPlan\(\{\s+\.\.\.config,\s+walletPublicKey,\s+\}, \{/,
   );
   assert.match(serverSource, /buildV2ExecutionReadiness\(config/);
   assert.match(serverSource, /requireCurrentFundingEstimate: true/);

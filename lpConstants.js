@@ -20,6 +20,16 @@ export const COST_TRANSFER_SOL     = 0.005;
 export const COST_BS_QUOTE_SOL     = 0.001;
 export const COST_TX_BUFFER_SOL    = 0.001;
 export const COST_TOKEN_CREATE_SOL = 0.05;
+export const AIRDROP_ATA_RENT_SOL = 0.00203928;
+export const AIRDROP_TX_FEE_SOL = 0.000005;
+export const AIRDROP_RECIPIENTS_PER_TX = 10;
+
+export function estimateAirdropExecutionCostSol(recipientCount) {
+  const count = Math.max(0, Math.floor(Number(recipientCount) || 0));
+  if (!count) return 0;
+  return (count * AIRDROP_ATA_RENT_SOL)
+    + (Math.ceil(count / AIRDROP_RECIPIENTS_PER_TX) * AIRDROP_TX_FEE_SOL);
+}
 // Permanent launch report (Arweave) publish cost.
 //
 // The report — the rendered HTML plus a small JSON record — is posted to Arweave

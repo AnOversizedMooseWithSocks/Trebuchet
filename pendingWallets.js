@@ -105,8 +105,9 @@ function encodeEntry(decoded) {
 }
 
 // ---------------------------------------------------------------------------
-// File I/O. Failures are non-fatal — we'd rather skip the safety-net
-// silently than crash the launch flow because of a disk hiccup.
+// File I/O. Reads remain tolerant so Recovery can surface damaged entries,
+// but writes must fail closed. A newly generated wallet is not safe to fund
+// until its secret has been durably persisted and can be read back.
 // ---------------------------------------------------------------------------
 
 function readRaw() {
@@ -167,7 +168,24 @@ function persist(list) {
     fs.writeFileSync(walletFile(), JSON.stringify(encoded, null, 2) + '\n');
   } catch (e) {
     console.error('pendingWallets: failed to save:', e.message);
+    const error = new Error('Trebuchet could not save wallet recovery data.');
+    error.code = 'WALLET_PERSIST_FAILED';
+    error.statusCode = 500;
+    error.cause = e;
+    throw error;
   }
+}
+
+function verifyPersistedWallet(publicKey) {
+  const raw = readRaw().find((entry) => entry?.publicKey === publicKey);
+  const decoded = raw ? decodeEntry(raw) : null;
+  if (!decoded || !Array.isArray(decoded.secretKey)) {
+    const error = new Error('Trebuchet could not verify the saved wallet recovery secret.');
+    error.code = 'WALLET_PERSIST_FAILED';
+    error.statusCode = 500;
+    throw error;
+  }
+  return decoded;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +206,17 @@ export function add(publicKey, secretKey, mnemonic, metadata = {}) {
     : null;
   if (existing) {
     let changed = false;
+    // Importing a valid backup for an entry whose ciphertext can no longer be
+    // decrypted must repair that entry. Keeping the first healthy secret is
+    // still idempotent, while a missing secret is never left unrecoverable.
+    if (!Array.isArray(existing.secretKey) && Array.isArray(secretKey)) {
+      existing.secretKey = secretKey;
+      changed = true;
+    }
+    if (typeof existing.mnemonic !== 'string' && typeof mnemonic === 'string' && mnemonic.length > 0) {
+      existing.mnemonic = mnemonic;
+      changed = true;
+    }
     if (rarity && existing.rarity !== rarity) {
       existing.rarity = rarity;
       changed = true;
@@ -197,7 +226,7 @@ export function add(publicKey, secretKey, mnemonic, metadata = {}) {
       changed = true;
     }
     if (changed) persist(list);
-    return;
+    return verifyPersistedWallet(publicKey);
   }
   const entry = {
     publicKey,
@@ -209,6 +238,7 @@ export function add(publicKey, secretKey, mnemonic, metadata = {}) {
   if (metadata?.vanity === true) entry.vanity = true;
   list.push(entry);
   persist(list);
+  return verifyPersistedWallet(publicKey);
 }
 
 // Drop a wallet from the recovery list. Used when the launch finishes

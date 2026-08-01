@@ -1915,6 +1915,25 @@ test('v2 recovery sweep uses an in-app typed confirmation instead of native prom
   assert.match(css, /\.sweep-confirm-field input\[aria-invalid="true"\]/);
 });
 
+test('v2 recovery sweep treats failed wallet-empty verification as partial', () => {
+  const warningSource = js.match(/function recoverySweepWarningCount\([\s\S]*?\n\}/)?.[0] || '';
+  const partialSource = js.match(/function recoverySweepIsPartial\([\s\S]*?\n\}/)?.[0] || '';
+  const cancelSource = js.match(/async function cancelRefundLaunch\([\s\S]*?\n\}\n\nfunction addVanityCandidate/)?.[0] || '';
+  const sandbox = {};
+
+  vm.runInNewContext(`${warningSource}\n${partialSource}`, sandbox);
+
+  assert.equal(sandbox.recoverySweepIsPartial({ walletEmpty: true }, false), false);
+  assert.equal(sandbox.recoverySweepIsPartial({ walletEmpty: false }, false), true);
+  assert.equal(sandbox.recoverySweepIsPartial({ walletEmpty: true, hasPartialFailure: true }, false), true);
+  assert.equal(sandbox.recoverySweepIsPartial({ walletEmpty: true }, true), true);
+  assert.ok(
+    cancelSource.indexOf('await refreshLocalApiState()') < cancelSource.indexOf('recoverySweepIsPartial(result, stillPending)'),
+    'Cancel & Refund must refresh pending recovery state before deciding the sweep is complete',
+  );
+  assert.match(cancelSource, /stillPending/);
+});
+
 test('v2 renderer uses an in-app operator dialog instead of unsupported native prompts', () => {
   assert.doesNotMatch(js, /window\.prompt\s*\(/);
   assert.match(html, /id="operatorPromptGate"[^>]*role="dialog"[^>]*aria-modal="true"/);
@@ -6402,9 +6421,9 @@ test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
   assert.match(html, /styles\.css\?v=66/);
   assert.match(html, /runtime-state\.js\?v=1/);
-  assert.match(html, /api-client\.js\?v=33/);
-  assert.match(html, /app\.js\?v=153/);
-  assert.doesNotMatch(html, /app\.js\?v=153" type="module"/);
+  assert.match(html, /api-client\.js\?v=35/);
+  assert.match(html, /app\.js\?v=155/);
+  assert.doesNotMatch(html, /app\.js\?v=155" type="module"/);
   assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
@@ -10446,6 +10465,69 @@ test('v2 API client treats missing /api/session as static HTTP preview', async (
   assert.match(boot.api.detail, /Static preview/);
 });
 
+test('v2 API client preserves structured error responses', async () => {
+  const readiness = {
+    status: 'ready',
+    nextEndpoint: '/api/create-lp',
+    blockers: [],
+  };
+  const api = loadApiClient();
+  const client = api.createV2ApiClient({
+    locationLike: { protocol: 'http:' },
+    timeoutMs: 0,
+    fetchImpl: async (url) => {
+      if (url === '/api/session') return jsonResponse({ success: true, token: 'error-token' });
+      return jsonResponse({
+        success: false,
+        code: 'STALE_V2_READINESS',
+        error: 'Readiness changed.',
+        readiness,
+        errorDetails: { expectedEndpoint: '/api/create-lp' },
+      }, 409);
+    },
+  });
+
+  await assert.rejects(
+    client.executeNextRunOperation({
+      walletPublicKey: 'Generated111',
+      config: {},
+      confirmNextEndpoint: '/api/create-token',
+    }),
+    (error) => {
+      assert.equal(error.message, 'Readiness changed.');
+      assert.equal(error.code, 'STALE_V2_READINESS');
+      assert.equal(error.status, 409);
+      assert.equal(error.readiness, readiness);
+      assert.equal(error.errorDetails.expectedEndpoint, '/api/create-lp');
+      assert.equal(error.response.readiness, readiness);
+      return true;
+    },
+  );
+});
+
+test('v2 execution errors replace stale cached readiness', () => {
+  const helperSource = js.match(/function applyExecutionErrorReadiness\([\s\S]*?\n\}/)?.[0] || '';
+  const nextRunSource = js.match(/async function executeNextRunOperation\([\s\S]*?\n\}\n\nfunction executeNextTransferFinalizationIssue/)?.[0] || '';
+  const fullRunSource = js.match(/async function runFullLaunch\([\s\S]*?\n\}\n\nasync function runLaunchEnvelope/)?.[0] || '';
+  const stale = { status: 'ready', nextEndpoint: '/api/create-token' };
+  const fresh = { status: 'ready', nextEndpoint: '/api/create-lp', proof: { token: { mint: 'Mint111' } } };
+  let remembered = null;
+  const sandbox = {
+    state: { executionReadiness: stale },
+    rememberLaunchProof: (readiness) => {
+      remembered = readiness;
+    },
+  };
+
+  vm.runInNewContext(helperSource, sandbox);
+
+  assert.equal(sandbox.applyExecutionErrorReadiness({ readiness: fresh }), true);
+  assert.equal(sandbox.state.executionReadiness, fresh);
+  assert.equal(remembered, fresh);
+  assert.match(nextRunSource, /catch \(error\) \{\s*applyExecutionErrorReadiness\(error\);/);
+  assert.match(fullRunSource, /catch \(error\) \{\s*applyExecutionErrorReadiness\(error\);/);
+});
+
 test('v2 API client stages launch plans through the authenticated local API', async () => {
   const calls = [];
   const api = loadApiClient();
@@ -10673,6 +10755,7 @@ test('v2 API client manages Trebuchet local wallets and run envelopes', async ()
         assert.equal(init.method, 'POST');
         assert.equal(init.headers['x-trebuchet-session'], 'wallet-token');
         assert.match(init.body, /Generated111/);
+        assert.match(init.body, /v2FundingFingerprint/);
         return jsonResponse({
           success: true,
           envelope: { id: 'run-1', status: 'armed', walletPublicKey: 'Generated111' },
@@ -10684,6 +10767,7 @@ test('v2 API client manages Trebuchet local wallets and run envelopes', async ()
         assert.match(init.body, /Generated111/);
         assert.match(init.body, /\/api\/create-token/);
         assert.match(init.body, /trebuchet-mkt-dossier\.html/);
+        assert.match(init.body, /run-1/);
         return jsonResponse({
           success: true,
           executed: {
@@ -10742,11 +10826,13 @@ test('v2 API client manages Trebuchet local wallets and run envelopes', async ()
   const envelope = await client.armRunEnvelope({
     walletPublicKey: generated.publicKey,
     config: { token: { name: 'MoonKit', symbol: 'MKT', supply: '1000' } },
+    fundingEstimate: { totalSol: 1.25, v2FundingFingerprint: 'funding-current' },
   });
   const executed = await client.executeNextRunOperation({
     walletPublicKey: generated.publicKey,
     config: { token: { name: 'MoonKit', symbol: 'MKT', supply: '1000' } },
     confirmNextEndpoint: '/api/create-token',
+    runEnvelopeId: envelope.id,
     localDossier: {
       status: 'downloaded',
       kind: 'local-dossier-html',
@@ -10808,6 +10894,8 @@ test('v2 API client bridges classic vanity, funding, and diagnostics APIs', asyn
       if (url === '/api/estimate-lp-funding') {
         assert.equal(init.method, 'POST');
         assert.match(init.body, /allocations/);
+        assert.match(init.body, /recipientCount/);
+        assert.match(init.body, /executionCostSol/);
         return jsonResponse({
           success: true,
           estimate: {
@@ -11032,6 +11120,9 @@ test('v2 API client bridges classic vanity, funding, and diagnostics APIs', asyn
     allocations: [{ quoteToken: 'SOL', supplyPercent: 70, distribution: [{ sharePercent: 100 }] }],
     targetMarketCapUsd: 250000,
     publishLaunchReport: true,
+    token: { supply: '1000000', decimals: 9 },
+    preallocation: { enabled: true, supplyPercent: 3 },
+    airdrop: { enabled: true, recipientCount: 10, executionCostSol: 0.0204428 },
   });
   const feeTiers = await client.getClmmFeeTiers();
   const quoteInfo = await client.getQuoteTokenInfo('QuoteMint111');

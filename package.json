@@ -116,13 +116,16 @@
   "devDependencies": {
     "@types/node": "^20.14.10",
     "electron": "^42.2.0",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "^26.15.0",
     "pixelmatch": "^7.2.0",
     "playwright": "^1.60.0",
     "pngjs": "^7.0.0"
   },
   "overrides": {
-    "axios": "^1.16.1",
+    "axios": "^1.18.0",
+    "brace-expansion@<1.1.16": "1.1.16",
+    "brace-expansion@>=2.0.0 <2.1.2": "2.1.2",
+    "brace-expansion@>=3.0.0 <5.0.8": "5.0.8",
     "bn.js": "^5.2.3",
     "form-data": "^4.0.6",
     "js-yaml": "^4.3.0",

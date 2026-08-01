@@ -11707,10 +11707,14 @@ function renderClassicBridge() {
     : state.lastDemoLaunchRun
       ? 'Rerun demo'
       : 'Run demo';
+  const armedRunEnvelopeId = state.lastRunEnvelope?.status === 'armed'
+    ? String(state.lastRunEnvelope.id || '')
+    : '';
   const canExecuteNext = !state.demoActive
     && readiness?.status === 'ready'
     && Boolean(readiness?.nextEndpoint)
     && state.apiStatus === 'connected'
+    && Boolean(armedRunEnvelopeId)
     && quoteSafety.blockers.length === 0;
   const canRunFull = canExecuteNext && !state.fullRunRunning && !state.realExecutionRunning;
   const executeNextLabel = state.realExecutionRunning
@@ -17485,10 +17489,18 @@ async function discardSelectedWallet(publicKey = selectedLaunchWalletPublicKey()
 }
 
 function recoverySweepWarningCount(result = {}) {
-  return Number(result.solSweepError ? 1 : 0)
+  const detailedWarnings = Number(result.solSweepError ? 1 : 0)
     + (Array.isArray(result.tokenSweep?.errors) ? result.tokenSweep.errors.length : 0)
     + (Array.isArray(result.nftSweep?.errors) ? result.nftSweep.errors.length : 0)
-    + (Array.isArray(result.airdrop?.failed) ? result.airdrop.failed.length : 0);
+    + (Array.isArray(result.airdrop?.failed) ? result.airdrop.failed.length : 0)
+    + Number(result.walletEmpty === false ? 1 : 0);
+  return detailedWarnings || Number(result.hasPartialFailure === true ? 1 : 0);
+}
+
+function recoverySweepIsPartial(result = {}, stillPending = false) {
+  return recoverySweepWarningCount(result) > 0
+    || result.hasPartialFailure === true
+    || stillPending;
 }
 
 function recoverySweepMetrics(sweep = {}) {
@@ -17683,7 +17695,7 @@ async function sweepRecoveryWallet(publicKey) {
     const warningCount = recoverySweepWarningCount(result);
     await refreshLocalApiState();
     const stillPending = state.recovery.pendingWallets.some((walletRow) => walletRow.publicKey === publicKey);
-    const partial = warningCount > 0 || stillPending;
+    const partial = recoverySweepIsPartial(result, stillPending);
     state.lastRecoverySweep = {
       publicKey,
       destinationWallet,
@@ -17769,9 +17781,11 @@ async function cancelRefundLaunch() {
     const run = state.apiClient.cancelLaunchRefund || state.apiClient.sweepPendingWallet;
     const result = await run({ walletPublicKey, destinationWallet });
     const warningCount = recoverySweepWarningCount(result);
-    const partial = warningCount > 0;
+    await refreshLocalApiState();
+    const stillPending = state.recovery.pendingWallets.some((walletRow) => walletRow.publicKey === walletPublicKey);
+    const partial = recoverySweepIsPartial(result, stillPending);
     const message = partial
-      ? `Cancel & Refund finished with ${warningCount} warning${warningCount === 1 ? '' : 's'}; inspect recovery before starting over.`
+      ? `Cancel & Refund needs recovery review: ${warningCount} warning${warningCount === 1 ? '' : 's'}${stillPending ? '; the recovery entry remains for another attempt' : ''}.`
       : 'Cancel & Refund swept the launch wallet to the destination.';
     state.cancelRefund = {
       running: false,
@@ -17781,6 +17795,7 @@ async function cancelRefundLaunch() {
         result,
         warningCount,
         partial,
+        stillPending,
         message,
       },
       error: null,
@@ -17790,7 +17805,6 @@ async function cancelRefundLaunch() {
       status: partial ? 'warn' : 'complete',
       detail: message,
     });
-    await refreshLocalApiState();
     pollLiveOps().catch(() => null);
     notify(partial ? 'Cancel & Refund completed with warnings' : 'Cancel & Refund completed');
   } catch (error) {
@@ -18242,6 +18256,17 @@ async function checkExecutionReadiness() {
   }
 }
 
+function applyExecutionErrorReadiness(error) {
+  if (/^RUN_ENVELOPE_/.test(String(error?.code || ''))) {
+    state.lastRunEnvelope = null;
+  }
+  const readiness = error?.readiness || error?.response?.readiness;
+  if (!readiness || typeof readiness !== 'object') return false;
+  state.executionReadiness = readiness;
+  rememberLaunchProof(readiness);
+  return true;
+}
+
 async function runDemoLaunch() {
   if (!state.demoActive) {
     notify('Demo mode is required for v2 demo launch');
@@ -18304,6 +18329,13 @@ async function executeNextRunOperation() {
     notify('Real execution requires the local Trebuchet app');
     return;
   }
+  const runEnvelopeId = state.lastRunEnvelope?.status === 'armed'
+    ? String(state.lastRunEnvelope.id || '')
+    : '';
+  if (!runEnvelopeId) {
+    notify('Review and arm the local run before executing');
+    return;
+  }
   if (!state.executionReadiness || state.executionReadiness.status !== 'ready') {
     await checkExecutionReadiness();
   }
@@ -18351,7 +18383,9 @@ async function executeNextRunOperation() {
       airdropRecipients: config.poolTopology.airdrop.recipients,
       confirmNextEndpoint: readiness.nextEndpoint,
       localDossier: currentLocalDossier(dossierProof, dossierConfig),
+      runEnvelopeId,
     });
+    if (result.envelope) state.lastRunEnvelope = result.envelope;
     state.lastRealExecution = result.executed;
     state.executionReadiness = result.readiness || state.executionReadiness;
     rememberLaunchProof(result.proof || result.readiness?.proof);
@@ -18383,6 +18417,7 @@ async function executeNextRunOperation() {
     pollLiveOps().catch(() => null);
     notify(`${result.executed?.action || 'Classic operation'} complete`);
   } catch (error) {
+    applyExecutionErrorReadiness(error);
     finishExecutionLedgerEntry(ledgerId, {
       status: 'error',
       error: error.message || 'Execution failed',
@@ -18628,6 +18663,13 @@ async function runFullLaunch() {
     notify('Full launch requires the local Trebuchet app');
     return;
   }
+  const runEnvelopeId = state.lastRunEnvelope?.status === 'armed'
+    ? String(state.lastRunEnvelope.id || '')
+    : '';
+  if (!runEnvelopeId) {
+    notify('Review and arm the local run before starting a full launch');
+    return;
+  }
   if (state.fullRunRunning || state.realExecutionRunning) {
     notify('A launch operation is already running');
     return;
@@ -18766,7 +18808,9 @@ async function runFullLaunch() {
           airdropRecipients: config.poolTopology.airdrop.recipients,
           confirmNextEndpoint: endpointToRun,
           localDossier: currentLocalDossier(dossierProof, dossierConfig),
+          runEnvelopeId,
         });
+        if (result.envelope) state.lastRunEnvelope = result.envelope;
         executed.push(result.executed);
         state.lastRealExecution = result.executed;
         state.executionReadiness = result.readiness || state.executionReadiness;
@@ -18780,6 +18824,7 @@ async function runFullLaunch() {
 
         if (result.executed?.endpoint === '/api/transfer-assets') break;
       } catch (error) {
+        applyExecutionErrorReadiness(error);
         finishExecutionLedgerEntry(ledgerId, {
           status: 'error',
           error: error.message || 'Classic operation failed',
@@ -18847,10 +18892,18 @@ async function runLaunchEnvelope() {
     setView('wallet');
     return;
   }
+  const config = currentLaunchConfig();
+  const fundingEstimate = currentClassicFundingEstimateForConfig(config);
+  if (!fundingEstimate) {
+    notify('Run a current funding estimate before arming');
+    setLaunchWorkspace('fund', { focus: true });
+    return;
+  }
   try {
     state.lastRunEnvelope = await state.apiClient.armRunEnvelope({
       walletPublicKey,
-      config: currentLaunchConfig(),
+      config,
+      fundingEstimate,
     });
   } catch (error) {
     notify(error.message || 'Could not arm local run');

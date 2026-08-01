@@ -50,7 +50,16 @@
       super(message);
       this.name = 'V2ApiError';
       this.code = options.code || 'V2_API_ERROR';
-      this.status = options.status || null;
+      this.status = options.status ?? null;
+      this.response = options.response && typeof options.response === 'object'
+        ? options.response
+        : null;
+      if (this.response) {
+        for (const [key, value] of Object.entries(this.response)) {
+          if (['success', 'error', 'message', 'code', 'status'].includes(key)) continue;
+          if (!(key in this)) this[key] = value;
+        }
+      }
     }
   }
 
@@ -343,17 +352,39 @@
           signal: init.signal || controller?.signal,
         });
 
-        if (!response || response.ok !== true) {
-          const status = response?.status || 0;
-          throw new V2ApiError(`HTTP ${status || 'request failed'}`, {
-            code: 'HTTP_ERROR',
-            status,
-          });
+        let data = null;
+        let jsonError = null;
+        if (response && typeof response.json === 'function') {
+          try {
+            data = await response.json();
+          } catch (error) {
+            jsonError = error;
+          }
         }
 
-        const data = await response.json();
+        if (!response || response.ok !== true) {
+          const status = response?.status || 0;
+          throw new V2ApiError(
+            data?.error || data?.message || `HTTP ${status || 'request failed'}`,
+            {
+              code: data?.code || 'HTTP_ERROR',
+              status,
+              response: data,
+            },
+          );
+        }
+        if (jsonError) {
+          throw new V2ApiError('API response was not valid JSON.', {
+            code: 'INVALID_JSON',
+            status: response.status || null,
+          });
+        }
         if (data?.success === false) {
-          throw new V2ApiError(data.error || 'API request failed.', { code: 'API_ERROR' });
+          throw new V2ApiError(data.error || data.message || 'API request failed.', {
+            code: data.code || 'API_ERROR',
+            status: response.status || null,
+            response: data,
+          });
         }
         return data;
       } catch (error) {
@@ -570,10 +601,24 @@
       return request(CANCEL_VANITY_GRIND_PATH, { method: 'POST', body: {} });
     }
 
-    async function estimateClassicFunding({ allocations, targetMarketCapUsd, publishLaunchReport }) {
+    async function estimateClassicFunding({
+      allocations,
+      targetMarketCapUsd,
+      publishLaunchReport,
+      token,
+      preallocation,
+      airdrop,
+    }) {
       const data = await request(ESTIMATE_LP_FUNDING_PATH, {
         method: 'POST',
-        body: { allocations, targetMarketCapUsd, publishLaunchReport },
+        body: {
+          allocations,
+          targetMarketCapUsd,
+          publishLaunchReport,
+          token,
+          preallocation,
+          airdrop,
+        },
       });
       if (!data?.estimate) {
         throw new V2ApiError('Funding estimate response missing estimate.', { code: 'BAD_FUNDING_ESTIMATE' });
@@ -658,10 +703,10 @@
       return data.wallet;
     }
 
-    async function armRunEnvelope({ walletPublicKey, config }) {
+    async function armRunEnvelope({ walletPublicKey, config, fundingEstimate }) {
       const data = await request(V2_RUN_ARM_PATH, {
         method: 'POST',
-        body: { walletPublicKey, config },
+        body: { walletPublicKey, config, fundingEstimate },
       });
       if (!data?.envelope) {
         throw new V2ApiError('Run envelope response missing envelope.', { code: 'BAD_RUN_ENVELOPE' });
@@ -676,6 +721,7 @@
       airdropRecipients,
       confirmNextEndpoint,
       localDossier,
+      runEnvelopeId,
     } = {}) {
       const data = await request(V2_RUN_EXECUTE_NEXT_PATH, {
         method: 'POST',
@@ -686,6 +732,7 @@
           airdropRecipients,
           confirmNextEndpoint,
           localDossier,
+          runEnvelopeId,
         },
       });
       if (!data?.executed) {

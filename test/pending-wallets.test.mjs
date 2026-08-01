@@ -32,13 +32,16 @@ function pendingWalletFile(configDir) {
 async function withMutedConsole(fn) {
   const originalLog = console.log;
   const originalWarn = console.warn;
+  const originalError = console.error;
   console.log = () => {};
   console.warn = () => {};
+  console.error = () => {};
   try {
     return await fn();
   } finally {
     console.log = originalLog;
     console.warn = originalWarn;
+    console.error = originalError;
   }
 }
 
@@ -82,6 +85,51 @@ test('adds pending wallets idempotently and removes them', async (t) => {
 
     pendingWallets.remove('Wallet1111111111111111111111111111111111');
     assert.deepEqual(pendingWallets.list(), []);
+  });
+});
+
+test('repairs an existing wallet when its saved secret cannot be decrypted', async (t) => {
+  await withMutedConsole(async () => {
+    const configDir = makeTempConfigDir(t);
+    secretStore.setSafeStorage(null);
+    writeFileSync(
+      pendingWalletFile(configDir),
+      `${JSON.stringify([{
+        publicKey: 'Repair111111111111111111111111111111111',
+        createdAt: '2026-01-02T03:04:05.000Z',
+        secretKeyEnc: 'enc:not-decryptable-here',
+        mnemonicEnc: 'enc:not-decryptable-here',
+      }], null, 2)}\n`,
+    );
+    const pendingWallets = await importFreshPendingWallets(configDir);
+
+    const repaired = pendingWallets.add(
+      'Repair111111111111111111111111111111111',
+      [9, 8, 7],
+      'replacement seed words',
+    );
+
+    assert.deepEqual(repaired.secretKey, [9, 8, 7]);
+    assert.equal(repaired.mnemonic, 'replacement seed words');
+    assert.deepEqual(
+      pendingWallets.get('Repair111111111111111111111111111111111').secretKey,
+      [9, 8, 7],
+    );
+  });
+});
+
+test('fails closed when a generated wallet cannot be persisted', async (t) => {
+  await withMutedConsole(async () => {
+    const root = makeTempConfigDir(t);
+    const invalidConfigDir = path.join(root, 'not-a-directory');
+    writeFileSync(invalidConfigDir, 'occupied');
+    secretStore.setSafeStorage(null);
+    const pendingWallets = await importFreshPendingWallets(invalidConfigDir);
+
+    assert.throws(
+      () => pendingWallets.add('Unsaved11111111111111111111111111111111', [1, 2, 3], 'seed words'),
+      (error) => error?.code === 'WALLET_PERSIST_FAILED' && error?.statusCode === 500,
+    );
   });
 });
 

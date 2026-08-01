@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-import { evaluateAuditReport } from '../scripts/audit-policy.mjs';
+import {
+  evaluateAuditReport,
+  hasOnlyPatchedBraceExpansion,
+  isPatchedBraceExpansionVersion,
+} from '../scripts/audit-policy.mjs';
 import { redactSensitiveLogArgs, redactSensitiveText, redactUrl } from '../logRedaction.js';
 
 const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
@@ -35,6 +39,33 @@ test('audit policy permits only the documented upstream bigint-buffer high advis
   assert.equal(blocked.blocked.length, 1);
 });
 
+test('audit policy accepts the brace-expansion advisory only for patched maintenance releases', () => {
+  const report = {
+    vulnerabilities: {
+      'brace-expansion': {
+        severity: 'high',
+        via: [{ severity: 'high', url: 'https://github.com/advisories/GHSA-mh99-v99m-4gvg' }],
+      },
+      minimatch: { severity: 'high', via: ['brace-expansion'] },
+    },
+  };
+  const packageLock = {
+    packages: {
+      'node_modules/old/node_modules/brace-expansion': { version: '1.1.16' },
+      'node_modules/mid/node_modules/brace-expansion': { version: '2.1.2' },
+      'node_modules/brace-expansion': { version: '5.0.8' },
+    },
+  };
+  assert.equal(hasOnlyPatchedBraceExpansion(packageLock), true);
+  assert.equal(evaluateAuditReport(report, undefined, { packageLock }).blocked.length, 0);
+  assert.equal(isPatchedBraceExpansionVersion('5.0.9'), true);
+
+  packageLock.packages['node_modules/old/node_modules/brace-expansion'].version = '1.1.12';
+  const unsafe = evaluateAuditReport(report, undefined, { packageLock });
+  assert.equal(hasOnlyPatchedBraceExpansion(packageLock), false);
+  assert.equal(unsafe.blocked.length, 2);
+});
+
 test('v2 runtime state derives wallet/network/funding truth from authoritative inputs', () => {
   const sandbox = { window: {} };
   vm.runInNewContext(read('public/v2/runtime-state.js'), sandbox);
@@ -63,7 +94,7 @@ test('v2 removes cosmetic controls, native confirms, and false completion', () =
   assert.doesNotMatch(app, /Static funding estimate staged/);
   assert.match(server, /client === 'v2' \? \{\} : \{/);
   assert.match(server, /executedOperationCount: 0/);
-  assert.match(server, /requiresUserAction: 'check-readiness-and-execute'/);
+  assert.match(server, /: 'check-readiness-and-execute'/);
   assert.match(server, /priceSource: 'demo-ledger'/);
   assert.doesNotMatch(e2e, /disabled\s*=\s*false|forceClick/);
   assert.match(e2e, /demoFundBtn/);

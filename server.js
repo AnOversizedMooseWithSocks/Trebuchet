@@ -30,6 +30,7 @@ import {
 } from './lpService.js';
 
 import { swapSolForQuote, probeRaydiumPriceStrict } from './swapService.js';
+import { estimateAirdropExecutionCostSol } from './lpConstants.js';
 
 import {
   checkWalletBalanceMultiToken,
@@ -75,7 +76,11 @@ import {
 } from './validators.js';
 import { normalizeDistribution } from './lpDistribution.js';
 import { isWalletEffectivelyEmpty } from './walletRecovery.js';
-import { buildV2ExecutionReadiness, buildV2LaunchPlan } from './v2LaunchPlan.js';
+import {
+  buildV2ExecutionReadiness,
+  buildV2LaunchPlan,
+  v2FundingEstimateFingerprint,
+} from './v2LaunchPlan.js';
 import {
   buildDiscoveryRecord,
   discoveryRpcCandidates,
@@ -152,6 +157,86 @@ function clearAirdropInFlight(walletPublicKey) {
 // Entries are cleared in try/finally so even an uncaught throw releases
 // the lock.
 const launchOpsInFlight = new Map(); // walletPublicKey -> { op, startedAt }
+
+// Armed v2 run envelopes are server-owned authorization records. Renderer
+// state alone must never be enough to execute a real launch operation.
+const V2_RUN_ENVELOPE_TTL_MS = 4 * 60 * 60 * 1000;
+const v2RunEnvelopes = new Map(); // envelope id -> authorization record
+
+function stableJsonValue(value) {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .filter((key) => value[key] !== undefined)
+      .map((key) => [key, stableJsonValue(value[key])]),
+  );
+}
+
+function v2RunEnvelopeFundingHash(fundingEstimate) {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify(stableJsonValue(fundingEstimate || null)))
+    .digest('hex');
+}
+
+function pruneV2RunEnvelopes(now = Date.now()) {
+  for (const [id, envelope] of v2RunEnvelopes.entries()) {
+    if (envelope.expiresAtMs <= now) v2RunEnvelopes.delete(id);
+  }
+}
+
+function publicV2RunEnvelope(envelope) {
+  return {
+    id: envelope.id,
+    walletPublicKey: envelope.walletPublicKey,
+    signer: 'trebuchet-managed-launch-wallet',
+    status: envelope.status,
+    operationCount: envelope.operationCount,
+    executedOperationCount: envelope.executedOperationCount,
+    estimatedSolCost: envelope.estimatedSolCost,
+    maxSpendSol: envelope.maxSpendSol,
+    requiresUserAction: envelope.status === 'complete'
+      ? 'review-terminal-proof'
+      : 'check-readiness-and-execute',
+    armedAt: envelope.armedAt,
+    expiresAt: envelope.expiresAt,
+    lastExecutedEndpoint: envelope.lastExecutedEndpoint || null,
+    plan: envelope.plan,
+  };
+}
+
+function v2RunEnvelopeError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = 409;
+  return error;
+}
+
+function requireV2RunEnvelope(envelopeId, walletPublicKey) {
+  pruneV2RunEnvelopes();
+  if (!envelopeId) {
+    throw v2RunEnvelopeError(
+      'RUN_ENVELOPE_REQUIRED',
+      'Arm the reviewed run envelope before executing a live launch operation.',
+    );
+  }
+  const envelope = v2RunEnvelopes.get(envelopeId);
+  if (!envelope) {
+    throw v2RunEnvelopeError(
+      'RUN_ENVELOPE_EXPIRED',
+      'The armed run envelope is missing or expired. Review and arm the run again.',
+    );
+  }
+  if (envelope.walletPublicKey !== walletPublicKey) {
+    throw v2RunEnvelopeError(
+      'RUN_ENVELOPE_MISMATCH',
+      'The armed run envelope belongs to another launch wallet.',
+    );
+  }
+  return envelope;
+}
 
 function launchOpInFlight(walletPublicKey) {
   return launchOpsInFlight.get(walletPublicKey) || null;
@@ -3841,6 +3926,7 @@ app.get('/api/v2/wallets', async (_req, res) => {
 app.post('/api/v2/wallets/generate', async (_req, res) => {
   try {
     const demoMode = isDemoMode();
+    let managedWallet;
     if (!demoMode && rejectIfSecretPinLocked(res, 'generating a Trebuchet-managed wallet')) {
       return;
     }
@@ -3855,18 +3941,23 @@ app.post('/api/v2/wallets/generate', async (_req, res) => {
         mnemonic: walletInfo.mnemonic,
         createdAt: new Date().toISOString(),
       });
-    } else {
-      pendingWallets.add(walletInfo.publicKey, walletInfo.secretKey, walletInfo.mnemonic);
-    }
-
-    res.json({
-      success: true,
-      wallet: managedWalletMetadata({
+      managedWallet = {
         publicKey: walletInfo.publicKey,
         secretKey: walletInfo.secretKey,
         mnemonic: walletInfo.mnemonic,
         createdAt: new Date().toISOString(),
-      }, {
+      };
+    } else {
+      managedWallet = pendingWallets.add(
+        walletInfo.publicKey,
+        walletInfo.secretKey,
+        walletInfo.mnemonic,
+      );
+    }
+
+    res.json({
+      success: true,
+      wallet: managedWalletMetadata(managedWallet, {
         label: 'Launch wallet',
         qrCode,
       }),
@@ -3879,6 +3970,7 @@ app.post('/api/v2/wallets/generate', async (_req, res) => {
 app.post('/api/v2/wallets/import', async (req, res) => {
   try {
     const demoMode = isDemoMode();
+    let managedWallet;
     if (!demoMode && rejectIfSecretPinLocked(res, 'importing a Trebuchet-managed wallet')) {
       return;
     }
@@ -3895,18 +3987,19 @@ app.post('/api/v2/wallets/import', async (req, res) => {
         mnemonic,
         createdAt: new Date().toISOString(),
       });
-    } else {
-      pendingWallets.add(publicKey, secretKey, mnemonic);
-    }
-
-    res.json({
-      success: true,
-      wallet: managedWalletMetadata({
+      managedWallet = {
         publicKey,
         secretKey,
         mnemonic,
         createdAt: new Date().toISOString(),
-      }, {
+      };
+    } else {
+      managedWallet = pendingWallets.add(publicKey, secretKey, mnemonic);
+    }
+
+    res.json({
+      success: true,
+      wallet: managedWalletMetadata(managedWallet, {
         label: 'Imported wallet',
         source: 'imported-local',
         qrCode,
@@ -3921,6 +4014,8 @@ app.post('/api/v2/run-envelope/arm', (req, res) => {
   try {
     const demoMode = isDemoMode();
     const walletPublicKey = String(req.body?.walletPublicKey || '').trim();
+    const config = req.body?.config || {};
+    const fundingEstimate = req.body?.fundingEstimate || null;
     if (!walletPublicKey) {
       return res.status(400).json({ success: false, error: 'walletPublicKey required' });
     }
@@ -3934,32 +4029,52 @@ app.post('/api/v2/run-envelope/arm', (req, res) => {
         error: 'Trebuchet-managed wallet secret is unavailable',
       });
     }
+    if (!demoMode) {
+      const expectedFundingFingerprint = v2FundingEstimateFingerprint(config);
+      const actualFundingFingerprint = String(fundingEstimate?.v2FundingFingerprint || '').trim();
+      if (!(Number(fundingEstimate?.totalSol) > 0) || actualFundingFingerprint !== expectedFundingFingerprint) {
+        return res.status(409).json({
+          success: false,
+          code: 'RUN_ENVELOPE_FUNDING_STALE',
+          error: 'Run a current funding estimate before arming this launch.',
+        });
+      }
+    }
     const plan = buildV2LaunchPlan({
-      ...(req.body?.config || {}),
+      ...config,
       walletPublicKey,
     }, {
       demoMode,
     });
-    const envelopeId = crypto
-      .createHash('sha256')
-      .update(`${walletPublicKey}:${plan.id}:${plan.generatedAt}`)
-      .digest('hex')
-      .slice(0, 16);
+    pruneV2RunEnvelopes();
+    for (const [id, existing] of v2RunEnvelopes.entries()) {
+      if (existing.walletPublicKey === walletPublicKey) v2RunEnvelopes.delete(id);
+    }
+    const envelopeId = `run-${crypto.randomBytes(16).toString('hex')}`;
+    const armedAtMs = Date.now();
+    const fundingTotalSol = Number(fundingEstimate?.totalSol || 0);
+    const envelope = {
+      id: envelopeId,
+      walletPublicKey,
+      status: 'armed',
+      operationCount: plan.operations.length,
+      executedOperationCount: 0,
+      estimatedSolCost: plan.funding.estimatedSolCost,
+      maxSpendSol: Math.max(plan.funding.estimatedSolCost, fundingTotalSol),
+      configFingerprint: plan.v2LaunchConfigFingerprint,
+      walletFingerprint: plan.v2LaunchWalletFingerprint,
+      fundingEstimateHash: demoMode ? null : v2RunEnvelopeFundingHash(fundingEstimate),
+      armedAt: new Date(armedAtMs).toISOString(),
+      expiresAt: new Date(armedAtMs + V2_RUN_ENVELOPE_TTL_MS).toISOString(),
+      expiresAtMs: armedAtMs + V2_RUN_ENVELOPE_TTL_MS,
+      lastExecutedEndpoint: null,
+      plan,
+    };
+    v2RunEnvelopes.set(envelope.id, envelope);
 
     res.json({
       success: true,
-      envelope: {
-        id: `run-${envelopeId}`,
-        walletPublicKey,
-        signer: 'trebuchet-managed-launch-wallet',
-        status: 'armed',
-        operationCount: plan.operations.length,
-        executedOperationCount: 0,
-        estimatedSolCost: plan.funding.estimatedSolCost,
-        maxSpendSol: plan.funding.estimatedSolCost,
-        requiresUserAction: 'check-readiness-and-execute',
-        plan,
-      },
+      envelope: publicV2RunEnvelope(envelope),
     });
   } catch (error) {
     sendErrorResponse(res, error, 400);
@@ -3980,12 +4095,27 @@ app.post('/api/v2/run-envelope/execute-next', async (req, res) => {
     if (!walletPublicKey) {
       return res.status(400).json({ success: false, error: 'walletPublicKey required' });
     }
+    const runEnvelope = requireV2RunEnvelope(
+      String(req.body?.runEnvelopeId || '').trim(),
+      walletPublicKey,
+    );
     const { wallet, readiness } = await v2ReadinessForManagedWallet({
       walletPublicKey,
       config,
       body: req.body || {},
       requireFundingBalance: true,
     });
+
+    const configMatchesEnvelope = runEnvelope.configFingerprint === readiness.plan?.v2LaunchConfigFingerprint;
+    const walletMatchesEnvelope = runEnvelope.walletFingerprint === readiness.plan?.v2LaunchWalletFingerprint;
+    const fundingMatchesEnvelope = !runEnvelope.fundingEstimateHash
+      || runEnvelope.fundingEstimateHash === v2RunEnvelopeFundingHash(req.body?.fundingEstimate);
+    if (!configMatchesEnvelope || !walletMatchesEnvelope || !fundingMatchesEnvelope) {
+      throw v2RunEnvelopeError(
+        'RUN_ENVELOPE_MISMATCH',
+        'Launch configuration, wallet, or funding changed after arming. Review and arm the run again.',
+      );
+    }
 
     if (!wallet || !Array.isArray(wallet.secretKey)) {
       return res.status(409).json({
@@ -4047,9 +4177,21 @@ app.post('/api/v2/run-envelope/execute-next', async (req, res) => {
       },
       requireFundingBalance: true,
     });
+    runEnvelope.executedOperationCount += 1;
+    runEnvelope.lastExecutedEndpoint = readiness.nextEndpoint;
+    const terminalSweepComplete = readiness.nextEndpoint === '/api/transfer-assets'
+      && result?.walletEmpty === true
+      && result?.hasPartialFailure !== true;
+    // A missing next endpoint can also mean a recoverable proof/funding
+    // blocker. Keep the authorization record armed until the authoritative
+    // terminal sweep says the wallet is empty.
+    runEnvelope.status = terminalSweepComplete ? 'complete' : 'armed';
+    const envelopeResponse = publicV2RunEnvelope(runEnvelope);
+    if (runEnvelope.status === 'complete') v2RunEnvelopes.delete(runEnvelope.id);
 
     res.json({
       success: true,
+      envelope: envelopeResponse,
       executed: {
         endpoint: readiness.nextEndpoint,
         action: readiness.nextAction,
@@ -5578,7 +5720,12 @@ app.post('/api/quote-token-info', async (req, res) => {
 // targetMarketCapUsd / 100). All-minimal launches don't need it.
 app.post('/api/estimate-lp-funding', async (req, res) => {
   try {
-    const { allocations, targetMarketCapUsd, publishLaunchReport } = req.body;
+    const {
+      allocations,
+      targetMarketCapUsd,
+      publishLaunchReport,
+      airdrop,
+    } = req.body;
     if (!Array.isArray(allocations) || allocations.length === 0) {
       throw new Error('allocations must be a non-empty array');
     }
@@ -5588,7 +5735,7 @@ app.post('/api/estimate-lp-funding', async (req, res) => {
     const reportEnabled = (typeof publishLaunchReport === 'boolean')
       ? publishLaunchReport
       : (userPrefs.get().publishLaunchReport !== false);
-    const estimate = await estimateRequiredFunding({
+    const classicEstimate = await estimateRequiredFunding({
       allocations,
       targetMarketCapUsd,
       publishLaunchReport: reportEnabled,
@@ -5597,6 +5744,31 @@ app.post('/api/estimate-lp-funding', async (req, res) => {
         routeDiscovery: async () => null,
       } : {}),
     });
+    const airdropEnabled = airdrop?.enabled === true;
+    const requestedAirdropCostSol = airdropEnabled
+      ? Math.max(0, Number(airdrop?.executionCostSol) || 0)
+      : 0;
+    const computedAirdropCostSol = airdropEnabled
+      ? estimateAirdropExecutionCostSol(airdrop?.recipientCount)
+      : 0;
+    const airdropExecutionCostSol = Math.max(requestedAirdropCostSol, computedAirdropCostSol);
+    const estimate = {
+      ...classicEstimate,
+      totalSol: classicEstimate.totalSol + airdropExecutionCostSol,
+      subtotalSol: classicEstimate.subtotalSol + airdropExecutionCostSol,
+      solLamports: classicEstimate.solLamports + Math.ceil(airdropExecutionCostSol * 1_000_000_000),
+      solBreakdown: airdropExecutionCostSol > 0
+        ? [
+          ...classicEstimate.solBreakdown,
+          {
+            label: 'Airdrop recipient accounts and transaction fees',
+            sol: airdropExecutionCostSol,
+          },
+        ]
+        : classicEstimate.solBreakdown,
+      airdropExecutionCostSol,
+      includesAirdropExecutionCost: true,
+    };
     res.json({ success: true, estimate });
   } catch (error) {
     console.error('Error estimating LP funding:', error);
@@ -7118,6 +7290,8 @@ async function transferAssetsHandler(req, res) {
       tokenSweep,
       solSweep,
       solSweepError,
+      walletEmpty,
+      hasPartialFailure,
       airdrop: airdropResult,
     });
   } catch (error) {
