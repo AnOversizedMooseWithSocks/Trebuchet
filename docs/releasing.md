@@ -22,9 +22,9 @@ Merge a pull request to `main` to invoke automatic versioning:
 - `major` label: major increment;
 - both `minor` and `major`: `major` wins.
 
-The current automation derives the next version from `package.json` plus existing `v*` tags. It does not inspect whether the merged code changes the default UI.
+The label selects the normal semantic increment. The automation then derives the next version from `package.json` plus existing `v*` tags and applies the configured minimum-major floor. It does not inspect whether the merged code changes the default UI.
 
-> **Hard v2 invariant:** a pull request that makes v2 the production default must not merge unless it will create a `v2.0.0` or newer tag and the V2 production gate is ready. With the current v1 tag history, that means the pull request needs the `major` label. A patch or `minor` label can create a v1 tag, and v1 tags intentionally skip the v2 evidence and signing gate.
+> **Hard v2 invariant:** a pull request that makes v2 the production default must not merge unless it will create a `v2.0.0` or newer tag and the V2 production gate is ready. `auto-release.yml` currently sets `TREBUCHET_MIN_RELEASE_MAJOR=2`, so with only v1 tags present any label choice is promoted to `v2.0.0`. If that floor is removed, the release must use a `major` label or another enforced mechanism that cannot create a v1 tag.
 
 Confirm the calculated version before merge. If it would put v2-default code under a v1 tag, stop the release and correct the label or automation first.
 
@@ -138,6 +138,8 @@ Changing an artifact template requires a matching update to the hard-coded websi
 ## Website publishing
 
 The website job runs only after the GitHub Release exists and all expected download assets are present. It replaces `__TREBUCHET_VERSION__` in [`website/index.html`](../website/index.html) and mirrors [`website/`](../website) to the configured FTP destination.
+
+When the v2 UI or website hero copy changes, run `npm run shots:marketing` and review all four generated PNGs before tagging. The capture uses the connected demo runtime and a deterministic Discovery evidence record, so the website does not drift behind the shipped interface.
 
 Required secrets:
 

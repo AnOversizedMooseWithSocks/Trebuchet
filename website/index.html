@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trebuchet — Operate a Solana launch</title>
-  <meta name="description" content="A local-first Solana launch terminal for token creation, Raydium CLMM liquidity, recovery-aware execution, and permanent proof.">
+  <meta name="description" content="A local-first Solana launch terminal for token creation, Raydium CLMM liquidity, recovery-aware execution, and proof-bound evidence.">
   <meta name="theme-color" content="#050806">
   <link rel="canonical" href="https://makesometokens.com/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Trebuchet">
   <meta property="og:title" content="Trebuchet — Operate a Solana launch">
-  <meta property="og:description" content="Local signer. Guarded execution. Raydium CLMM. Permanent launch proof.">
+  <meta property="og:description" content="Local signer. Guarded execution. Raydium CLMM. Proof-bound launch evidence.">
   <meta property="og:url" content="https://makesometokens.com/">
   <meta property="og:image" content="https://makesometokens.com/og-image.png">
   <meta property="og:image:secure_url" content="https://makesometokens.com/og-image.png">
@@ -22,7 +22,7 @@
   <meta name="twitter:site" content="@makesometokens">
   <meta name="twitter:creator" content="@makesometokens">
   <meta name="twitter:title" content="Trebuchet — Operate a Solana launch">
-  <meta name="twitter:description" content="Local signer. Guarded execution. Raydium CLMM. Permanent launch proof.">
+  <meta name="twitter:description" content="Local signer. Guarded execution. Raydium CLMM. Proof-bound launch evidence.">
   <meta name="twitter:image" content="https://makesometokens.com/og-image.png">
   <meta name="twitter:image:alt" content="Trebuchet Solana launch terminal.">
 
@@ -978,19 +978,16 @@
       color: var(--green);
     }
 
-    .macos-unsigned-note {
+    .os-trust-note {
       min-height: 0 !important;
       margin: 15px 0 0;
-      color: var(--yellow) !important;
+      color: var(--muted) !important;
       font-family: var(--mono) !important;
       font-size: 8px !important;
     }
 
-    .macos-unsigned-note code {
-      display: block;
-      margin-top: 6px;
-      overflow-wrap: anywhere;
-      color: var(--yellow);
+    .os-trust-note.is-warning {
+      color: var(--yellow) !important;
     }
 
     .download-foot {
@@ -1320,7 +1317,7 @@
           <h1>Operate the launch.<br><span>Own the proof.</span></h1>
           <p class="hero-lede">
             Trebuchet is a local-first launch terminal for SPL tokens, Raydium CLMM liquidity,
-            Fee Key delivery, airdrops, recovery, and permanent launch evidence.
+            Fee Key delivery, airdrops, recovery, and proof-bound launch evidence.
             <strong>No hosted signer. No platform wallet. No hand-wavy completion screen.</strong>
           </p>
           <div class="hero-actions">
@@ -1406,7 +1403,7 @@
             <span class="capability-no">MOD / 04</span>
             <div class="capability-icon" aria-hidden="true">TX</div>
             <h3>Guarded execution</h3>
-            <p>Estimate funding, bind the plan to the selected wallet, simulate, arm, and advance only when the next transaction is safe.</p>
+            <p>Estimate funding, bind the plan to the selected wallet, simulate, arm, and advance only after the next transaction passes the current preflight and policy checks.</p>
             <code>$ preflight = pass</code>
           </article>
           <article class="capability">
@@ -1461,7 +1458,7 @@
             <ul class="check-list">
               <li>Find → unlock → act → verify workflow with explicit terminal states.</li>
               <li>Automatic resume only when recorded checkpoints are safe.</li>
-              <li>Final sweep evidence closes the run and its permanent dossier.</li>
+              <li>Final sweep evidence closes the run and binds the exported dossier.</li>
             </ul>
           </div>
           <div class="showcase-frame">
@@ -1546,9 +1543,10 @@
           <article class="os-card" data-os="windows">
             <span class="os-card-tag">Detected system</span>
             <h3>Windows</h3>
-            <p>Run the portable build directly, or install Trebuchet with the signed-style desktop setup flow.</p>
+            <p>Run the portable build directly, or use the installer for the standard Windows setup flow.</p>
             <a class="button button-primary os-primary" href="https://github.com/AnOversizedMooseWithSocks/Trebuchet/releases/download/v__TREBUCHET_VERSION__/Trebuchet-__TREBUCHET_VERSION__-Portable.exe">Portable .exe ↓</a>
             <a class="os-secondary" href="https://github.com/AnOversizedMooseWithSocks/Trebuchet/releases/download/v__TREBUCHET_VERSION__/Trebuchet-__TREBUCHET_VERSION__-Setup.exe">Installer .exe</a>
+            <p class="os-trust-note">Signed for Windows. Verify the SHA-256 checksum against the GitHub release.</p>
           </article>
 
           <article class="os-card" data-os="macos">
@@ -1557,9 +1555,7 @@
             <p>Choose Apple Silicon for M-series Macs or Intel for older x64 hardware.</p>
             <a class="button button-primary os-primary" href="https://github.com/AnOversizedMooseWithSocks/Trebuchet/releases/download/v__TREBUCHET_VERSION__/Trebuchet-__TREBUCHET_VERSION__-arm64.dmg">Apple Silicon .dmg ↓</a>
             <a class="os-secondary" href="https://github.com/AnOversizedMooseWithSocks/Trebuchet/releases/download/v__TREBUCHET_VERSION__/Trebuchet-__TREBUCHET_VERSION__-x64.dmg">Intel .dmg</a>
-            <p class="macos-unsigned-note">Unsigned build: macOS may say the app is damaged.
-              <code>xattr -dr com.apple.quarantine /Applications/Trebuchet.app</code>
-            </p>
+            <p class="os-trust-note">Signed and notarized for macOS. Verify the SHA-256 checksum against the GitHub release.</p>
           </article>
 
           <article class="os-card" data-os="linux">
@@ -1568,6 +1564,7 @@
             <p>Use the AppImage on most distributions, or install the Debian package on Ubuntu/Debian systems.</p>
             <a class="button button-primary os-primary" href="https://github.com/AnOversizedMooseWithSocks/Trebuchet/releases/download/v__TREBUCHET_VERSION__/Trebuchet-__TREBUCHET_VERSION__-x86_64.AppImage">AppImage ↓</a>
             <a class="os-secondary" href="https://github.com/AnOversizedMooseWithSocks/Trebuchet/releases/download/v__TREBUCHET_VERSION__/trebuchet-desktop___TREBUCHET_VERSION___amd64.deb">Debian .deb</a>
+            <p class="os-trust-note is-warning">Unsigned package. Verify the SHA-256 checksum against the GitHub release before installing.</p>
           </article>
         </div>
 

@@ -237,6 +237,7 @@ Common commands:
 | `npm run test:visual` | Compare UI screenshots with visual goldens. |
 | `npm run test:visual:golden:linux` | Regenerate canonical Linux goldens in the pinned CI container. |
 | `npm run shots` | Regenerate the Classic reference walkthrough. |
+| `npm run shots:marketing` | Regenerate the current v2 website screenshots and social preview. |
 | `npm run smoke:mainnet:readonly` | Run read-only mainnet compatibility probes. |
 | `npm run build:c` | Build the native Vanity CA helper. |
 | `npm run build:js` | Rebuild Classic `public/app.js` from `public/modules/`. |

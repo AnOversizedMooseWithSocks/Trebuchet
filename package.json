@@ -39,6 +39,7 @@
     "test:visual:golden": "node scripts/visual-diff.mjs --golden",
     "test:visual:golden:linux": "node scripts/visual-diff.mjs --golden --platform linux",
     "shots": "node scripts/capture-screenshots.mjs",
+    "shots:marketing": "node scripts/capture-marketing-assets.mjs",
     "smoke:mainnet:readonly": "node test-token2022-compat.mjs",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",

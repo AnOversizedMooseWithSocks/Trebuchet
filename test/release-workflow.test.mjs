@@ -11,6 +11,18 @@ import {
 } from '../scripts/release-lib.mjs';
 
 const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+const readBytes = (file) => readFileSync(new URL(`../${file}`, import.meta.url));
+
+function assertPng(file, width, height) {
+  const bytes = readBytes(file);
+  assert.deepEqual(
+    [...bytes.subarray(0, 8)],
+    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    `${file} must contain PNG bytes`,
+  );
+  assert.equal(bytes.readUInt32BE(16), width, `${file} width`);
+  assert.equal(bytes.readUInt32BE(20), height, `${file} height`);
+}
 
 test('release workflow is tag-driven and publishes checksums', () => {
   const workflow = read('.github/workflows/release.yml');
@@ -267,14 +279,23 @@ test('website download CTA uses per-OS direct links to tagged GitHub releases', 
   assert.match(site, /Trebuchet-__TREBUCHET_VERSION__-Portable\.exe/);
   assert.match(site, /Trebuchet-__TREBUCHET_VERSION__-x86_64\.AppImage/);
   assert.match(site, /trebuchet-desktop___TREBUCHET_VERSION___amd64\.deb/);
-  assert.match(site, /Unsigned build: macOS may say the app is damaged/);
-  assert.match(site, /xattr -dr com\.apple\.quarantine \/Applications\/Trebuchet\.app/);
+  assert.match(site, /Signed for Windows/);
+  assert.match(site, /Signed and notarized for macOS/);
+  assert.match(site, /Unsigned package/);
+  assert.doesNotMatch(site, /xattr .*com\.apple\.quarantine/);
 
   // Negative checks — make sure we don't slip back into the old
   // "redirect to /releases/latest" or "raw committed dist files"
   // patterns. Either would break deep-linking and version pinning.
   assert.doesNotMatch(site, /\/raw\/main\/dist\//);
   assert.doesNotMatch(site, /\/releases\/latest(?!\.\w)/);
+});
+
+test('marketing image assets are real PNG files with release dimensions', () => {
+  assertPng('website/assets/app-launch-console.png', 1600, 1000);
+  assertPng('website/assets/app-discovery.png', 1600, 1000);
+  assertPng('website/assets/app-recovery-center.png', 1600, 1000);
+  assertPng('website/og-image.png', 1200, 630);
 });
 
 test('release workflow stamps version into website and verifies assets before FTP push', () => {
