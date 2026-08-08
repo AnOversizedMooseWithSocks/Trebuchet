@@ -44,15 +44,18 @@ test('audit policy accepts the brace-expansion advisory only for patched mainten
     vulnerabilities: {
       'brace-expansion': {
         severity: 'high',
-        via: [{ severity: 'high', url: 'https://github.com/advisories/GHSA-mh99-v99m-4gvg' }],
+        via: [
+          { severity: 'high', url: 'https://github.com/advisories/GHSA-mh99-v99m-4gvg' },
+          { severity: 'high', url: 'https://github.com/advisories/GHSA-rgw5-rvv9-x895' },
+        ],
       },
       minimatch: { severity: 'high', via: ['brace-expansion'] },
     },
   };
   const packageLock = {
     packages: {
-      'node_modules/old/node_modules/brace-expansion': { version: '1.1.16' },
-      'node_modules/mid/node_modules/brace-expansion': { version: '2.1.2' },
+      'node_modules/old/node_modules/brace-expansion': { version: '1.1.18' },
+      'node_modules/mid/node_modules/brace-expansion': { version: '2.1.4' },
       'node_modules/brace-expansion': { version: '5.0.8' },
     },
   };
@@ -60,7 +63,7 @@ test('audit policy accepts the brace-expansion advisory only for patched mainten
   assert.equal(evaluateAuditReport(report, undefined, { packageLock }).blocked.length, 0);
   assert.equal(isPatchedBraceExpansionVersion('5.0.9'), true);
 
-  packageLock.packages['node_modules/old/node_modules/brace-expansion'].version = '1.1.12';
+  packageLock.packages['node_modules/old/node_modules/brace-expansion'].version = '1.1.17';
   const unsafe = evaluateAuditReport(report, undefined, { packageLock });
   assert.equal(hasOnlyPatchedBraceExpansion(packageLock), false);
   assert.equal(unsafe.blocked.length, 2);

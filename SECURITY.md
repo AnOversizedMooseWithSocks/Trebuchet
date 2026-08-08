@@ -143,7 +143,7 @@ escaped/normalized before rendering.
 
 ## Dependency audit snapshot
 
-Snapshot date: 2026-07-16
+Snapshot date: 2026-08-08
 Command: `npm audit --audit-level=high --json`
 
 | Severity | Package entries |
@@ -151,8 +151,8 @@ Command: `npm audit --audit-level=high --json`
 | Critical | 0 |
 | High | 7 |
 | Moderate | 0 |
-| Low | 16 |
-| Total | 23 |
+| Low | 17 |
+| Total | 24 |
 
 CI runs `npm run check:audit` and blocks every critical or high advisory except
 the explicitly pinned upstream `bigint-buffer` advisory
@@ -162,11 +162,12 @@ assuming a green CI job means zero high-risk advisories.
 
 ### Compatible updates applied
 
-The reviewed dependency update moved `multer` to `2.2.0`, `tmp` to `0.2.7`,
-`form-data` to `4.0.6`, `tar` to `7.5.20`, `js-yaml` to `4.3.0`, and affected
-Electron/electron-builder `undici` paths to patched releases. The coordinated
-Metaplex/Umi uploader stack is now on the compatible `1.5.x` line. Package,
-upload, Electron, and launch tests remain required whenever these pins move.
+The reviewed dependency updates moved `multer` to `2.2.0`, `tmp` to `0.2.7`,
+`form-data` to `4.0.6`, `tar` to `7.5.20`, `js-yaml` to `4.3.0`, Electron to
+`42.8.1`, its `undici` path to `7.29.0`, and legacy `brace-expansion` paths to
+`1.1.18`/`2.1.4`. The coordinated Metaplex/Umi uploader stack is on the
+compatible `1.5.x` line. Package, upload, Electron, and launch tests remain
+required whenever these pins move.
 
 ### Coupled or major-line residuals
 
@@ -202,10 +203,10 @@ Do not run `npm audit fix --force` and assume the result is safe.
 | `@solana/web3.js` | `^1.98.4` | Keep compatible with SPL Token, Raydium builders, and transaction/version APIs. |
 | `@solana/spl-token` | `^0.4.14` | Do not accept the audit-proposed `0.1.8` downgrade; validate Token-2022 and authority flows for any move. |
 | `@raydium-io/raydium-sdk-v2` | `0.1.144-alpha` | Exact alpha pin; any change requires CLMM create/open/lock/route validation. |
-| `@metaplex-foundation/umi` | `^0.9.2` | Coordinate with MPL Token Metadata and uploader plugin. |
-| `@metaplex-foundation/mpl-token-metadata` | `^3.2.1` | Revalidate metadata create and update-authority revocation. |
-| `@metaplex-foundation/umi-uploader-irys` | `^0.9.2` | `1.x` audit fix is a coupled migration, not a drop-in patch. |
-| `multer` | `^2.1.1` | Update to the fixed compatible release and rerun upload-limit/type tests. |
+| `@metaplex-foundation/umi` | `^1.5.1` | Coordinate with MPL Token Metadata and uploader plugin. |
+| `@metaplex-foundation/mpl-token-metadata` | `^3.4.0` | Revalidate metadata create and update-authority revocation. |
+| `@metaplex-foundation/umi-uploader-irys` | `^1.5.0` | Keep the Umi/MPL/Irys stack coordinated and revalidate live upload behavior. |
+| `multer` | `^2.2.0` | Rerun upload-limit, signature, MIME, and dimension tests on update. |
 
 ## Dependency upgrade workflow
 

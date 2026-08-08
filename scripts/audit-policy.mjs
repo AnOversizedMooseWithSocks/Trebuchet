@@ -9,7 +9,10 @@ export const ALLOWED_HIGH_ADVISORIES = new Set([
   'GHSA-3GC7-FJRX-P6MG',
 ]);
 
-const BRACE_EXPANSION_REDOS_ADVISORY = 'GHSA-MH99-V99M-4GVG';
+const BRACE_EXPANSION_ADVISORIES = new Set([
+  'GHSA-MH99-V99M-4GVG',
+  'GHSA-RGW5-RVV9-X895',
+]);
 
 function versionParts(version) {
   const match = String(version || '').match(/^(\d+)\.(\d+)\.(\d+)(?:-|$)/);
@@ -17,7 +20,7 @@ function versionParts(version) {
 }
 
 export function isPatchedBraceExpansionVersion(version) {
-  if (version === '1.1.16' || version === '2.1.2') return true;
+  if (version === '1.1.18' || version === '2.1.4') return true;
   const parts = versionParts(version);
   if (!parts || parts[0] < 5) return false;
   return parts[0] > 5 || parts[1] > 0 || parts[2] >= 8;
@@ -74,7 +77,7 @@ export function evaluateAuditReport(report, allowed = ALLOWED_HIGH_ADVISORIES, {
       && patchedBraceExpansion
       && ['brace-expansion', 'minimatch'].includes(name)
       && advisoryIds.length > 0
-      && advisoryIds.every((id) => id === BRACE_EXPANSION_REDOS_ADVISORY);
+      && advisoryIds.every((id) => BRACE_EXPANSION_ADVISORIES.has(id));
     const isAllowed = isExplicitlyAllowed || isPatchedMaintenanceRelease;
     (isAllowed ? allowedFindings : blocked).push({
       name,

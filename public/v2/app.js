@@ -240,9 +240,9 @@ const V2_VIEWPORT_SMOKE_REQUIRED_CHECKS = Object.freeze([
   'firstViewportFit',
 ]);
 const DEFAULT_CLMM_FEE_TIERS = Object.freeze([
-  { index: 2, tradeFeeRate: 100, tickSpacing: 1 },
-  { index: 1, tradeFeeRate: 500, tickSpacing: 10 },
-  { index: 0, tradeFeeRate: 2500, tickSpacing: 60 },
+  { index: 4, tradeFeeRate: 100, tickSpacing: 1 },
+  { index: 5, tradeFeeRate: 500, tickSpacing: 1 },
+  { index: 1, tradeFeeRate: 2500, tickSpacing: 60 },
   { index: 3, tradeFeeRate: 10000, tickSpacing: 120 },
 ]);
 

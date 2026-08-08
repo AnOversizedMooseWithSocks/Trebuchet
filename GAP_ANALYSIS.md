@@ -1,20 +1,18 @@
 # Trebuchet v2 production gap
 
-Status date: 2026-07-16
+Status date: 2026-08-08
 
 ## Executive summary
 
 The implementation gap from Classic to the v2 token-launch experience is
-largely closed. The remaining gap to a production `v2.0.0` is now operational
-proof and release trust. One release-engineering decision must not be hidden:
-
-- the auto-release default is a patch bump, so merging a v2-default branch
-  without a `major` label could publish a `v1.x` tag and skip the v2-only
-  production gate.
+largely closed. The remaining gap to a production `v2.0.0` is operational
+proof and release trust. Auto-release now enforces
+`TREBUCHET_MIN_RELEASE_MAJOR=2`, so the earlier v1-tag bypass is closed in
+automation while v2 is the desktop default.
 
 The current v2-default pull request may be mergeable as code, but it is not safe
-to merge and auto-publish until the version/gate invariant, field evidence, and
-signing inputs are resolved.
+to merge and auto-publish until field evidence, independent review, signing
+inputs, and the residual dependency-risk decision are complete.
 
 ## What is complete
 
@@ -31,6 +29,7 @@ signing inputs are resolved.
 | Report/dossier and final-sweep proof | Complete in code | proof staleness/binding tests |
 | Structured Classic comparison | Complete in code | JSON/HTML exact-evidence tests |
 | Independent production release gate | Complete | adversarial release-gate tests |
+| V2 minimum-major release invariant | Complete | `auto-release.yml`, auto-version tests |
 | Package/runtime smoke | Complete | Linux packaged v2 plus platform build jobs |
 | Classic fallback | Complete | explicit startup route and E2E |
 
@@ -38,28 +37,7 @@ signing inputs are resolved.
 
 ## Production blockers
 
-### 1. Prevent a v1 tag bypass
-
-Current behavior:
-
-- v2 is the desktop default;
-- auto-release uses a patch bump unless the merged PR has `minor` or `major`;
-- the production release gate applies only to semantic tags with major version
-  `2` or higher.
-
-Therefore a v2-default merge without `major` could generate a `v1.x` release
-that retains the v1 unsigned-test policy.
-
-Required resolution before merge:
-
-- apply the `major` label and satisfy the v2 gate; or
-- change release automation so a v2-default commit cannot produce a v1 tag; or
-- split/hold the default-switch commit until the production inputs exist.
-
-Documentation and reviewer habit are not sufficient as the final control. A
-code-level invariant is recommended.
-
-### 2. Authorized funded mainnet field run
+### 1. Authorized funded mainnet field run
 
 Run one explicitly authorized, low-risk `mainnet-beta` launch from the exact
 candidate commit through:
@@ -77,7 +55,7 @@ candidate commit through:
 The operator must use a dedicated RPC and a funding/destination wallet placed in
 scope for the test. Read-only smoke is useful but does not replace this step.
 
-### 3. Field evidence and independent review
+### 2. Field evidence and independent review
 
 The field run must produce:
 
@@ -90,7 +68,7 @@ proof and required Classic rows, verifies exact evidence and Classic SHA-256
 digests, requires an ancestral field-run commit, enforces a 30-day freshness
 window, and requires different GitHub users for operation and review.
 
-### 4. Platform signing
+### 3. Platform signing
 
 Repository administrators must supply:
 
@@ -100,20 +78,19 @@ Repository administrators must supply:
 
 V2 cannot publish unsigned test artifacts.
 
-### 5. Dependency advisory disposition
+### 4. Dependency advisory disposition
 
-The 2026-07-16 lockfile audit reports:
+The 2026-08-08 lockfile audit policy reports:
 
 - 0 critical;
-- 11 high;
-- 2 moderate;
-- 15 low.
+- 7 high;
+- 0 moderate;
+- 17 low.
 
-Some highs have ordinary fixes available (for example current upload/tooling
-transitives); others are coupled to Solana/Raydium or the Irys/Umi major line.
-Before production, update/remediate the safely fixable paths and record an
-explicit accept/mitigate/defer decision for the coupled paths after relevant
-launch tests. See [SECURITY.md](SECURITY.md).
+The audit policy passes because every remaining high dependency node traces to
+the documented upstream `bigint-buffer` advisory in the Solana parser path.
+Before production, record an explicit accept/mitigate/defer decision for that
+residual after relevant launch tests. See [SECURITY.md](SECURITY.md).
 
 ## Replacement criteria
 
@@ -138,18 +115,17 @@ pass state alone is not acceptance.
 
 ## Release sequence
 
-1. Resolve the v1-tag bypass invariant.
-2. Remediate/disposition the current dependency audit.
-3. Load repository signing/notarization credentials.
-4. Run the authorized mainnet launch from the candidate commit.
-5. Export the final proof after the terminal sweep.
-6. Load and compare the retained Classic artifact.
-7. Have a second GitHub user review and attest exact hashes.
-8. Run `npm run release:gate -- v2.0.0` with signing variables loaded.
-9. Apply the `major` label only when the candidate is intended to tag
-    `v2.0.0`.
-10. Merge, verify the tag, and monitor the full release workflow.
-11. Verify release assets, checksums, trust metadata, GitHub Package, and
+1. Record the production disposition for the residual dependency advisory.
+2. Load repository signing/notarization credentials.
+3. Run the authorized mainnet launch from the candidate commit.
+4. Export the final proof after the terminal sweep.
+5. Load and compare the retained Classic artifact.
+6. Have a second GitHub user review and attest exact hashes.
+7. Run `npm run release:gate -- v2.0.0` with signing variables loaded.
+8. Confirm auto-release still enforces `TREBUCHET_MIN_RELEASE_MAJOR=2` and the
+   computed tag is `v2.0.0` or newer.
+9. Merge, verify the tag, and monitor the full release workflow.
+10. Verify release assets, checksums, trust metadata, GitHub Package, and
     marketing-site links.
 
 ## Exit criteria
@@ -167,7 +143,7 @@ The v2 production gap is closed only when:
 Until then, the accurate state is:
 
 > v2 token-launch release candidate; code-complete for guarded launch parity,
-> awaiting production field proof, trust inputs, and release-invariant closure.
+> awaiting production field proof, independent review, and trust inputs.
 
 ## Post-v2 work
 

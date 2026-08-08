@@ -185,9 +185,9 @@ import {
 // Default Raydium AmmConfig index. Index 3 = 1% fee, tickSpacing 120 — the
 // "exotic" tier. Matches the pattern used in past manual launches. Other
 // tiers are available at runtime via raydium.api.getClmmConfigs():
-//   index 0 = 0.25% fee, tickSpacing 60   (most volatile pairs)
-//   index 1 = 0.05% fee, tickSpacing 10   (major pairs)
-//   index 2 = 0.01% fee, tickSpacing 1    (stables)
+//   index 1 = 0.25% fee, tickSpacing 60   (most volatile pairs)
+//   index 5 = 0.05% fee, tickSpacing 1    (major pairs)
+//   index 4 = 0.01% fee, tickSpacing 1    (stables)
 //   index 3 = 1.00% fee, tickSpacing 120  (exotic / new tokens)  <-- default
 const DEFAULT_AMM_CONFIG_INDEX = 3;
 
@@ -593,9 +593,9 @@ async function logWalletBalances(connection, ownerPk, tokenMint, label) {
 // HTTP wrapper, with a process-lifetime cache and a hardcoded fallback
 // for the case where the endpoint is unreachable.
 //
-// As of late 2025 there are eight tiers per Raydium's docs: 2%, 1%,
-// 0.25%, 0.05%, 0.04%, 0.03%, 0.02%, 0.01%. We don't hardcode the
-// indices because Raydium can add tiers; we let the API tell us.
+// As of August 2026 the endpoint publishes 18 configs from 0.01% through 4%.
+// We don't hardcode the full list because Raydium can add tiers; the API is
+// authoritative and the offline fallback is a tested four-tier subset.
 
 const RAYDIUM_CLMM_CONFIG_URL = 'https://api-v3.raydium.io/main/clmm-config';
 let cachedFeeTiers = null;
