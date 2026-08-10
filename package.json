@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Trebuchet token launcher, packaged as a desktop app.",
   "main": "main.js",
+  "bin": {
+    "trebuchet": "packages/cli/bin/trebuchet.js"
+  },
   "type": "module",
   "packageManager": "npm@10.9.2",
   "workspaces": [
@@ -30,8 +33,10 @@
     "start:classic": "electron . --classic",
     "web": "npm run build:c && npm run build:js && node server.js",
     "web:dev": "node --watch server.js",
+    "cli": "node packages/cli/bin/trebuchet.js",
     "check:syntax": "node scripts/check-syntax.mjs",
     "test": "node --test test/*.test.mjs",
+    "test:cli": "node --test test/cli.test.mjs",
     "test:e2e": "node test/e2e/ui-flows.mjs --mobile",
     "test:e2e:v2": "node test/e2e/v2-flows.mjs",
     "test:e2e:devnet": "node test/e2e/devnet-transactions.mjs",
@@ -93,6 +98,7 @@
     "validators.js",
     "metadata.json",
     "packages/core/**/*",
+    "packages/cli/**/*",
     "README.md",
     "public/**/*",
     "c/build/**/*"

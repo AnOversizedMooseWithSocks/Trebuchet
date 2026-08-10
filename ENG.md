@@ -63,6 +63,8 @@ links are opened by `main.js` only after URL parsing and an HTTPS-scheme check.
   upload limits, and packaged public-directory resolution.
 - `packages/core/` — headless plan, validation, estimate, integrity, and proof
   contracts shared by every interface.
+- `packages/cli/` — experimental read-only command adapter, JSON presenters,
+  atomic file output, and stable exit-code mapping.
 - `v2LaunchPlan.js` — compatibility export for the Core launch-plan contract,
   including Classic execution payload mapping,
   funding fingerprints, and readiness rules.

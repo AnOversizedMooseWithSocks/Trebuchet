@@ -79,6 +79,23 @@ npm run web            # local Express app; open /v2/ for the Trebuchet shell
 The Electron process starts an authenticated loopback Express server on a free
 port and opens the selected UI in a sandboxed browser window.
 
+### Experimental read-only CLI
+
+Trebuchet now includes a headless command surface for deterministic planning
+and verification. It cannot create wallets or send transactions yet.
+
+```bash
+npm run cli -- doctor
+npm run cli -- plan build --config launch.json --out plan.json
+npm run cli -- plan verify plan.json
+npm run cli -- estimate --plan plan.json
+npm run cli -- proof verify proof.json
+```
+
+Add `--json` for the versioned `trebuchet-cli-result/v1` machine-output
+contract. See [packages/cli/README.md](packages/cli/README.md) for exit codes
+and current safety limits.
+
 ## Terminal map
 
 ### Launch
@@ -229,6 +246,8 @@ Common commands:
 | `npm run check:syntax` | Parse-check runtime JavaScript. |
 | `npm run check:package` | Verify packaged runtime import coverage. |
 | `npm test` | Run the Node test suite. |
+| `npm run test:cli` | Verify the experimental CLI contract and binary. |
+| `npm run cli -- doctor --json` | Check the headless CLI/Core runtime. |
 | `npm run test:e2e` | Run the Classic Playwright flow. |
 | `npm run test:e2e:v2` | Run the API-backed Trebuchet flow. |
 | `npm run test:e2e:devnet` | Run the secret-gated funded devnet transaction smoke. |

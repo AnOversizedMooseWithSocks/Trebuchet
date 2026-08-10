@@ -56,6 +56,11 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: CLI contract and binary smoke
+        run: |
+          npm run test:cli
+          npm run cli -- doctor --json
+
       # Smoke tests exercise live RPC and Raydium API dependencies read-only.
       # No transactions are sent.  Requires the SMOKE_TEST_RPC repository
       # secret.  When the secret is unset (e.g. on forks), the test harness

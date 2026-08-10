@@ -2,6 +2,16 @@
 
 Status: 2026-08-09
 
+Implementation status on PR 67:
+
+- Runtime construction and explicit Local API lifecycle: complete.
+- Headless Core extraction, compatibility exports, and golden contracts:
+  complete.
+- Experimental read-only CLI and CI smoke: complete.
+- Custody, journaling, execution, resume, sweep, and independent CLI release:
+  still pending; the CLI must remain labeled experimental until those phases
+  pass funded devnet recovery testing.
+
 ## Decision
 
 Trebuchet should become one execution product with two interfaces, not two
