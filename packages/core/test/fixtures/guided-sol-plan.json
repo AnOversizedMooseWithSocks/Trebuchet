@@ -1,0 +1,73 @@
+{
+  "intent": {
+    "token": {
+      "name": "Launch One",
+      "symbol": "one",
+      "supply": "1000000000",
+      "description": "Golden fixture"
+    },
+    "mode": "dry-run",
+    "experience": {
+      "mode": "guided",
+      "recipeId": "simple-sol-v1"
+    },
+    "launchSol": 1,
+    "walletPublicKey": "11111111111111111111111111111115",
+    "poolTopology": {
+      "targetMarketCapUsd": 250000,
+      "pools": [
+        {
+          "id": "sol-main",
+          "quoteSymbol": "SOL",
+          "quoteMint": "So11111111111111111111111111111111111111112",
+          "supplyPercent": 80,
+          "distribution": [
+            {
+              "sharePercent": 100
+            }
+          ],
+          "ladder": {
+            "mode": "off"
+          },
+          "support": {
+            "mode": "off"
+          }
+        }
+      ],
+      "preallocation": {
+        "enabled": true,
+        "supplyPercent": 20,
+        "source": "team"
+      },
+      "airdrop": {
+        "enabled": false,
+        "recipients": [],
+        "supplyPercent": 0
+      },
+      "report": {
+        "publish": false
+      },
+      "sweepDestination": "11111111111111111111111111111116"
+    }
+  },
+  "expected": {
+    "schema": "trebuchet-launch-plan/v1",
+    "protocolVersion": 1,
+    "contractVersion": 1,
+    "id": "v2-one-1000000000-dry-run",
+    "generatedAt": "2026-08-09T00:00:00.000Z",
+    "configFingerprint": "{\"experience\":{\"mode\":\"guided\",\"recipeId\":\"simple-sol-v1\"},\"funding\":{\"launchSol\":1,\"targetMarketCapUsd\":250000},\"launchSol\":1,\"mode\":\"dry-run\",\"poolTopology\":{\"airdrop\":{\"enabled\":false,\"recipients\":[],\"supplyPercent\":0},\"pools\":[{\"distribution\":[{\"sharePercent\":100}],\"id\":\"sol-main\",\"ladder\":{\"mode\":\"off\"},\"quoteMint\":\"So11111111111111111111111111111111111111112\",\"quoteSymbol\":\"SOL\",\"supplyPercent\":80,\"support\":{\"mode\":\"off\"}}],\"preallocation\":{\"enabled\":true,\"source\":\"team\",\"supplyPercent\":20},\"report\":{\"publish\":false},\"sweepDestination\":\"11111111111111111111111111111116\",\"targetMarketCapUsd\":250000},\"token\":{\"decimals\":9,\"description\":\"Golden fixture\",\"logo\":null,\"name\":\"Launch One\",\"supply\":\"1000000000\",\"symbol\":\"one\"},\"vanity\":null}",
+    "walletFingerprint": "11111111111111111111111111111115",
+    "estimatedSolCost": 1.17,
+    "operationIds": [
+      "v2-wallet-and-ca",
+      "v2-funding-check",
+      "v2-mint-metadata",
+      "v2-revoke-authorities",
+      "v2-create-liquidity-pools",
+      "v2-lock-liquidity",
+      "v2-report-sweep"
+    ],
+    "integrityDigest": "b8ccea4a38b1ab9bd3c6a675bfaf0389a00239874430cdfd2f32128aecf38089"
+  }
+}

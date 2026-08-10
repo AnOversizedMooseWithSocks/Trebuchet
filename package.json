@@ -5,6 +5,9 @@
   "main": "main.js",
   "type": "module",
   "packageManager": "npm@10.9.2",
+  "workspaces": [
+    "packages/*"
+  ],
   "license": "MIT",
   "author": {
     "name": "AnOversizedMooseWithSocks",
@@ -89,6 +92,7 @@
     "logRedaction.js",
     "validators.js",
     "metadata.json",
+    "packages/core/**/*",
     "README.md",
     "public/**/*",
     "c/build/**/*"
@@ -186,6 +190,7 @@
       "logRedaction.js",
       "validators.js",
       "metadata.json",
+      "packages/core/**/*",
       "README.md",
       "public/**/*",
       "c/build/**/*",

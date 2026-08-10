@@ -61,7 +61,10 @@ links are opened by `main.js` only after URL parsing and an HTTPS-scheme check.
   handlers, and report integration.
 - `serverMiddleware.js` — Host defense, CSP/security headers, API session, logo
   upload limits, and packaged public-directory resolution.
-- `v2LaunchPlan.js` — normalized v2 plan, Classic execution payload mapping,
+- `packages/core/` — headless plan, validation, estimate, integrity, and proof
+  contracts shared by every interface.
+- `v2LaunchPlan.js` — compatibility export for the Core launch-plan contract,
+  including Classic execution payload mapping,
   funding fingerprints, and readiness rules.
 
 ### v2 renderer
@@ -198,7 +201,7 @@ Several artifacts are intentionally separate:
    exact file hashes and repository history.
 
 The application computes fingerprints for UI staleness and proof binding.
-`scripts/v2-proof-integrity.mjs` independently implements the production
+`packages/core/src/proof-integrity.js` independently implements the production
 fingerprint and required Classic rows so the release gate does not trust
 app-generated pass flags.
 

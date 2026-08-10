@@ -1,0 +1,14 @@
+{
+  "name": "@trebuchet/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless planning, verification, and execution contracts for Trebuchet.",
+  "exports": {
+    ".": "./src/index.js",
+    "./launch-plan": "./src/launch-plan.js",
+    "./proof-integrity": "./src/proof-integrity.js",
+    "./validators": "./src/validators.js",
+    "./lp-constants": "./src/lp-constants.js"
+  }
+}

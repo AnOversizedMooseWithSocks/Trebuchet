@@ -1,0 +1,82 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+import {
+  createTrebuchetCore,
+  v2LaunchProofFingerprint,
+} from '@trebuchet/core';
+import { buildV2LaunchPlan as compatibilityPlanBuilder } from '../v2LaunchPlan.js';
+
+const fixture = JSON.parse(await readFile(
+  new URL('../packages/core/test/fixtures/guided-sol-plan.json', import.meta.url),
+  'utf8',
+));
+
+function planSummary(plan) {
+  return {
+    schema: plan.schema,
+    protocolVersion: plan.protocolVersion,
+    contractVersion: plan.contractVersion,
+    id: plan.id,
+    generatedAt: plan.generatedAt,
+    configFingerprint: plan.v2LaunchConfigFingerprint,
+    walletFingerprint: plan.v2LaunchWalletFingerprint,
+    estimatedSolCost: plan.funding.estimatedSolCost,
+    operationIds: plan.operations.map(({ id }) => id),
+    integrityDigest: plan.integrity.digest,
+  };
+}
+
+test('Core plan contract matches the committed Guided SOL golden fixture', () => {
+  const core = createTrebuchetCore({ clock: () => new Date(fixture.expected.generatedAt) });
+  const plan = core.planLaunch(fixture.intent);
+  assert.deepEqual(planSummary(plan), fixture.expected);
+  assert.equal(core.verifyPlan(plan).valid, true);
+  assert.equal(
+    compatibilityPlanBuilder(fixture.intent, { now: fixture.expected.generatedAt }).integrity.digest,
+    plan.integrity.digest,
+  );
+});
+
+test('Core rejects a plan whose normalized contents were modified', () => {
+  const core = createTrebuchetCore({ clock: () => new Date(fixture.expected.generatedAt) });
+  const plan = structuredClone(core.planLaunch(fixture.intent));
+  plan.funding.estimatedSolCost += 1;
+  const result = core.verifyPlan(plan);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some(({ code }) => code === 'COST_MISMATCH'));
+  assert.ok(result.errors.some(({ code }) => code === 'INTEGRITY_MISMATCH'));
+});
+
+test('Core estimate is detached from the runtime object receiver', () => {
+  const { planLaunch, estimateLaunch } = createTrebuchetCore({
+    clock: () => new Date(fixture.expected.generatedAt),
+  });
+  const estimate = estimateLaunch(planLaunch(fixture.intent));
+  assert.equal(estimate.schema, 'trebuchet-launch-estimate/v1');
+  assert.equal(estimate.estimatedSolCost, fixture.expected.estimatedSolCost);
+  assert.equal(estimate.operationCount, fixture.expected.operationIds.length);
+});
+
+test('Core independently verifies stored proof fingerprints', () => {
+  const core = createTrebuchetCore();
+  const proof = {
+    walletPublicKey: '11111111111111111111111111111115',
+    token: { mint: '11111111111111111111111111111117' },
+    liquidity: { poolIds: [], results: [] },
+    transfer: null,
+  };
+  const fingerprint = v2LaunchProofFingerprint(proof);
+  const payload = {
+    schema: 'trebuchet-v2-proof',
+    source: 'trebuchet-v2',
+    proof,
+    fieldVerification: { proofFingerprint: fingerprint },
+  };
+  assert.equal(core.verifyProof(payload).valid, true);
+  payload.fieldVerification.proofFingerprint = 'tampered';
+  const invalid = core.verifyProof(payload);
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.errors.some(({ code }) => code === 'FINGERPRINT_MISMATCH'));
+});
