@@ -469,6 +469,10 @@
     async function runDemoLaunch({ walletPublicKey, config, fundingEstimate, airdropRecipients } = {}) {
       const data = await request(V2_DEMO_LAUNCH_RUN_PATH, {
         method: 'POST',
+        // A complete local practice launch creates the token, opens and locks
+        // liquidity, sweeps the wallet, and assembles proof before replying.
+        // It regularly takes longer than the short UI-request timeout.
+        timeoutMs: 60_000,
         body: {
           walletPublicKey,
           config: config || {},

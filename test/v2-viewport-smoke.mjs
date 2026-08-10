@@ -68,6 +68,84 @@ async function smokeViewport(browser, viewport) {
       { timeout: 10_000 },
     );
 
+    const guidedMetrics = await page.evaluate(() => {
+      const rectFor = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        return {
+          width: rect.width,
+          height: rect.height,
+          top: rect.top,
+          left: rect.left,
+          right: rect.right,
+          bottom: rect.bottom,
+        };
+      };
+      return {
+        experienceMode: document.body.dataset.experienceMode,
+        welcomeText: document.querySelector('#guidedLaunchFlow')?.textContent || '',
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        sidebarVisible: Boolean(document.querySelector('.sidebar')?.getClientRects().length),
+        topbarVisible: Boolean(document.querySelector('.topbar')?.getClientRects().length),
+        rects: {
+          flow: rectFor('#guidedLaunchFlow'),
+          welcome: rectFor('.guided-welcome'),
+          experience: rectFor('.experience-row'),
+        },
+      };
+    });
+    assert.equal(guidedMetrics.experienceMode, 'guided', `${viewport.name}: guided launch is not the default experience`);
+    assert.match(guidedMetrics.welcomeText, /Your first launch/);
+    assert.match(guidedMetrics.welcomeText, /never sends a transaction or spends SOL/);
+    assert.equal(guidedMetrics.sidebarVisible, false, `${viewport.name}: Guided Mode still shows the app sidebar`);
+    assert.equal(guidedMetrics.topbarVisible, false, `${viewport.name}: Guided Mode still shows the terminal header`);
+    assert.ok(
+      guidedMetrics.scrollWidth <= guidedMetrics.clientWidth + 1,
+      `${viewport.name}: guided launch overflows horizontally`,
+    );
+    for (const selector of ['flow', 'welcome', 'experience']) {
+      assertRectVisible(guidedMetrics.rects[selector], `guided ${selector}`, viewport);
+    }
+
+    await page.click('[data-action="guided-next"]');
+    await page.fill('[data-guided-field="name"]', 'First Launch');
+    await page.fill('[data-guided-field="symbol"]', 'FIRST');
+    await page.click('[data-action="guided-next"]');
+    await page.fill('[data-guided-field="destinationWallet"]', '11111111111111111111111111111112');
+    await page.click('[data-action="guided-next"]');
+    await page.click('[data-action="guided-value-preset"][data-value="100000"]');
+    await page.click('[data-action="guided-next"]');
+
+    const guidedReview = await page.evaluate(() => {
+      const visibleAdvancedPanes = Array.from(document.querySelectorAll('[data-launch-pane]'))
+        .filter((panel) => panel.id !== 'guidedRunShell'
+          && !panel.classList.contains('setup-dock')
+          && !panel.closest('#guidedLaunchFlow')
+          && !panel.hidden
+          && panel.getClientRects().length > 0)
+        .map((panel) => panel.id || panel.className || panel.tagName);
+      return {
+        text: document.querySelector('#guidedLaunchFlow')?.textContent || '',
+        runLabel: document.querySelector('[data-action="guided-practice"]')?.textContent?.trim() || '',
+        actionRect: (() => {
+          const element = document.querySelector('[data-action="guided-practice"]');
+          if (!element) return null;
+          const rect = element.getBoundingClientRect();
+          return { width: rect.width, height: rect.height, top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom };
+        })(),
+        visibleAdvancedPanes,
+      };
+    });
+    assert.match(guidedReview.text, /Ready to practice/);
+    assert.match(guidedReview.runLabel, /Start practice launch/);
+    assertRectVisible(guidedReview.actionRect, 'guided practice action', viewport);
+    assert.deepEqual(guidedReview.visibleAdvancedPanes, [], `${viewport.name}: guided review exposes advanced wallet operations`);
+
+    await page.click('[data-action="select-experience"][data-experience="advanced"]');
+    await page.waitForFunction(() => document.body.dataset.experienceMode === 'advanced');
+
     const metrics = await page.evaluate(() => {
       const rectFor = (selector) => {
         const element = document.querySelector(selector);

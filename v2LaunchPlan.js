@@ -236,6 +236,7 @@ export function launchPlanConfigFingerprint(input = {}) {
   const token = input?.token || {};
   const topology = input?.poolTopology || {};
   return JSON.stringify(stableFundingFingerprintValue({
+    experience: input?.experience || null,
     token: {
       name: token.name || null,
       symbol: token.symbol || null,
@@ -1359,6 +1360,7 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
     source: 'local-api',
     runtime: demoMode ? 'demo' : 'local',
     mode,
+    experience: input?.experience || null,
     generatedAt: now,
     v2LaunchConfigFingerprint: launchPlanConfigFingerprint(input),
     v2LaunchWalletFingerprint: launchPlanWalletFingerprint(input.walletPublicKey),

@@ -2840,7 +2840,7 @@ function v2LaunchDataConfigSnapshotState(launchData = {}) {
     return { state: 'missing', complete: false, missing: ['snapshot'] };
   }
   if (!v2LaunchConfigSnapshotHasV2Envelope(launchConfig)) {
-    missing.push('v2 snapshot marker');
+    missing.push('Trebuchet snapshot marker');
   }
   const token = launchConfig.token && typeof launchConfig.token === 'object'
     ? launchConfig.token

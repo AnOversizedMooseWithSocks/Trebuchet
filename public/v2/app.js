@@ -17,6 +17,17 @@ const launchWorkspaces = [
   { id: 'recover', title: 'Recover', detail: 'Resume interrupted work or safely sweep the launch wallet.' },
 ];
 
+const GUIDED_RECIPE_ID = 'simple-sol-v1';
+const GUIDED_DRAFT_STORAGE_KEY = 'trebuchet-v2-guided-draft';
+const GUIDED_PRACTICE_DESTINATION = '11111111111111111111111111111112';
+const guidedSteps = Object.freeze([
+  { id: 'welcome', label: 'Welcome' },
+  { id: 'identity', label: 'Token' },
+  { id: 'destination', label: 'Wallet' },
+  { id: 'value', label: 'Value' },
+  { id: 'review', label: 'Review' },
+]);
+
 const EMPTY_ACCOUNT = Object.freeze({
   id: 'none',
   name: 'No wallet selected',
@@ -57,7 +68,7 @@ const launchStages = [
   {
     id: 'live',
     title: 'Run live launch',
-    detail: 'Non-demo v2 execution through token, pools, locks, Fee Keys, airdrop, and final sweep.',
+    detail: 'Non-demo Trebuchet execution through token, pools, locks, Fee Keys, airdrop, and final sweep.',
     requirements: ['live-proof'],
   },
   {
@@ -291,6 +302,15 @@ const state = {
     lastInspectedMint: null,
   },
   launchMode: 'guarded',
+  experienceMode: 'guided',
+  guidedStep: 0,
+  guidedIntent: {
+    destinationWallet: '',
+    startingMarketCapUsd: 250000,
+  },
+  guidedErrors: {},
+  guidedRunError: null,
+  advancedDraft: null,
   launchStage: 0,
   simulated: false,
   tokenLogo: null,
@@ -521,6 +541,540 @@ function v2LocalStorage() {
     return window.localStorage || null;
   } catch {
     return null;
+  }
+}
+
+const GUIDED_ADVANCED_FIELD_IDS = Object.freeze([
+  'tokenName',
+  'tokenSymbol',
+  'tokenSupply',
+  'tokenDescription',
+  'targetMarketCapUsd',
+  'launchSol',
+  'vanityStart',
+  'vanityEnd',
+  'mainPoolPercent',
+  'quotePoolPercent',
+  'preallocationSupplyPercent',
+  'quotePoolVenue',
+  'sliceShares',
+  'ladderBands',
+  'supportSol',
+  'airdropWallets',
+  'airdropSupplyPercent',
+  'airdropAutoFit',
+  'feeKeyRecipient',
+  'sweepDestination',
+]);
+
+function guidedTokenDraft() {
+  return {
+    name: String($('#tokenName')?.value || '').trim(),
+    symbol: String($('#tokenSymbol')?.value || '').trim().toUpperCase(),
+    description: String($('#tokenDescription')?.value || '').trim(),
+  };
+}
+
+function guidedDraftSnapshot() {
+  return {
+    version: 1,
+    recipeId: GUIDED_RECIPE_ID,
+    experienceMode: state.experienceMode,
+    step: state.guidedStep,
+    token: guidedTokenDraft(),
+    intent: {
+      destinationWallet: String(state.guidedIntent.destinationWallet || '').trim(),
+      startingMarketCapUsd: Number(state.guidedIntent.startingMarketCapUsd || 0),
+    },
+  };
+}
+
+function persistGuidedDraft() {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(GUIDED_DRAFT_STORAGE_KEY, JSON.stringify(guidedDraftSnapshot()));
+  } catch {
+    // Guided mode remains usable when local storage is unavailable or full.
+  }
+}
+
+function restoreGuidedDraft() {
+  const storage = v2LocalStorage();
+  if (!storage) return;
+  try {
+    const saved = JSON.parse(storage.getItem(GUIDED_DRAFT_STORAGE_KEY) || 'null');
+    if (!saved || saved.version !== 1 || saved.recipeId !== GUIDED_RECIPE_ID) return;
+    state.experienceMode = saved.experienceMode === 'advanced' ? 'advanced' : 'guided';
+    state.guidedStep = clampNumber(Math.floor(Number(saved.step || 0)), 0, guidedSteps.length - 1);
+    state.guidedIntent.destinationWallet = String(saved.intent?.destinationWallet || '').trim();
+    state.guidedIntent.startingMarketCapUsd = Math.max(0, Number(saved.intent?.startingMarketCapUsd || 250000));
+    if ($('#tokenName') && saved.token?.name) $('#tokenName').value = String(saved.token.name).slice(0, 32);
+    if ($('#tokenSymbol') && saved.token?.symbol) $('#tokenSymbol').value = String(saved.token.symbol).slice(0, 10).toUpperCase();
+    if ($('#tokenDescription') && typeof saved.token?.description === 'string') {
+      $('#tokenDescription').value = saved.token.description.slice(0, 200);
+    }
+    if ($('#targetMarketCapUsd')) $('#targetMarketCapUsd').value = String(state.guidedIntent.startingMarketCapUsd || 250000);
+  } catch {
+    // A malformed draft should never block the launch screen.
+  }
+}
+
+function captureAdvancedDraft() {
+  const values = {};
+  GUIDED_ADVANCED_FIELD_IDS.forEach((id) => {
+    const input = $(`#${id}`);
+    if (!input) return;
+    values[id] = input.type === 'checkbox' ? input.checked : input.value;
+  });
+  return {
+    values,
+    customPools: structuredClone(state.customPools || []),
+    baseManualLadderText: state.baseManualLadderText,
+    baseSupportDepth: state.baseSupportDepth,
+    airdropCsvText: state.airdropCsvText,
+    selectedVanityPublicKey: state.selectedVanityPublicKey,
+  };
+}
+
+function restoreAdvancedDraft(draft = state.advancedDraft) {
+  if (!draft) return;
+  Object.entries(draft.values || {}).forEach(([id, value]) => {
+    const input = $(`#${id}`);
+    if (!input) return;
+    if (input.type === 'checkbox') input.checked = Boolean(value);
+    else input.value = value;
+  });
+  state.customPools = structuredClone(draft.customPools || []);
+  state.baseManualLadderText = draft.baseManualLadderText || '';
+  state.baseSupportDepth = draft.baseSupportDepth || '12';
+  state.airdropCsvText = draft.airdropCsvText || '';
+  state.selectedVanityPublicKey = draft.selectedVanityPublicKey || null;
+}
+
+function syncGuidedField(input) {
+  const field = input?.dataset?.guidedField;
+  if (!field) return false;
+  if (field === 'name') $('#tokenName').value = input.value.slice(0, 32);
+  if (field === 'symbol') {
+    input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+    $('#tokenSymbol').value = input.value;
+  }
+  if (field === 'description') $('#tokenDescription').value = input.value.slice(0, 200);
+  if (field === 'destinationWallet') state.guidedIntent.destinationWallet = input.value.trim();
+  if (field === 'startingMarketCapUsd') {
+    state.guidedIntent.startingMarketCapUsd = Math.max(0, parseNumericInput(input.value, 0));
+  }
+  delete state.guidedErrors[field];
+  persistGuidedDraft();
+  return true;
+}
+
+function applyGuidedRecipe({ refresh = true } = {}) {
+  const destination = String(state.guidedIntent.destinationWallet || '').trim();
+  const marketCap = Math.max(1, Number(state.guidedIntent.startingMarketCapUsd || 250000));
+  $('#tokenSupply').value = '1,000,000,000';
+  $('#targetMarketCapUsd').value = String(marketCap);
+  $('#launchSol').value = '3.5';
+  $('#vanityStart').value = '';
+  $('#vanityEnd').value = '';
+  $('#mainPoolPercent').value = '100';
+  $('#quotePoolPercent').value = '0';
+  $('#preallocationSupplyPercent').value = '0';
+  $('#sliceShares').value = '100';
+  $('#ladderBands').value = '0';
+  $('#supportSol').value = '0';
+  $('#airdropWallets').value = '0';
+  $('#airdropSupplyPercent').value = '0';
+  $('#airdropAutoFit').checked = true;
+  $('#feeKeyRecipient').value = destination;
+  $('#sweepDestination').value = destination;
+  state.selectedVanityPublicKey = null;
+  state.customPools = [];
+  state.baseManualLadderText = '';
+  state.baseSupportDepth = '12';
+  state.airdropCsvText = '';
+  if (refresh) {
+    invalidateClassicOutputs();
+    refreshClassicPreview({ includePoolEditor: true });
+  }
+}
+
+function guidedStepErrors(step = state.guidedStep) {
+  const token = guidedTokenDraft();
+  const errors = {};
+  if (step === 1) {
+    if (!token.name) errors.name = 'Give the token a name.';
+    if (!/^[A-Z0-9]{1,10}$/.test(token.symbol)) errors.symbol = 'Use 1–10 letters or numbers.';
+  }
+  if (step === 2) {
+    const destination = String(state.guidedIntent.destinationWallet || '').trim();
+    if (!isProbablySolanaAddress(destination)) errors.destinationWallet = 'Enter a complete Solana wallet address.';
+    if (destination && destination === selectedLaunchWalletPublicKey()) {
+      errors.destinationWallet = 'Choose your home wallet, not the temporary launch wallet.';
+    }
+  }
+  if (step === 3 && Number(state.guidedIntent.startingMarketCapUsd || 0) <= 0) {
+    errors.startingMarketCapUsd = 'Enter a starting value greater than zero.';
+  }
+  return errors;
+}
+
+function guidedStepProgress() {
+  if (state.guidedStep === 0) return '';
+  return `
+    <ol class="guided-progress" aria-label="Guided launch progress">
+      ${guidedSteps.slice(1).map((step, index) => {
+        const stepNumber = index + 1;
+        const current = state.guidedStep === stepNumber;
+        const complete = state.guidedStep > stepNumber;
+        return `<li class="${current ? 'is-current' : ''} ${complete ? 'is-complete' : ''}">
+          <span>${complete ? '<i class="fa-solid fa-check"></i>' : stepNumber}</span>
+          <small>${escapeHtml(step.label)}</small>
+        </li>`;
+      }).join('')}
+    </ol>
+  `;
+}
+
+function guidedError(field) {
+  const message = state.guidedErrors[field];
+  return message ? `<small class="guided-field-error" role="alert">${escapeHtml(message)}</small>` : '';
+}
+
+function guidedIdentityStep() {
+  const token = guidedTokenDraft();
+  const logo = state.tokenLogo;
+  return `
+    <div class="guided-step-layout">
+      <div class="guided-step-copy">
+        <span class="eyebrow">Step 1 of 4</span>
+        <h2>What are you launching?</h2>
+        <p>Name the token. Trebuchet uses a standard one-billion supply and hides the pool machinery until review.</p>
+      </div>
+      <div class="guided-form-card">
+        <label><span>Token name</span><input data-guided-field="name" value="${escapeHtml(token.name)}" maxlength="32" autocomplete="off" aria-invalid="${state.guidedErrors.name ? 'true' : 'false'}">${guidedError('name')}</label>
+        <label><span>Symbol</span><input data-guided-field="symbol" value="${escapeHtml(token.symbol)}" maxlength="10" autocomplete="off" aria-invalid="${state.guidedErrors.symbol ? 'true' : 'false'}">${guidedError('symbol')}</label>
+        <label class="guided-wide"><span>Description <em>optional</em></span><input data-guided-field="description" value="${escapeHtml(token.description)}" maxlength="200" autocomplete="off"></label>
+        <button class="guided-logo-button guided-wide" type="button" data-action="guided-select-logo">
+          <span class="guided-logo-mark">${logo?.dataUrl ? `<img src="${escapeHtml(logo.dataUrl)}" alt="">` : '<i class="fa-solid fa-image"></i>'}</span>
+          <span><strong>${logo ? 'Logo attached' : 'Add a token logo'}</strong><small>${logo ? escapeHtml(logo.name || 'Ready') : 'PNG or JPG · optional'}</small></span>
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function guidedDestinationStep() {
+  const destination = String(state.guidedIntent.destinationWallet || '');
+  const solflare = String(state.solflare?.publicKey || '');
+  return `
+    <div class="guided-step-layout">
+      <div class="guided-step-copy">
+        <span class="eyebrow">Step 2 of 4</span>
+        <h2>Choose the home wallet</h2>
+        <p>A real launch returns ownership and leftovers here. For this tutorial, you can use the built-in practice destination.</p>
+      </div>
+      <div class="guided-form-card single-column">
+        <label><span>Home wallet</span><input data-guided-field="destinationWallet" value="${escapeHtml(destination)}" placeholder="Paste a complete Solana address" autocomplete="off" spellcheck="false" aria-invalid="${state.guidedErrors.destinationWallet ? 'true' : 'false'}">${guidedError('destinationWallet')}</label>
+        <div class="guided-inline-actions">
+          ${solflare
+            ? `<button class="pill-button" type="button" data-action="guided-use-solflare">Use connected Solflare · ${escapeHtml(shortAddress(solflare))}</button>`
+            : '<button class="pill-button" type="button" data-action="connect-solflare">Connect Solflare</button>'}
+          ${state.demoActive ? '<button class="pill-button" type="button" data-action="guided-use-practice-wallet">Use a practice wallet</button>' : ''}
+        </div>
+        <div class="guided-assurance"><i class="fa-solid fa-shield-halved"></i><span><strong>No wallet signs this practice.</strong><small>This address is used only to test the final return step.</small></span></div>
+      </div>
+    </div>
+  `;
+}
+
+function guidedValueStep() {
+  const marketCap = Number(state.guidedIntent.startingMarketCapUsd || 0);
+  const tokenPrice = marketCap > 0 ? marketCap / 1_000_000_000 : 0;
+  return `
+    <div class="guided-step-layout">
+      <div class="guided-step-copy">
+        <span class="eyebrow">Step 3 of 4</span>
+        <h2>Choose the starting value</h2>
+        <p>This describes the intended starting valuation. Trebuchet turns it into the launch plan and calculates the funding separately.</p>
+      </div>
+      <div class="guided-form-card single-column">
+        <div class="guided-presets" aria-label="Starting value presets">
+          ${[25000, 100000, 250000].map((value) => `<button class="${marketCap === value ? 'is-selected' : ''}" type="button" data-action="guided-value-preset" data-value="${value}">$${value.toLocaleString('en-US')}</button>`).join('')}
+        </div>
+        <label><span>Starting market value</span><input data-guided-field="startingMarketCapUsd" value="${escapeHtml(marketCap ? marketCap.toLocaleString('en-US') : '')}" inputmode="decimal" autocomplete="off" aria-invalid="${state.guidedErrors.startingMarketCapUsd ? 'true' : 'false'}">${guidedError('startingMarketCapUsd')}</label>
+        <div class="guided-price-preview"><small>Approximate starting token price</small><strong>$${tokenPrice.toFixed(tokenPrice < 0.001 ? 8 : 4)}</strong><span>Funding is estimated after the recipe is built.</span></div>
+      </div>
+    </div>
+  `;
+}
+
+function guidedReviewStep() {
+  const token = guidedTokenDraft();
+  const destination = String(state.guidedIntent.destinationWallet || '').trim();
+  const marketCap = Number(state.guidedIntent.startingMarketCapUsd || 0);
+  const reportLabel = state.prefs.publishLaunchReport === false ? 'Download a local proof' : 'Create local and public proof';
+  return `
+    <div class="guided-review">
+      <div class="guided-step-copy">
+        <span class="eyebrow">Step 4 of 4</span>
+        <h2>Ready to practice</h2>
+        <p>Three safety promises, one local simulation, and no on-chain transaction.</p>
+      </div>
+      <div class="guided-review-hero">
+        <span class="guided-token-mark">${state.tokenLogo?.dataUrl ? `<img src="${escapeHtml(state.tokenLogo.dataUrl)}" alt="">` : escapeHtml((token.symbol || 'TOK').slice(0, 2))}</span>
+        <span><strong>${escapeHtml(token.name || 'Untitled')} · ${escapeHtml(token.symbol || 'TOK')}</strong><small>1,000,000,000 supply · $${marketCap.toLocaleString('en-US')} starting value</small></span>
+      </div>
+      <div class="guided-recipe-list">
+        ${[
+          ['fa-coins', 'Create a fixed token', 'One-billion supply with mint and freeze powers removed.'],
+          ['fa-water', 'Open one simple pool', 'One SOL pool, one position, locked liquidity, and no advanced allocations.'],
+          ['fa-file-shield', 'Finish with proof', `Return assets to ${destination === GUIDED_PRACTICE_DESTINATION ? 'the practice destination' : shortAddress(destination)} and ${reportLabel.toLowerCase()}.`],
+        ].map(([icon, title, detail]) => `<article><i class="fa-solid ${icon}"></i><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail)}</small></span><i class="fa-solid fa-check"></i></article>`).join('')}
+      </div>
+      <details class="guided-technical-details">
+        <summary>Technical details <span>optional</span></summary>
+        <div><span>Recipe</span><strong>${GUIDED_RECIPE_ID}</strong></div>
+        <div><span>Mint address</span><strong>Random CA</strong></div>
+        <div><span>Liquidity</span><strong>Single SOL pool · 100% · one slice</strong></div>
+        <div><span>Extra positions</span><strong>None</strong></div>
+        <div><span>Execution</span><strong>Guarded local run with journal recovery</strong></div>
+        <div><span>Destination</span><code>${escapeHtml(destination)}</code></div>
+      </details>
+    </div>
+  `;
+}
+
+function renderGuidedLaunchFlow() {
+  document.body.dataset.experienceMode = state.experienceMode;
+  $$('.experience-button').forEach((button) => {
+    const selected = button.dataset.experience === state.experienceMode;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
+  $$('.mode-button').forEach((button) => {
+    button.classList.toggle('is-selected', button.dataset.mode === state.launchMode);
+  });
+  const target = $('#guidedLaunchFlow');
+  if (!target) return;
+  if (state.experienceMode !== 'guided') {
+    target.hidden = true;
+    return;
+  }
+  target.hidden = false;
+  let body = '';
+  if (state.guidedStep === 0) {
+    body = `
+      <div class="guided-welcome">
+        <span class="guided-wand"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+        <span class="eyebrow">Your first launch</span>
+        <h2>Create your first token, step by step.</h2>
+        <p>Answer three plain questions, review one safe recipe, then run every launch step locally.</p>
+        <div class="guided-promise-row">
+          <span><i class="fa-solid fa-shield-halved"></i><strong>Keys stay local</strong></span>
+          <span><i class="fa-solid fa-rotate-left"></i><strong>Recovery checkpoints</strong></span>
+          <span><i class="fa-solid fa-flask"></i><strong>Practice first</strong></span>
+        </div>
+        <div class="guided-welcome-actions">
+          <button class="primary-button" type="button" data-action="guided-next">Start the tutorial <i class="fa-solid fa-arrow-right"></i></button>
+          <button class="text-button" type="button" data-action="select-experience" data-experience="advanced">I need advanced controls</button>
+        </div>
+        <small>Guided Mode is practice-only. It never sends a transaction or spends SOL.</small>
+      </div>
+    `;
+  } else if (state.guidedStep === 1) body = guidedIdentityStep();
+  else if (state.guidedStep === 2) body = guidedDestinationStep();
+  else if (state.guidedStep === 3) body = guidedValueStep();
+  else body = guidedReviewStep();
+
+  const controls = state.guidedStep === 0 ? '' : `
+    <div class="guided-navigation">
+      <button class="secondary-button" type="button" data-action="guided-back"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      ${state.guidedStep < guidedSteps.length - 1
+        ? `<button class="primary-button" type="button" data-action="guided-next">${state.guidedStep === 3 ? 'Review launch recipe' : 'Continue'} <i class="fa-solid fa-arrow-right"></i></button>`
+        : '<button class="primary-button" type="button" data-action="guided-practice"><i class="fa-solid fa-flask"></i> Start practice launch</button>'}
+    </div>
+  `;
+  target.innerHTML = `${guidedStepProgress()}${body}${controls}`;
+}
+
+function setExperienceMode(mode) {
+  const next = mode === 'advanced' ? 'advanced' : 'guided';
+  if (next === state.experienceMode) return;
+  if (next === 'guided') {
+    state.advancedDraft = captureAdvancedDraft();
+    state.guidedStep = Math.min(state.guidedStep, guidedSteps.length - 1);
+  } else if (state.advancedDraft) {
+    restoreAdvancedDraft();
+    state.advancedDraft = null;
+    invalidateClassicOutputs();
+  }
+  state.experienceMode = next;
+  state.guidedErrors = {};
+  setLaunchWorkspace('configure');
+  persistGuidedDraft();
+  renderAll();
+  notify(next === 'guided' ? 'Guided launch opened' : 'Advanced controls opened');
+}
+
+function moveGuidedStep(direction) {
+  if (direction > 0) {
+    const errors = guidedStepErrors();
+    if (Object.keys(errors).length) {
+      state.guidedErrors = errors;
+      renderGuidedLaunchFlow();
+      window.requestAnimationFrame(() => $('#guidedLaunchFlow [aria-invalid="true"]')?.focus());
+      return;
+    }
+  }
+  state.guidedErrors = {};
+  state.guidedStep = clampNumber(state.guidedStep + direction, 0, guidedSteps.length - 1);
+  if (state.guidedStep === guidedSteps.length - 1) applyGuidedRecipe();
+  persistGuidedDraft();
+  renderAll();
+  $('#guidedLaunchFlow')?.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function guidedOperationComplete(operationId) {
+  const operation = state.transactions.find((item) => item.id === operationId);
+  return ['signed', 'complete', 'done'].includes(String(operation?.state || '').toLowerCase());
+}
+
+function guidedRunPhases() {
+  const groups = [
+    { title: 'Protect launch wallet', detail: 'Use an isolated local signer and keep a recovery checkpoint.', operations: ['v2-wallet-and-ca', 'v2-funding-check'] },
+    { title: 'Create token', detail: 'Create the mint and attach its metadata.', operations: ['v2-mint-metadata'] },
+    { title: 'Remove authorities', detail: 'Remove mint and freeze powers.', operations: ['v2-revoke-authorities'] },
+    { title: 'Open and lock liquidity', detail: 'Create the SOL pool, open one position, and lock it.', operations: ['v2-create-liquidity-pools', 'v2-lock-liquidity'] },
+    { title: 'Return assets', detail: 'Send ownership and leftovers to the home wallet.', operations: ['v2-report-sweep'] },
+    { title: 'Verify proof', detail: 'Bind the completed run to its launch dossier.', operations: [] },
+  ];
+  const proofReady = Boolean(state.lastDemoLaunchRun || currentLaunchProof());
+  return groups.map((group, index) => {
+    const complete = group.operations.length
+      ? group.operations.every(guidedOperationComplete)
+      : proofReady;
+    const priorComplete = groups.slice(0, index).every((prior) => (
+      prior.operations.length ? prior.operations.every(guidedOperationComplete) : proofReady
+    ));
+    return {
+      ...group,
+      state: complete ? 'complete' : state.demoLaunchRunning && priorComplete ? 'running' : 'waiting',
+    };
+  });
+}
+
+function renderGuidedRunShell() {
+  const target = $('#guidedRunShell');
+  if (!target) return;
+  if (state.experienceMode !== 'guided') {
+    target.hidden = true;
+    return;
+  }
+  const workspace = state.launchWorkspace;
+  const proof = currentLaunchProof();
+  const complete = Boolean(state.lastDemoLaunchRun && !state.demoLaunchRunning);
+  const failed = Boolean(state.guidedRunError && !state.demoLaunchRunning && !complete);
+  const phases = guidedRunPhases();
+  const token = state.lastDemoLaunchRun?.token || proof?.token || currentLaunchConfig().token;
+  const poolCount = Number(state.lastDemoLaunchRun?.liquidity?.results?.length || proof?.liquidity?.poolCount || 1);
+
+  if (workspace === 'verify') {
+    target.innerHTML = `
+      <div class="guided-run-card guided-success-card">
+        <span class="guided-run-icon"><i class="fa-solid fa-file-shield"></i></span>
+        <span class="eyebrow">Practice proof</span>
+        <h2>${proof ? 'The practice run has a verifiable record.' : 'Proof will appear after the practice run.'}</h2>
+        <p>${proof ? 'Trebuchet bound the token, pool, lock, destination, and recovery state into the same proof model used by guarded execution.' : 'Return to the recipe and run the practice launch first.'}</p>
+        <div class="guided-proof-summary">
+          <span><small>Token</small><strong>${escapeHtml(token?.symbol || 'Waiting')}</strong></span>
+          <span><small>Pool</small><strong>${proof ? `${poolCount} SOL pool${poolCount === 1 ? '' : 's'}` : 'Waiting'}</strong></span>
+          <span><small>Mode</small><strong>Practice</strong></span>
+        </div>
+        <div class="guided-run-actions">
+          <button class="secondary-button" type="button" data-action="guided-return-run"><i class="fa-solid fa-arrow-left"></i> Practice result</button>
+          ${proof ? '<button class="primary-button" type="button" data-action="download-v2-proof"><i class="fa-solid fa-download"></i> Download proof</button>' : ''}
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  target.innerHTML = `
+    <div class="guided-run-card ${complete ? 'guided-success-card' : ''} ${failed ? 'guided-error-card' : ''}">
+      <span class="guided-run-icon"><i class="fa-solid ${complete ? 'fa-check' : failed ? 'fa-triangle-exclamation' : state.demoLaunchRunning ? 'fa-spinner fa-spin' : 'fa-flask'}"></i></span>
+      <span class="eyebrow">${complete ? 'Practice complete' : failed ? 'Practice paused' : 'Practice launch · 0 SOL'}</span>
+      <h2>${complete ? 'The complete launch recipe worked.' : failed ? 'The local practice run did not finish.' : state.demoLaunchRunning ? 'Running your launch recipe.' : 'Ready for a full practice launch.'}</h2>
+      <p>${complete
+        ? 'Token creation, authority removal, liquidity, locking, asset return, and proof all completed in the local simulator.'
+        : failed
+          ? 'Nothing went on-chain and no SOL was spent. You can safely retry from this screen.'
+          : state.demoLaunchRunning
+            ? 'This usually takes less than a minute. Trebuchet is completing every checkpoint locally.'
+            : 'One button runs every launch step in the local simulator. There are no wallet prompts or funding requirements.'}</p>
+      ${failed ? `<div class="guided-run-alert" role="alert"><i class="fa-solid fa-circle-info"></i><span><strong>What happened</strong><small>${escapeHtml(state.guidedRunError)}</small></span></div>` : ''}
+      <div class="guided-run-phase-list">
+        ${phases.map((phase) => `<article class="${phase.state}">
+          <span class="guided-phase-state"><i class="fa-solid ${phase.state === 'complete' ? 'fa-check' : phase.state === 'running' ? 'fa-spinner fa-spin' : 'fa-circle'}"></i></span>
+          <span><strong>${escapeHtml(phase.title)}</strong><small>${escapeHtml(phase.detail)}</small></span>
+          <em>${phase.state === 'complete' ? 'Done' : phase.state === 'running' ? 'Running' : 'Waiting'}</em>
+        </article>`).join('')}
+      </div>
+      ${complete ? `
+        <div class="guided-proof-summary">
+          <span><small>Token</small><strong>${escapeHtml(token?.symbol || currentLaunchConfig().token.symbol)}</strong></span>
+          <span><small>Liquidity</small><strong>${poolCount} SOL pool${poolCount === 1 ? '' : 's'}</strong></span>
+          <span><small>Spend</small><strong>0 SOL</strong></span>
+        </div>
+      ` : ''}
+      <div class="guided-run-actions">
+        <button class="secondary-button" type="button" data-action="guided-edit-recipe"><i class="fa-solid fa-arrow-left"></i> ${complete ? 'Edit and practice again' : 'Back to recipe'}</button>
+        ${complete
+          ? '<button class="primary-button" type="button" data-action="guided-review-proof"><i class="fa-solid fa-file-shield"></i> Review practice proof</button>'
+          : `<button class="primary-button" type="button" data-action="guided-start-practice" ${state.demoLaunchRunning ? 'disabled' : ''}><i class="fa-solid ${failed ? 'fa-rotate-right' : 'fa-flask'}"></i> ${state.demoLaunchRunning ? 'Running practice' : failed ? 'Try practice again' : 'Start practice launch'}</button>`}
+      </div>
+      ${state.demoLaunchRunning ? '' : '<button class="text-button" type="button" data-action="select-experience" data-experience="advanced">Leave tutorial for Advanced controls</button>'}
+    </div>
+  `;
+}
+
+function guidedPracticeErrorMessage(error) {
+  const code = String(error?.code || '');
+  if (code === 'TIMEOUT') return 'The local simulator took too long to return its result. Its timeout has been extended; retry the practice run.';
+  if (/failed to fetch|request failed|network/i.test(String(error?.message || ''))) {
+    return 'Trebuchet temporarily lost contact with its local practice engine. Check that the app is still open, then retry.';
+  }
+  return String(error?.message || 'The local practice engine stopped before it returned a result.');
+}
+
+async function startGuidedPractice() {
+  if (state.demoLaunchRunning) return;
+  state.guidedRunError = null;
+  try {
+    applyGuidedRecipe();
+    if (!state.demoActive && !(await setDemoMode(true, { announce: false }))) {
+      throw new Error('Practice Mode could not be enabled in the local app.');
+    }
+    state.launchMode = 'dry-run';
+    state.lastDemoLaunchRun = null;
+    if (!selectedLaunchWalletPublicKey()) await generateManagedWallet();
+    if (!selectedLaunchWalletPublicKey()) throw new Error('Trebuchet could not create the temporary practice wallet.');
+    await stageTransactions({ openApproval: false, announce: false });
+    state.activeApprovalId = null;
+    state.approvalOpen = false;
+    setLaunchWorkspace('execute');
+    renderAll();
+    await runDemoLaunch();
+  } catch (error) {
+    state.guidedRunError = guidedPracticeErrorMessage(error);
+    state.demoLaunchRunning = false;
+    state.activeApprovalId = null;
+    state.approvalOpen = false;
+    setLaunchWorkspace('execute');
+    renderAll();
+    notify('Practice stopped safely; no SOL was spent');
   }
 }
 
@@ -3499,7 +4053,7 @@ function validateProofFile(file) {
     || (!type && /\.html?$/i.test(name))
     || /\.html?$/i.test(name);
   if (!jsonLike && !htmlLike) {
-    throw new Error('Proof import must be a Trebuchet JSON proof or v2 HTML dossier');
+    throw new Error('Proof import must be a Trebuchet JSON proof or HTML dossier');
   }
   if (file.size <= 0 || file.size > LAUNCH_PROOF_IMPORT_LIMIT) {
     throw new Error('Proof import must be 2MB or smaller');
@@ -4152,6 +4706,11 @@ function currentLaunchConfig() {
   const tokenSymbol = ($('#tokenSymbol').value.trim() || 'TOK').toUpperCase();
   const classic = currentClassicModel();
   return {
+    experience: {
+      mode: state.experienceMode,
+      recipeId: state.experienceMode === 'guided' ? GUIDED_RECIPE_ID : null,
+      version: state.experienceMode === 'guided' ? 1 : null,
+    },
     token: {
       name: $('#tokenName').value,
       symbol: tokenSymbol,
@@ -4230,7 +4789,7 @@ function fallbackLaunchPlan() {
   };
 }
 
-function applyLaunchPlan(plan, config = currentLaunchConfig()) {
+function applyLaunchPlan(plan, config = currentLaunchConfig(), { openApproval = true } = {}) {
   const rawPlan = plan || fallbackLaunchPlan();
   const effectivePlan = rawPlan?.source === 'local-api'
     ? rawPlan
@@ -4241,8 +4800,8 @@ function applyLaunchPlan(plan, config = currentLaunchConfig()) {
   state.transactions = transactions.length
     ? transactions
     : operationsToTransactions(fallbackLaunchPlan().operations);
-  state.activeApprovalId = state.transactions[0]?.id || null;
-  state.approvalOpen = Boolean(state.activeApprovalId);
+  state.activeApprovalId = openApproval ? state.transactions[0]?.id || null : null;
+  state.approvalOpen = openApproval && Boolean(state.activeApprovalId);
 }
 
 function setView(view) {
@@ -4391,7 +4950,15 @@ function renderLaunchPreview() {
   $('#launchStatus').className = `badge ${state.transactions.length ? 'warn' : ''}`;
   renderAgentConsole();
   const poolCount = Math.max(0, Number(config.poolTopology?.pools?.length || 0));
-  $('#setupSummary').textContent = `${symbol} / ${poolCount} pool${poolCount === 1 ? '' : 's'}`;
+  if (state.experienceMode === 'guided') {
+    $('#setupSummary').textContent = state.guidedStep === 0
+      ? 'Practice a complete token launch'
+      : `Step ${Math.min(state.guidedStep, 4)} of 4`;
+    $('#setupHelp').textContent = 'Practice only · no SOL spent';
+  } else {
+    $('#setupSummary').textContent = `${symbol} / ${poolCount} pool${poolCount === 1 ? '' : 's'}`;
+    $('#setupHelp').textContent = 'Full launch engine and custody controls';
+  }
   $('#runbookSummary').textContent = `${launchStages.length} phases`;
   $('#launchReadout').innerHTML = `
     <span><strong>${signed}/${total}</strong><small>Run</small></span>
@@ -7789,19 +8356,19 @@ function compareClassicReportArtifact(rawText, proof = currentLaunchProof(), con
       'artifact-source',
       'Artifact source',
       'completed Classic artifact',
-      'v2 proof or dossier',
+      'Trebuchet proof or dossier',
       'mismatch',
-      'Load a completed Classic artifact, not the current v2 proof or v2 dossier.',
+      'Load a completed Classic artifact, not the current Trebuchet proof or dossier.',
     );
   }
   if (!current.mint && !current.poolIds.length && Number(current.positionCount || 0) <= 0) {
     addRow(
       'current-proof',
-      'Current v2 proof',
+      'Current Trebuchet proof',
       'token and liquidity proof',
       null,
       'missing',
-      'Run or load a completed v2 launch proof before comparing a classic artifact.',
+      'Run or load a completed Trebuchet launch proof before comparing a Classic artifact.',
     );
   }
   if (current.mint) {
@@ -7812,7 +8379,7 @@ function compareClassicReportArtifact(rawText, proof = currentLaunchProof(), con
       current.mint,
       actual,
       actual === current.mint ? 'pass' : actual ? 'mismatch' : 'missing',
-      actual === current.mint ? 'Mint matches.' : actual ? 'Classic artifact has a different mint.' : 'Current v2 mint was not found in the artifact.',
+      actual === current.mint ? 'Mint matches.' : actual ? 'Classic artifact has a different mint.' : 'Current Trebuchet mint was not found in the artifact.',
     );
   }
   if (current.launchWallet) {
@@ -7845,8 +8412,8 @@ function compareClassicReportArtifact(rawText, proof = currentLaunchProof(), con
       String(artifact.poolIds.length || artifact.addresses.length),
       poolState,
       structuredPoolIds && poolState !== 'pass'
-        ? `${matched.length}/${current.poolIds.length} current v2 pool IDs matched, but the Classic artifact records ${artifact.poolIds.length} pool ID${artifact.poolIds.length === 1 ? '' : 's'}; the counts must match exactly.`
-        : `${matched.length}/${current.poolIds.length} current v2 pool IDs were found in the classic artifact.`,
+        ? `${matched.length}/${current.poolIds.length} current Trebuchet pool IDs matched, but the Classic artifact records ${artifact.poolIds.length} pool ID${artifact.poolIds.length === 1 ? '' : 's'}; the counts must match exactly.`
+        : `${matched.length}/${current.poolIds.length} current Trebuchet pool IDs were found in the Classic artifact.`,
     );
   }
   const currentQuoteMints = [...new Set(current.pools.map((pool) => pool.quoteMint).filter(Boolean))];
@@ -8127,7 +8694,7 @@ function compareClassicReportArtifact(rawText, proof = currentLaunchProof(), con
         : recipientEvidenceMatches ? `${matchedAirdropWallets.length} recipient wallet${matchedAirdropWallets.length === 1 ? '' : 's'} found` : null,
       deliveryState,
       !currentAirdropEvidence.complete
-        ? `Current v2 proof is missing exact airdrop evidence: ${currentAirdropEvidence.missing.join(', ')}.`
+        ? `Current Trebuchet proof is missing exact airdrop evidence: ${currentAirdropEvidence.missing.join(', ')}.`
       : deliveryState === 'pass'
         ? `Artifact records ${actualDelivered ?? deliveredAirdrop} delivered and ${actualFailed ?? failedAirdrop} failed recipients.`
         : structuredAirdropEvidence
@@ -8144,7 +8711,7 @@ function compareClassicReportArtifact(rawText, proof = currentLaunchProof(), con
       `${currentAirdropEvidence.recipientCount}/${currentAirdropEvidence.expectedCount}`,
       null,
       'missing',
-      'Current v2 proof is missing exact airdrop recipient wallet rows; load the full proof or original launch session before comparing Classic.',
+      'Current Trebuchet proof is missing exact airdrop recipient wallet rows; load the full proof or original launch session before comparing Classic.',
     );
   } else if (currentAirdropWallets.length) {
     const recipientState = comparisonExactEvidenceState({
@@ -8175,7 +8742,7 @@ function compareClassicReportArtifact(rawText, proof = currentLaunchProof(), con
       `${currentAirdropEvidence.transactionCount}/${currentAirdropEvidence.expectedCount}`,
       null,
       'missing',
-      'Current v2 proof is missing exact delivered airdrop transaction signatures; load the full proof or original launch session before comparing Classic.',
+      'Current Trebuchet proof is missing exact delivered airdrop transaction signatures; load the full proof or original launch session before comparing Classic.',
     );
   } else if (currentAirdropTxs.length) {
     const txState = comparisonExactEvidenceState({
@@ -8512,7 +9079,7 @@ function buildV2ReportParityAudit(proof = currentLaunchProof(), config = current
             ? `Local dossier downloaded: ${localDossier.filename}.`
             : 'Local dossier is missing terminal sweep evidence hash; download a fresh dossier after final sweep.'
         : staleReport
-          ? 'Report artifact belongs to another v2 proof; regenerate for the current launch.'
+          ? 'Report artifact belongs to another Trebuchet proof; regenerate it for the current launch.'
           : 'Local proof can be exported; permanent report publish is pending or disabled.',
     ),
     v2ReportParityItem(
@@ -8530,18 +9097,18 @@ function buildV2ReportParityAudit(proof = currentLaunchProof(), config = current
       'Live classic comparison',
       comparedToClassic ? 'pass' : 'warn',
       comparedToClassic
-        ? 'A completed Classic artifact was compared against v2 report output.'
+        ? 'A completed Classic artifact was compared against Trebuchet report output.'
         : selfArtifactCompared
-          ? 'Loaded artifact is v2-generated; compare against completed Classic output.'
+          ? 'Loaded artifact was generated by Trebuchet; compare against completed Classic output.'
           : classicComparison && !comparisonMatchesProof
-            ? 'Classic comparison belongs to another v2 proof; rerun it for the current launch.'
+            ? 'Classic comparison belongs to another Trebuchet proof; rerun it for the current launch.'
           : classicComparison
             && classicComparison.status === 'pass'
             && !comparisonEvidence.pass
             ? comparisonEvidence.detail
           : classicComparison
             ? `Classic artifact compared with ${classicComparison.passCount || 0}/${classicComparison.fieldCount || 0} fields matching; ${classicComparison.mismatchCount || 0} mismatched, ${classicComparison.missingCount || 0} missing.`
-            : 'Compare the next completed live v2 launch against a classic launch artifact before retiring Classic.',
+            : 'Compare the next completed live Trebuchet launch against a Classic launch artifact before retiring Classic.',
     ),
   ];
   const passCount = items.filter((item) => item.state === 'pass').length;
@@ -11291,7 +11858,7 @@ function renderClassicArtifactComparisonPanel() {
   const rows = Array.isArray(result?.rows) ? result.rows : [];
   const resultSummary = result
     ? staleResult
-      ? 'Comparison is for another v2 proof'
+      ? 'Comparison is for another Trebuchet proof'
       : result.status === 'missing'
       ? `${result.missingCount}/${result.fieldCount} proof fields missing`
       : result.status === 'mismatch'
@@ -12352,7 +12919,7 @@ function renderQueue() {
       <div class="queue-row compact ${escapeHtml(activeTx?.state || '')}">
         <span class="queue-copy">
           <h3>${escapeHtml(activeTx?.state === 'blocked' ? 'Live checkpoint blocked' : context.focusLabel)}</h3>
-          <p>${escapeHtml(activeTx?.effects?.[0] || 'v2 is watching launch proof and readiness evidence.')}</p>
+          <p>${escapeHtml(activeTx?.effects?.[0] || 'Trebuchet is watching launch proof and readiness evidence.')}</p>
         </span>
       </div>
       <div class="kv-row"><span>Source</span><strong>${escapeHtml(context.source)}</strong></div>
@@ -12587,6 +13154,7 @@ function launchPlanConfigFingerprint(config = currentLaunchConfig()) {
   const token = config?.token || {};
   const topology = config?.poolTopology || {};
   return JSON.stringify(stableFundingFingerprintValue({
+    experience: config?.experience || null,
     token: {
       name: token.name || null,
       symbol: token.symbol || null,
@@ -12809,7 +13377,7 @@ function proofLaunchConfigSnapshotState(proof = currentLaunchProof()) {
     String(launchConfig.schema || '').trim() !== 'trebuchet-v2-launch-config'
     || String(launchConfig.source || '').trim() !== 'trebuchet-v2'
   ) {
-    missing.push('v2 snapshot marker');
+    missing.push('Trebuchet snapshot marker');
   }
   const token = launchConfig.token && typeof launchConfig.token === 'object'
     ? launchConfig.token
@@ -13033,9 +13601,9 @@ function buildClassicRetirementGate(proof = currentLaunchProof(), audit = null, 
       id: 'live-proof',
       pass: hasCompletedLiveProof,
       detail: hasCompletedLiveProof
-        ? `Live v2 proof has ${poolCount} pool${poolCount === 1 ? '' : 's'} and ${positionCount} position${positionCount === 1 ? '' : 's'}.`
+        ? `Live Trebuchet proof has ${poolCount} pool${poolCount === 1 ? '' : 's'} and ${positionCount} position${positionCount === 1 ? '' : 's'}.`
         : isDemoProof
-          ? 'Demo proof proves wiring only; run a real v2 launch before retiring Classic.'
+          ? 'Demo proof proves wiring only; run a real Trebuchet launch before retiring Classic.'
           : proof && proofLaunchConfigSnapshot.state === 'missing'
             ? 'Completed proof is missing its frozen launch-config snapshot; load proof-bound config before retiring Classic.'
             : proof && proofLaunchConfigSnapshot.state === 'mismatch'
@@ -13074,7 +13642,7 @@ function buildClassicRetirementGate(proof = currentLaunchProof(), audit = null, 
             ? `Fee Key recipient transfer proof is ${txEvidence.feeKeyRecipientTransferred}/${feeKeyRecipientTarget}; complete recipient delivery evidence before retiring Classic.`
           : proof?.transfer && !finalSweepComplete
             ? 'Final sweep record is not terminal; verify wallet-empty, error-free sweep evidence before retiring Classic.'
-            : 'Run a real v2 launch through token, liquidity, and final sweep.',
+            : 'Run a real Trebuchet launch through token, liquidity, and final sweep.',
     },
     {
       id: 'report-proof',
@@ -13092,8 +13660,8 @@ function buildClassicRetirementGate(proof = currentLaunchProof(), audit = null, 
             ? localDossierHasEvidence(staleReport)
               ? 'Local dossier proof is missing the terminal sweep evidence hash; download a fresh dossier after final sweep before replacing Classic.'
               : 'Permanent report proof is missing the terminal sweep evidence hash; republish after final sweep before replacing Classic.'
-            : 'Report artifact belongs to another v2 proof; regenerate before replacing Classic.'
-          : 'Publish or attach a proof-bound v2 launch report before replacing Classic.',
+            : 'Report artifact belongs to another Trebuchet proof; regenerate it before replacing Classic.'
+          : 'Publish or attach a proof-bound Trebuchet launch report before replacing Classic.',
     },
     {
       id: 'classic-comparison',
@@ -13101,20 +13669,20 @@ function buildClassicRetirementGate(proof = currentLaunchProof(), audit = null, 
       detail: comparison?.status === 'pass' && !comparisonIsV2Artifact && comparisonMatchesProof && comparisonEvidence.pass
         ? `Classic artifact comparison passed ${comparison.passCount || 0}/${comparison.fieldCount || 0} fields.`
         : comparisonIsV2Artifact
-          ? 'Loaded artifact is v2-generated; compare against a completed Classic artifact.'
+          ? 'Loaded artifact was generated by Trebuchet; compare against a completed Classic artifact.'
           : comparison && !comparisonMatchesProof
-            ? 'Classic artifact comparison belongs to another v2 proof; rerun it for the current launch.'
+            ? 'Classic artifact comparison belongs to another Trebuchet proof; rerun it for the current launch.'
           : comparison?.status === 'pass' && !comparisonEvidence.pass
             ? comparisonEvidence.detail
           : comparison
             ? `Classic artifact comparison is ${comparison.status}: ${comparison.mismatchCount || 0} mismatched, ${comparison.missingCount || 0} missing.`
-            : 'Paste and compare a completed classic artifact against the completed v2 proof.',
+            : 'Paste and compare a completed Classic artifact against the completed Trebuchet proof.',
     },
     {
       id: 'audit',
       pass: audit?.status === 'pass',
       detail: audit?.status === 'pass'
-        ? 'The generated v2 proof audit is fully passing.'
+        ? 'The generated Trebuchet proof audit is fully passing.'
         : `Proof audit is ${audit?.status || 'missing'} with ${audit?.missingCount || 0} missing and ${audit?.warnCount || 0} warning checks.`,
     },
     {
@@ -13135,7 +13703,7 @@ function buildClassicRetirementGate(proof = currentLaunchProof(), audit = null, 
     title: missing.length ? 'Classic retirement gate' : 'Classic can be retired',
     state: missing.length ? 'danger' : 'pass',
     badge: missing.length ? 'Blocked' : 'Ready',
-    detail: missing.length ? missing[0].detail : 'Live v2 proof, proof-bound report artifact, and classic comparison are all attached.',
+    detail: missing.length ? missing[0].detail : 'Live Trebuchet proof, proof-bound report artifact, and Classic comparison are all attached.',
     passCount,
     itemCount: requirements.length,
     requirements,
@@ -13292,7 +13860,7 @@ function buildV2ReplacementCriteriaAudit({
   const viewportSmokeDetail = viewportSmokeProof
     ? viewportSmokeApiConnected
       ? `Viewport smoke passed${viewportSmokeNames.length ? ` for ${viewportSmokeNames.join(', ')}` : ''}${viewportSmokeProof.generatedAt ? ` at ${viewportSmokeProof.generatedAt}` : ''}.`
-      : 'Connect the local app to verify viewport smoke proof against current v2 assets.'
+    : 'Connect the local app to verify viewport smoke proof against current Trebuchet assets.'
     : viewportSmokeStatus?.detail || 'Run `npm run test:v2:viewport` to generate desktop/mobile viewport-smoke proof.';
   const topologyIssues = typeof customQuoteSafetySummary === 'function'
     ? customQuoteSafetySummary(config?.poolTopology || {})
@@ -13399,10 +13967,10 @@ function buildV2ReplacementCriteriaAudit({
       evidence: demoRunComplete
         ? `Demo run ${shortAddress(state.lastDemoLaunchRun?.token?.tokenMint || state.lastDemoLaunchRun?.token?.mint)} completed with terminal readiness proof.`
         : hasCompletedLiveProof
-          ? 'Completed live v2 proof is stronger than the demo path.'
+          ? 'Completed live Trebuchet proof is stronger than the demo path.'
           : state.lastDemoLaunchRun
             ? 'Demo run exists, but terminal readiness or final sweep evidence is incomplete.'
-          : 'Run the v2 demo launch contract before replacing Classic.',
+          : 'Run the Trebuchet demo launch before replacing Classic.',
       detail: 'Covers token creation, LP creation, Fee Key recipient transfer, airdrop delivery, and final sweep routing.',
     },
     {
@@ -13417,7 +13985,7 @@ function buildV2ReplacementCriteriaAudit({
           ? !selectedWallet
             ? 'Selected launch address is not in Trebuchet managed-wallet storage.'
             : walletSecretLocked
-              ? 'Selected launch wallet is PIN locked; unlock before v2 can replace Classic signing.'
+              ? 'Selected launch wallet is PIN locked; unlock it before Trebuchet can replace Classic signing.'
             : selectedWallet.decryptionFailed || selectedWallet.hasSecretKey !== true
                 ? 'Selected managed wallet is missing a usable signing secret.'
                 : state.apiStatus !== 'connected'
@@ -13479,7 +14047,7 @@ function buildV2ReplacementCriteriaAudit({
         : chartRendererEvidence
           ? `Chart renderers are wired; ${viewportSmokeDetail}`
           : 'Tokenomics and liquidity chart renderers are missing.',
-      detail: 'Tokenomics, liquidity depth, funding, and run progress render from the staged v2 launch model.',
+      detail: 'Tokenomics, liquidity depth, funding, and run progress render from the staged Trebuchet launch model.',
     },
     {
       id: 'pool-config-parity',
@@ -13599,13 +14167,13 @@ function buildV2ReplacementCriteriaAudit({
       evidence: classicComparisonEvidence
         ? `Classic comparison passed ${comparison.passCount || 0}/${comparison.fieldCount || 0} fields.`
         : comparisonIsV2Artifact
-          ? 'Loaded artifact is v2-generated; use a completed Classic artifact.'
+          ? 'Loaded artifact was generated by Trebuchet; use a completed Classic artifact.'
           : comparison?.status === 'pass' && !requiredComparisonEvidence.pass
             ? requiredComparisonEvidence.detail
           : comparison
             ? `Comparison is ${comparison.status}; rerun against the current completed proof.`
-            : 'Compare a completed Classic artifact against the completed v2 proof.',
-      detail: 'Prevents retiring Classic on v2 self-artifacts, stale comparisons, or partial proof matches.',
+            : 'Compare a completed Classic artifact against the completed Trebuchet proof.',
+      detail: 'Prevents retiring Classic on Trebuchet self-artifacts, stale comparisons, or partial proof matches.',
     },
     {
       id: 'proof-audit',
@@ -13788,10 +14356,10 @@ function renderParityPanel() {
             : state.lastDemoLaunchRun
               ? `Demo run completed for ${shortAddress(state.lastDemoLaunchRun.token?.tokenMint)}; live parity still needs a real proof.`
               : demoExecutionReady
-                ? 'v2 can run the complete demo token, LP, and sweep path; real launch routing remains guarded.'
+                ? 'Trebuchet can run the complete demo token, LP, and sweep path; real launch routing remains guarded.'
                 : realBridgeReady
                   ? `Next real classic operation is ${state.executionReadiness.nextEndpoint}.`
-                  : 'v2 stages decoded local run envelopes and dispatches real work only after readiness confirmation.',
+                  : 'Trebuchet stages decoded local run envelopes and dispatches real work only after readiness confirmation.',
       };
     }
     if (feature.id === 'sweep-report') {
@@ -14224,7 +14792,7 @@ function renderDiscovery() {
     provenance.proof ? `
       <div class="audit-line">
         <span class="evidence-dot pass"></span>
-        <span><strong>v2 proof bundle</strong><small>Matching local proof loaded</small></span>
+        <span><strong>Trebuchet proof bundle</strong><small>Matching local proof loaded</small></span>
       </div>
     ` : '',
   ].filter(Boolean).join('');
@@ -15233,7 +15801,7 @@ function renderHistoryExecutionAudit() {
           <article class="idle">
             <i class="fa-solid fa-shield-halved"></i>
             <span>
-              <strong>No guarded v2 operations recorded in this session.</strong>
+              <strong>No guarded Trebuchet operations recorded in this session.</strong>
               <small>Local wallet execution evidence will appear here after the first run.</small>
             </span>
           </article>
@@ -15257,7 +15825,7 @@ function renderHistoryExecutionAudit() {
         <span>
           <span class="eyebrow">Guarded execution audit</span>
           <strong>${escapeHtml(latest?.label || 'Classic operations')}</strong>
-          <em>${escapeHtml(latest?.detail || 'Recent v2 local-wallet operations.')}</em>
+          <em>${escapeHtml(latest?.detail || 'Recent Trebuchet local-wallet operations.')}</em>
         </span>
         <span class="history-audit-actions">
           <span class="risk-badge ${attention ? 'warn' : ''}">${attention ? `${attention} attention` : 'Clear'}</span>
@@ -15377,11 +15945,13 @@ function renderHistoryPanes() {
 function renderAll() {
   renderLaunchPreview();
   renderTokenLogoPreview();
+  renderGuidedLaunchFlow();
   renderChartDeck();
   renderVanityCandidates();
   renderPoolEditorPanel();
   renderAirdropPanel();
   renderReportPanel();
+  renderGuidedRunShell();
   renderClassicBridge();
   renderLiveOpsPanel();
   renderSignaturePanel();
@@ -16124,16 +16694,16 @@ function proofPayloadFromImportText(text) {
   try {
     return JSON.parse(raw);
   } catch {
-    // Keep going: v2 HTML dossiers embed the same non-secret proof payload.
+    // Keep going: Trebuchet HTML dossiers embed the same non-secret proof payload.
   }
   const match = raw.match(/<script\b(?=[^>]*\bid=["']trebuchet-v2-proof["'])[^>]*>([\s\S]*?)<\/script>/i);
   if (!match) {
-    throw new Error('Proof import does not contain a Trebuchet JSON proof or v2 HTML dossier payload');
+    throw new Error('Proof import does not contain a Trebuchet JSON proof or HTML dossier payload');
   }
   try {
     return JSON.parse(String(match[1] || '').trim());
   } catch {
-    throw new Error('Embedded v2 proof payload could not be parsed');
+    throw new Error('Embedded Trebuchet proof payload could not be parsed');
   }
 }
 
@@ -16266,21 +16836,21 @@ function proofFromImportedPayload(payload) {
     throw new Error('Proof JSON could not be parsed');
   }
   if (!importedProofPayloadHasV2Provenance(payload)) {
-    throw new Error('Proof JSON is not a v2 proof export');
+    throw new Error('Proof JSON is not a Trebuchet proof export');
   }
   if (importedProofPayloadHasClassicSource(payload)) {
-    throw new Error('Proof JSON is a Classic artifact, not a v2 proof export');
+    throw new Error('Proof JSON is a Classic artifact, not a Trebuchet proof export');
   }
   const proof = payload.proof || payload.launchData?.proof || null;
   if (!proof || typeof proof !== 'object') {
-    throw new Error('Proof JSON does not contain a v2 launch proof');
+    throw new Error('Proof JSON does not contain a Trebuchet launch proof');
   }
   if (importedProofPayloadHasClassicSource(payload, proof)) {
-    throw new Error('Proof JSON is a Classic artifact, not a v2 proof export');
+    throw new Error('Proof JSON is a Classic artifact, not a Trebuchet proof export');
   }
   const explicitLaunchConfig = importedExplicitLaunchConfig(payload);
   if (!importedLaunchConfigSnapshotIsV2Export(explicitLaunchConfig)) {
-    throw new Error('Proof JSON is missing a v2 launch-config snapshot');
+    throw new Error('Proof JSON is missing a Trebuchet launch-config snapshot');
   }
   const proofForImport = { ...proof };
   if (proofForImport.reportParity && typeof proofForImport.reportParity === 'object') {
@@ -16308,7 +16878,7 @@ function proofFromImportedPayload(payload) {
   }
   const normalized = normalizeStoredLaunchProof({ proof: proofForImport, savedAt: Date.now() });
   if (!normalized) {
-    throw new Error('Proof JSON does not contain a real v2 launch proof');
+    throw new Error('Proof JSON does not contain a real Trebuchet launch proof');
   }
   return normalized.proof;
 }
@@ -16576,7 +17146,7 @@ function runClassicArtifactComparison() {
       });
     }
     renderAll();
-    notify(result.status === 'pass' ? 'Classic artifact matches v2 proof' : 'Classic artifact needs review');
+    notify(result.status === 'pass' ? 'Classic artifact matches the Trebuchet proof' : 'Classic artifact needs review');
   } catch (error) {
     state.classicReportComparison = {
       ...state.classicReportComparison,
@@ -16753,7 +17323,7 @@ async function publishV2LaunchReport({ quiet = false, refreshReadiness = true, l
         finishExecutionLedgerEntry(ledgerId, {
           status: 'error',
           error: 'Launch report publisher returned no permanent URI.',
-          detail: 'Report publishing did not return a jsonUri or htmlUri, so v2 will not treat it as proof.',
+          detail: 'Report publishing did not return a jsonUri or htmlUri, so Trebuchet will not treat it as proof.',
         });
         if (!quiet) notify('Launch report publish returned no URI');
         return {
@@ -17031,7 +17601,7 @@ async function clearQuoteAcquire() {
   notify('Quote acquire job cleared');
 }
 
-async function stageTransactions() {
+async function stageTransactions({ openApproval = true, announce = true } = {}) {
   if (state.staging) return;
   state.staging = true;
   renderQueue();
@@ -17044,14 +17614,16 @@ async function stageTransactions() {
         walletPublicKey: selectedLaunchWalletPublicKey(),
       });
     }
-    applyLaunchPlan(plan || fallbackLaunchPlan(), config);
-    notify(plan?.source === 'local-api'
-      ? `Run plan staged from local API (${state.transactions.length} operations)`
-      : 'Static run plan staged');
+    applyLaunchPlan(plan || fallbackLaunchPlan(), config, { openApproval });
+    if (announce) {
+      notify(plan?.source === 'local-api'
+        ? `Run plan staged from local API (${state.transactions.length} operations)`
+        : 'Static run plan staged');
+    }
   } catch (error) {
     console.warn('v2 launch-plan staging failed:', error);
-    applyLaunchPlan(fallbackLaunchPlan());
-    notify('Local plan unavailable; staged static fallback');
+    applyLaunchPlan(fallbackLaunchPlan(), config, { openApproval });
+    if (announce) notify('Local plan unavailable; staged static fallback');
   } finally {
     state.staging = false;
     renderAll();
@@ -18269,7 +18841,7 @@ function applyExecutionErrorReadiness(error) {
 
 async function runDemoLaunch() {
   if (!state.demoActive) {
-    notify('Demo mode is required for v2 demo launch');
+    notify('Demo mode is required for a Trebuchet practice launch');
     return;
   }
   const config = currentLaunchConfig();
@@ -18284,6 +18856,7 @@ async function runDemoLaunch() {
   }
 
   state.demoLaunchRunning = true;
+  if (state.experienceMode === 'guided') state.guidedRunError = null;
   renderAll();
   try {
     state.lastDemoLaunchRun = await state.apiClient.runDemoLaunch({
@@ -18293,7 +18866,11 @@ async function runDemoLaunch() {
       airdropRecipients: config.poolTopology.airdrop.recipients,
     });
     state.executionReadiness = state.lastDemoLaunchRun.readiness || state.executionReadiness;
-    applyLaunchPlan(state.executionReadiness?.plan || state.launchPlan || fallbackLaunchPlan());
+    applyLaunchPlan(
+      state.executionReadiness?.plan || state.launchPlan || fallbackLaunchPlan(),
+      config,
+      { openApproval: state.experienceMode !== 'guided' },
+    );
     state.transactions.forEach((tx) => {
       tx.state = 'signed';
     });
@@ -18307,7 +18884,14 @@ async function runDemoLaunch() {
     pollLiveOps().catch(() => null);
     notify('Demo launch completed end to end');
   } catch (error) {
-    notify(error.message || 'Demo launch failed');
+    if (state.experienceMode === 'guided') {
+      state.guidedRunError = guidedPracticeErrorMessage(error);
+      state.activeApprovalId = null;
+      state.approvalOpen = false;
+      notify('Practice stopped safely; no SOL was spent');
+    } else {
+      notify(error.message || 'Demo launch failed');
+    }
   } finally {
     state.demoLaunchRunning = false;
     renderAll();
@@ -18404,7 +18988,7 @@ async function executeNextRunOperation() {
     } else {
       history.unshift({
         title: `${config.token.symbol} ${result.executed?.action || 'execution'} complete`,
-        detail: `${result.executed?.endpoint || 'Classic endpoint'} finished through the guarded v2 bridge.`,
+        detail: `${result.executed?.endpoint || 'Classic endpoint'} finished through the guarded Trebuchet bridge.`,
         time: 'Just now',
       });
     }
@@ -19214,7 +19798,7 @@ async function bootLocalApi() {
       api: {
         available: false,
         status: 'static',
-        detail: 'Static preview; v2 API client did not load.',
+        detail: 'Static preview; the Trebuchet API client did not load.',
       },
     });
     renderAll();
@@ -19493,6 +20077,7 @@ function drawLaunchCanvas() {
 function handleDynamicInput(event) {
   if (handleOperatorPromptInput(event)) return;
   if (handleRecoveryPinInput(event)) return;
+  if (syncGuidedField(event.target)) return;
 
   if (event.target.id === 'discoverySearchInput') {
     state.discovery.query = event.target.value;
@@ -19580,6 +20165,74 @@ function handleClick(event) {
   if (!actionTarget) return;
 
   const { action } = actionTarget.dataset;
+  if (action === 'select-experience') {
+    setExperienceMode(actionTarget.dataset.experience);
+    return;
+  }
+  if (action === 'guided-next') {
+    moveGuidedStep(1);
+    return;
+  }
+  if (action === 'guided-back') {
+    moveGuidedStep(-1);
+    return;
+  }
+  if (action === 'guided-select-logo') {
+    $('#tokenLogoFile')?.click();
+    return;
+  }
+  if (action === 'guided-use-solflare') {
+    const destination = String(state.solflare?.publicKey || '').trim();
+    if (!destination) {
+      notify('Connect Solflare before using it as the home wallet');
+      return;
+    }
+    state.guidedIntent.destinationWallet = destination;
+    delete state.guidedErrors.destinationWallet;
+    persistGuidedDraft();
+    renderGuidedLaunchFlow();
+    return;
+  }
+  if (action === 'guided-use-practice-wallet') {
+    state.guidedIntent.destinationWallet = GUIDED_PRACTICE_DESTINATION;
+    delete state.guidedErrors.destinationWallet;
+    persistGuidedDraft();
+    renderGuidedLaunchFlow();
+    notify('Practice destination selected; choose your real home wallet before a live run');
+    return;
+  }
+  if (action === 'guided-value-preset') {
+    state.guidedIntent.startingMarketCapUsd = Math.max(1, Number(actionTarget.dataset.value || 0));
+    delete state.guidedErrors.startingMarketCapUsd;
+    persistGuidedDraft();
+    renderGuidedLaunchFlow();
+    return;
+  }
+  if (action === 'guided-practice') {
+    startGuidedPractice().catch((error) => notify(error.message || 'Could not start the practice launch'));
+    return;
+  }
+  if (action === 'guided-start-practice') {
+    startGuidedPractice().catch((error) => notify(error.message || 'Could not start the practice launch'));
+    return;
+  }
+  if (action === 'guided-edit-recipe') {
+    state.guidedStep = guidedSteps.length - 1;
+    setLaunchWorkspace('configure');
+    persistGuidedDraft();
+    renderAll();
+    return;
+  }
+  if (action === 'guided-review-proof') {
+    setLaunchWorkspace('verify');
+    renderAll();
+    return;
+  }
+  if (action === 'guided-return-run') {
+    setLaunchWorkspace('execute');
+    renderAll();
+    return;
+  }
   if (action === 'cancel-operator-prompt') {
     closeOperatorPrompt(null);
     return;
@@ -20401,6 +21054,10 @@ restoreExecutionLedger();
 restoreLaunchProof();
 restoreClassicReportComparison();
 restoreDiscoveryRegistry();
+restoreGuidedDraft();
+if (state.experienceMode === 'guided' && state.guidedStep === guidedSteps.length - 1) {
+  applyGuidedRecipe({ refresh: false });
+}
 restoreLaunchWorkspace();
 bindEvents();
 initializeSolflareWallet();

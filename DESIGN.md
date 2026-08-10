@@ -1,8 +1,8 @@
-# Trebuchet v2 design system
+# Trebuchet design system
 
-This document defines the production-facing v2 terminal. The implemented source
+This document defines the production-facing Trebuchet terminal. The implemented source
 of truth is [public/v2/styles.css](public/v2/styles.css). Classic intentionally
-keeps its parchment identity and is not the template for new v2 work.
+keeps its parchment identity and is not the template for new Trebuchet work.
 
 ## Product posture
 
@@ -49,7 +49,7 @@ Do not introduce:
 - preview/staged data presented as live proof.
 
 If a change could be dropped into a generic CRM or analytics SaaS app unchanged,
-it probably does not belong in the v2 terminal.
+it probably does not belong in Trebuchet.
 
 ## Palette
 
@@ -82,7 +82,7 @@ status colors.
 
 ## Typography
 
-The v2 terminal ships local JetBrains Mono weights and sets:
+Trebuchet ships local JetBrains Mono weights and sets:
 
 ```css
 --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
@@ -262,9 +262,9 @@ explained by available evidence.
 ## Classic boundary
 
 Classic is a compatibility and comparison surface. Its parchment design may be
-maintained in `public/`, but new v2 work must not copy its serif typography,
+maintained in `public/`, but new Trebuchet work must not copy its serif typography,
 paper fills, large narrative spacing, or manuscript ornament.
 
-The v2 dossier can render Classic-style report artifacts where parity requires
-it. That report styling is evidence compatibility, not the v2 application
+The Trebuchet dossier can render Classic-style report artifacts where parity requires
+it. That report styling is evidence compatibility, not the Trebuchet application
 identity.

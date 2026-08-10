@@ -6357,6 +6357,1359 @@ button.discovery-row {
   }
 }
 
+/* -------------------------------------------------------------------------
+   Guided Mode focus shell
+
+   The first-launch tutorial deliberately leaves the terminal cockpit behind.
+   One surface, one decision per screen, readable type, and a persistent action
+   area keep the configure-to-practice path obvious at normal window sizes.
+   ------------------------------------------------------------------------- */
+
+body[data-experience-mode="guided"][data-active-view="launch"] {
+  --bg: #07100c;
+  --panel: #0b1510;
+  --panel-2: #0f1b15;
+  --panel-strong: #122019;
+  --ink: #f2f7f4;
+  --muted: #a4b2aa;
+  --subtle: #74837b;
+  --line: #26372e;
+  --line-strong: #3f5d4d;
+  --green: #7be3a2;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"]::before {
+  background:
+    radial-gradient(circle at 50% -10%, color-mix(in srgb, var(--green) 11%, transparent), transparent 42%),
+    var(--bg);
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .app-shell {
+  display: block;
+  min-height: 100vh;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .sidebar,
+body[data-experience-mode="guided"][data-active-view="launch"] .terminal-tape,
+body[data-experience-mode="guided"][data-active-view="launch"] .topbar,
+body[data-experience-mode="guided"][data-active-view="launch"] #approvalFloating {
+  display: none !important;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .workspace {
+  min-height: 100vh;
+  padding: 0 !important;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] #view-launch,
+body[data-experience-mode="guided"][data-active-view="launch"] .launch-grid,
+body[data-experience-mode="guided"][data-active-view="launch"] .surface-main {
+  min-height: 100vh;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] #view-launch .surface-main {
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] #view-launch .launch-workspace-viewport {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 100vh;
+  max-height: none;
+  padding: 0 clamp(18px, 4vw, 54px) 34px;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] #view-launch .setup-dock {
+  width: min(100%, 1080px);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 18px 0 34px !important;
+  background: transparent;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .setup-dock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+  padding: 0 0 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .setup-dock-head > span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .setup-dock-head .eyebrow {
+  color: var(--green);
+  font: 750 10px/1.2 Inter, ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: .08em;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] #setupSummary {
+  font-size: 15px;
+  font-weight: 720;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .setup-help {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--green) 38%, var(--line));
+  border-radius: 999px;
+  color: var(--green);
+  font: 700 10px/1.2 Inter, ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .experience-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(100%, 520px);
+  gap: 4px;
+  margin: 16px auto 24px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .experience-button {
+  min-height: 48px;
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 8px;
+  font-family: inherit;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .experience-button.is-selected {
+  background: color-mix(in srgb, var(--green) 15%, var(--panel-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 48%, var(--line));
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .experience-button > i {
+  width: 27px;
+  height: 27px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .experience-button strong {
+  font-size: 11px;
+  text-transform: none;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .experience-button small {
+  font-size: 9px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-launch-flow,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-shell {
+  width: min(100%, 940px);
+  margin-inline: auto;
+  padding: 0 0 24px;
+  font-family: inherit;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-welcome {
+  width: min(100%, 820px);
+  margin-top: 8px;
+  padding: clamp(28px, 5vw, 54px) clamp(22px, 5vw, 56px) 34px;
+  border-color: color-mix(in srgb, var(--green) 40%, var(--line));
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--green) 15%, transparent), transparent 48%),
+    var(--panel-strong);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .22);
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-wand,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-icon {
+  border-radius: 50%;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-welcome h2,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-step-copy h2,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-review h2,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-card h2 {
+  color: var(--ink);
+  font-family: inherit;
+  font-size: clamp(26px, 3.5vw, 42px);
+  font-weight: 760;
+  line-height: 1.08;
+  letter-spacing: -.035em;
+  text-transform: none;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-step-copy h2,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-review h2 {
+  font-size: clamp(24px, 3vw, 34px);
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-welcome > p,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-step-copy > p,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-card > p {
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  letter-spacing: 0;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-progress {
+  width: min(100%, 720px);
+  margin: 2px auto 24px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-progress small {
+  font-family: inherit;
+  font-size: 9px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-step-layout {
+  grid-template-columns: minmax(220px, .8fr) minmax(380px, 1.2fr);
+  gap: clamp(26px, 5vw, 64px);
+  align-items: center;
+  min-height: 390px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-form-card,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-review-hero,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-recipe-list article,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-phase-list article {
+  border-radius: 12px;
+  background: var(--panel-strong);
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-form-card {
+  padding: 22px;
+  border-color: var(--line-strong);
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-form-card label > span,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-form-card label > span:first-child {
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-form-card input {
+  min-height: 46px;
+  padding: 10px 12px;
+  border-color: var(--line-strong);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-review {
+  width: 100%;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-review-hero {
+  margin: 14px 0 10px;
+  padding: 13px 15px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-recipe-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-recipe-list article {
+  grid-template-columns: 34px minmax(0, 1fr);
+  min-height: 104px;
+  padding: 14px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-recipe-list article > i:last-child {
+  display: none;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-recipe-list strong,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-phase-list strong {
+  font-family: inherit;
+  font-size: 11px;
+  text-transform: none;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-recipe-list small,
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-phase-list small {
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-technical-details {
+  border-radius: 10px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-technical-details summary {
+  display: flex;
+  justify-content: space-between;
+  font-family: inherit;
+  font-size: 10px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-technical-details summary span {
+  color: var(--subtle);
+  font-weight: 500;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-navigation {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  align-items: center;
+  margin: 14px 0 0;
+  padding: 14px 0 4px;
+  border-top-color: var(--line);
+  background: linear-gradient(180deg, transparent, var(--bg) 22%);
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .primary-button,
+body[data-experience-mode="guided"][data-active-view="launch"] .secondary-button {
+  min-height: 46px;
+  padding: 10px 16px;
+  border-radius: 9px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-card {
+  margin-top: clamp(22px, 5vh, 56px);
+  padding: clamp(24px, 4vw, 42px);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--green) 12%, transparent), transparent 44%),
+    var(--panel-strong);
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-phase-list {
+  gap: 9px;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-phase-list article {
+  min-height: 68px;
+  padding: 11px 13px;
+}
+
+.guided-run-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  margin-top: 16px;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in srgb, var(--amber) 58%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--amber) 8%, var(--panel));
+  color: var(--amber);
+  text-align: left;
+}
+
+.guided-run-alert span,
+.guided-run-alert strong,
+.guided-run-alert small {
+  display: block;
+}
+
+.guided-run-alert strong {
+  font-size: 11px;
+}
+
+.guided-run-alert small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-error-card {
+  border-color: color-mix(in srgb, var(--amber) 44%, var(--line));
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .guided-error-card .guided-run-icon {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+@media (max-width: 760px) {
+  body[data-experience-mode="guided"][data-active-view="launch"] #view-launch .launch-workspace-viewport {
+    padding-inline: 14px;
+  }
+
+  body[data-experience-mode="guided"][data-active-view="launch"] #view-launch .setup-dock {
+    padding-top: 12px !important;
+  }
+
+  body[data-experience-mode="guided"][data-active-view="launch"] .setup-dock-head {
+    align-items: flex-start;
+  }
+
+  body[data-experience-mode="guided"][data-active-view="launch"] .setup-help {
+    font-size: 9px;
+  }
+
+  body[data-experience-mode="guided"][data-active-view="launch"] .experience-row,
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-step-layout,
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-recipe-list,
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-phase-list {
+    grid-template-columns: 1fr;
+  }
+
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-step-layout {
+    min-height: 0;
+    gap: 14px;
+  }
+
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-welcome h2,
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-card h2 {
+    font-size: 28px;
+  }
+
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-review .guided-step-copy {
+    text-align: left;
+  }
+
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-navigation,
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-navigation .primary-button,
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-navigation .secondary-button,
+  body[data-experience-mode="guided"][data-active-view="launch"] .guided-run-actions button {
+    width: 100%;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Guided first-launch experience
+
+   Guided mode is intentionally a different information architecture, not a
+   visual skin over the operator cockpit. The existing controls remain intact
+   under Advanced and continue to feed the same guarded launch engine.
+   -------------------------------------------------------------------------- */
+
+.experience-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
+.experience-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-strong) 74%, transparent);
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.experience-button > i {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--green);
+}
+
+.experience-button span,
+.experience-button strong,
+.experience-button small {
+  display: block;
+}
+
+.experience-button strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.experience-button small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.experience-button:hover,
+.experience-button:focus-visible,
+.experience-button.is-selected {
+  border-color: color-mix(in srgb, var(--green) 64%, var(--line));
+  background: color-mix(in srgb, var(--green) 9%, var(--panel-strong));
+  color: var(--ink);
+  outline: none;
+}
+
+.experience-button.is-selected > i {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 16%, transparent);
+}
+
+body[data-experience-mode="guided"] #advancedLaunchControls,
+body[data-experience-mode="advanced"] #guidedLaunchFlow,
+body[data-experience-mode="advanced"] #guidedRunShell {
+  display: none !important;
+}
+
+body[data-experience-mode="guided"] #classicBridge,
+body[data-experience-mode="guided"] #launchConsole,
+body[data-experience-mode="guided"] #signaturePanel,
+body[data-experience-mode="guided"] #liveOpsPanel,
+body[data-experience-mode="guided"] #launchWorkspaceViewport > details.drawer {
+  display: none !important;
+}
+
+.guided-launch-flow[hidden] {
+  display: none !important;
+}
+
+.guided-launch-flow {
+  width: min(100%, 980px);
+  margin: 0 auto;
+  padding: 4px 0 18px;
+}
+
+.guided-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: 4px 0 22px;
+  padding: 0;
+  list-style: none;
+}
+
+.guided-progress li {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  color: var(--subtle);
+}
+
+.guided-progress li::before {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: -50%;
+  width: 100%;
+  height: 1px;
+  background: var(--line);
+}
+
+.guided-progress li:first-child::before {
+  display: none;
+}
+
+.guided-progress li > span {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--panel);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.guided-progress li.is-current,
+.guided-progress li.is-complete {
+  color: var(--green);
+}
+
+.guided-progress li.is-current > span,
+.guided-progress li.is-complete > span {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 14%, var(--panel));
+}
+
+.guided-progress li.is-complete::before,
+.guided-progress li.is-current::before {
+  background: color-mix(in srgb, var(--green) 60%, var(--line));
+}
+
+.guided-progress small {
+  font-size: 9px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.guided-welcome {
+  display: grid;
+  justify-items: center;
+  width: min(100%, 760px);
+  margin: 18px auto 6px;
+  padding: 38px 34px 30px;
+  border: 1px solid color-mix(in srgb, var(--green) 32%, var(--line));
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--green) 13%, transparent), transparent 44%),
+    color-mix(in srgb, var(--panel-strong) 90%, transparent);
+  text-align: center;
+}
+
+.guided-wand {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin-bottom: 16px;
+  border: 1px solid color-mix(in srgb, var(--green) 46%, var(--line));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--green) 11%, var(--panel));
+  color: var(--green);
+  font-size: 22px;
+}
+
+.guided-welcome h2,
+.guided-step-copy h2,
+.guided-review h2 {
+  margin-top: 6px;
+  font-size: clamp(21px, 2.4vw, 30px);
+  letter-spacing: -.025em;
+}
+
+.guided-welcome > p {
+  max-width: 64ch;
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+.guided-promise-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin-top: 24px;
+}
+
+.guided-promise-row span {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 13px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
+.guided-promise-row i {
+  color: var(--green);
+}
+
+.guided-promise-row strong {
+  font-size: 10px;
+}
+
+.guided-welcome-actions {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.guided-welcome-actions .primary-button,
+.guided-navigation .primary-button,
+.guided-navigation .secondary-button {
+  min-height: 44px;
+  border-radius: 7px;
+}
+
+.text-button {
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.text-button:hover,
+.text-button:focus-visible {
+  color: var(--ink);
+}
+
+.guided-welcome > small {
+  max-width: 62ch;
+  margin-top: 16px;
+  color: var(--subtle);
+  font-size: 9px;
+}
+
+.guided-step-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, .8fr) minmax(360px, 1.2fr);
+  gap: 30px;
+  align-items: start;
+  padding: 12px 8px 4px;
+}
+
+.guided-step-copy {
+  padding: 14px 0;
+}
+
+.guided-step-copy > p {
+  max-width: 48ch;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.guided-form-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-strong) 90%, transparent);
+  box-shadow: 0 18px 44px rgb(0 0 0 / 12%);
+}
+
+.guided-form-card.single-column {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.guided-form-card label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.guided-form-card label > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.guided-form-card label em {
+  color: var(--subtle);
+  font-style: normal;
+  font-weight: 600;
+  text-transform: none;
+}
+
+.guided-form-card input {
+  width: 100%;
+  min-width: 0;
+  height: 43px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--ink);
+  outline: none;
+}
+
+.guided-form-card input:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 12%, transparent);
+}
+
+.guided-form-card input[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
+.guided-wide {
+  grid-column: 1 / -1;
+}
+
+.guided-field-error {
+  color: var(--red);
+  font-size: 9px;
+}
+
+.guided-logo-button {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 58px;
+  padding: 9px 11px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.guided-logo-button:hover,
+.guided-logo-button:focus-visible {
+  border-color: var(--green);
+  outline: none;
+}
+
+.guided-logo-mark,
+.guided-token-mark {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.guided-logo-mark {
+  width: 38px;
+  height: 38px;
+}
+
+.guided-logo-mark img,
+.guided-token-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.guided-logo-button span strong,
+.guided-logo-button span small {
+  display: block;
+}
+
+.guided-logo-button span strong {
+  font-size: 11px;
+}
+
+.guided-logo-button span small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.guided-inline-actions,
+.guided-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.guided-assurance {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--green) 28%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--green) 7%, transparent);
+}
+
+.guided-assurance > i {
+  color: var(--green);
+}
+
+.guided-assurance span,
+.guided-assurance strong,
+.guided-assurance small {
+  display: block;
+}
+
+.guided-assurance strong {
+  font-size: 10px;
+}
+
+.guided-assurance small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.guided-presets button {
+  flex: 1 1 100px;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.guided-presets button:hover,
+.guided-presets button:focus-visible,
+.guided-presets button.is-selected {
+  border-color: var(--green);
+  color: var(--ink);
+  outline: none;
+}
+
+.guided-price-preview {
+  display: grid;
+  gap: 3px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.guided-price-preview small,
+.guided-price-preview span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.guided-price-preview strong {
+  color: var(--green);
+  font-size: 22px;
+}
+
+.guided-navigation {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 22px 8px 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.guided-run-shell {
+  width: min(100%, 900px);
+  margin: 0 auto;
+  padding: 18px 0 28px;
+}
+
+.guided-run-card {
+  display: grid;
+  justify-items: center;
+  padding: 26px;
+  border: 1px solid color-mix(in srgb, var(--green) 28%, var(--line));
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--green) 9%, transparent), transparent 42%),
+    color-mix(in srgb, var(--panel-strong) 92%, transparent);
+  text-align: center;
+}
+
+.guided-run-icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 13px;
+  border: 1px solid color-mix(in srgb, var(--green) 52%, var(--line));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--green) 12%, var(--panel));
+  color: var(--green);
+  font-size: 18px;
+}
+
+.guided-run-card h2 {
+  margin-top: 6px;
+  font-size: clamp(21px, 2.4vw, 29px);
+}
+
+.guided-run-card > p {
+  max-width: 64ch;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.guided-run-phase-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin-top: 20px;
+  text-align: left;
+}
+
+.guided-run-phase-list article {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  min-height: 62px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.guided-run-phase-list article.complete {
+  border-color: color-mix(in srgb, var(--green) 32%, var(--line));
+}
+
+.guided-run-phase-list article.running {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 7%, var(--panel));
+}
+
+.guided-phase-state {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--subtle);
+}
+
+.guided-run-phase-list article.complete .guided-phase-state,
+.guided-run-phase-list article.running .guided-phase-state {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.guided-run-phase-list strong,
+.guided-run-phase-list small {
+  display: block;
+}
+
+.guided-run-phase-list strong {
+  font-size: 10px;
+}
+
+.guided-run-phase-list small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.guided-run-phase-list em {
+  color: var(--subtle);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.guided-run-phase-list article.complete em,
+.guided-run-phase-list article.running em {
+  color: var(--green);
+}
+
+.guided-proof-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.guided-proof-summary span {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-right: 1px solid var(--line);
+}
+
+.guided-proof-summary span:last-child {
+  border-right: 0;
+}
+
+.guided-proof-summary small {
+  color: var(--muted);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.guided-proof-summary strong {
+  font-size: 11px;
+}
+
+.guided-run-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 18px;
+}
+
+.guided-run-actions button {
+  min-height: 43px;
+  border-radius: 7px;
+}
+
+.guided-run-card > .text-button {
+  margin-top: 8px;
+}
+
+.guided-review {
+  width: min(100%, 820px);
+  margin: 0 auto;
+}
+
+.guided-review .guided-step-copy {
+  text-align: center;
+}
+
+.guided-review .guided-step-copy > p {
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.guided-review-hero {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin: 8px 0 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--green) 34%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--green) 7%, var(--panel-strong));
+}
+
+.guided-token-mark {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+}
+
+.guided-review-hero span strong,
+.guided-review-hero span small {
+  display: block;
+}
+
+.guided-review-hero span strong {
+  font-size: 13px;
+}
+
+.guided-review-hero span small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.guided-recipe-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.guided-recipe-list article {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 16px;
+  gap: 9px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-strong) 88%, transparent);
+}
+
+.guided-recipe-list article > i:first-child,
+.guided-recipe-list article > i:last-child {
+  color: var(--green);
+}
+
+.guided-recipe-list article > i:first-child {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--green) 9%, var(--panel));
+}
+
+.guided-recipe-list strong,
+.guided-recipe-list small {
+  display: block;
+}
+
+.guided-recipe-list strong {
+  font-size: 10px;
+}
+
+.guided-recipe-list small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.guided-technical-details {
+  margin-top: 10px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.guided-technical-details summary {
+  padding: 12px 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.guided-technical-details div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+  font-size: 9px;
+}
+
+.guided-technical-details div span {
+  color: var(--muted);
+}
+
+.guided-technical-details div strong,
+.guided-technical-details div code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 901px) {
+  body[data-experience-mode="guided"][data-launch-workspace="configure"] #view-launch .cockpit-heading,
+  body[data-experience-mode="guided"][data-launch-workspace="configure"] #view-launch .cockpit-board,
+  body[data-experience-mode="guided"][data-launch-workspace="configure"] #view-launch .launch-workspace-tabs {
+    display: none;
+  }
+
+  body[data-experience-mode="guided"][data-launch-workspace="configure"] #view-launch .surface-main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  body[data-experience-mode="guided"][data-launch-workspace="configure"] #view-launch .launch-workspace-viewport {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    padding: 0 18px 18px;
+    overflow: hidden auto;
+  }
+
+  body[data-experience-mode="guided"][data-launch-workspace="configure"] #view-launch .setup-dock {
+    min-height: 100%;
+    padding: 14px 0 24px;
+  }
+
+  body[data-experience-mode="guided"] #view-launch .cockpit-heading,
+  body[data-experience-mode="guided"] #view-launch .cockpit-board,
+  body[data-experience-mode="guided"] #view-launch .launch-workspace-tabs {
+    display: none;
+  }
+
+  body[data-experience-mode="guided"] #view-launch .surface-main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  body[data-experience-mode="guided"] #view-launch .launch-workspace-viewport {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    padding: 0 18px 18px;
+    overflow: hidden auto;
+  }
+}
+
+@media (max-width: 900px) {
+  .experience-row,
+  .guided-step-layout,
+  .guided-recipe-list {
+    grid-template-columns: 1fr;
+  }
+
+  .guided-welcome {
+    padding: 28px 18px 24px;
+  }
+
+  .guided-promise-row {
+    grid-template-columns: 1fr;
+  }
+
+  .guided-promise-row span {
+    grid-template-columns: 20px minmax(0, 1fr);
+    justify-items: start;
+    align-items: center;
+    text-align: left;
+  }
+
+  .guided-step-layout {
+    gap: 8px;
+  }
+
+  .guided-form-card {
+    grid-template-columns: 1fr;
+    padding: 15px;
+  }
+
+  .guided-wide {
+    grid-column: auto;
+  }
+
+  .guided-progress small {
+    font-size: 8px;
+  }
+
+  .guided-navigation {
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    margin-right: 0;
+    margin-left: 0;
+    padding: 12px 0;
+    background: var(--panel);
+  }
+
+  .guided-navigation button {
+    flex: 1 1 0;
+  }
+
+  .guided-run-phase-list,
+  .guided-proof-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .guided-proof-summary span {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .guided-proof-summary span:last-child {
+    border-bottom: 0;
+  }
+
+  .guided-run-actions {
+    flex-direction: column;
+  }
+}
+
 @media (max-width: 620px) {
   h1 {
     font-size: 21px;

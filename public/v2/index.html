@@ -53,7 +53,7 @@
 
     <main class="workspace">
       <section class="terminal-tape" aria-label="Trebuchet terminal status">
-        <span class="terminal-ident"><i aria-hidden="true"></i><strong>TBCHT // OPS</strong><small>V2.0</small></span>
+        <span class="terminal-ident"><i aria-hidden="true"></i><strong>TREBUCHET</strong></span>
         <span><small>CHAIN</small><strong>SOLANA</strong></span>
         <span><small>ENV</small><strong id="environmentLabel">RPC</strong></span>
         <span><small>SIGNER</small><strong>LOCAL</strong></span>
@@ -206,19 +206,29 @@
             <section class="setup-dock" data-launch-pane="configure" aria-label="Launch setup dock">
               <div class="setup-dock-head">
                 <span>
-                  <span class="eyebrow">Setup dock</span>
+                  <span class="eyebrow">Trebuchet first launch</span>
                   <strong id="setupSummary">MKT / 2 pools</strong>
                 </span>
-                <span class="setup-help">Guided launch keeps recovery checkpoints on.</span>
+                <span class="setup-help" id="setupHelp">Practice only · no SOL spent</span>
               </div>
-              <div class="mode-row" role="tablist" aria-label="Launch mode">
-                <button class="mode-button is-selected" type="button" data-mode="guarded" data-label="Guided launch">
-                  <strong>Guided launch</strong>
-                  <small>Recommended</small>
+              <div class="experience-row" role="tablist" aria-label="Launch experience">
+                <button class="experience-button is-selected" type="button" role="tab" aria-selected="true" data-action="select-experience" data-experience="guided">
+                  <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+                  <span><strong>Guided tutorial</strong><small>Practice, step by step</small></span>
                 </button>
-                <button class="mode-button" type="button" data-mode="operator" data-label="Advanced">
-                  <strong>Advanced</strong>
-                  <small>Manual controls</small>
+                <button class="experience-button" type="button" role="tab" aria-selected="false" data-action="select-experience" data-experience="advanced">
+                  <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+                  <span><strong>Advanced controls</strong><small>Leave the tutorial</small></span>
+                </button>
+              </div>
+
+              <section class="guided-launch-flow" id="guidedLaunchFlow" aria-live="polite"></section>
+
+              <div class="advanced-launch-controls" id="advancedLaunchControls">
+              <div class="mode-row" role="group" aria-label="Run target">
+                <button class="mode-button" type="button" data-mode="guarded" data-label="Guarded live run">
+                  <strong>Live run</strong>
+                  <small>Guarded execution</small>
                 </button>
                 <button class="mode-button" type="button" data-mode="dry-run" data-label="Practice run">
                   <strong>Practice run</strong>
@@ -386,7 +396,10 @@
                   </section>
                 </div>
               </details>
+              </div>
             </section>
+
+            <section class="guided-run-shell" id="guidedRunShell" data-launch-pane="fund execute verify recover" aria-live="polite"></section>
 
             <section class="classic-bridge" id="classicBridge" data-launch-pane="fund execute verify recover" aria-label="Classic parity bridge"></section>
 

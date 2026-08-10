@@ -10,15 +10,15 @@ resulting Fee Key NFTs, publishes or downloads a launch dossier, and sweeps the
 temporary launch wallet. The signer and launch journal stay on the operator's
 machine; core execution does not depend on a hosted Trebuchet backend.
 
-The desktop app opens the v2 terminal by default. The parchment interface is
-still available as **Classic** while v2 completes production field verification.
+The desktop app opens Trebuchet by default. The parchment interface remains
+available as **Classic** while Trebuchet completes production field verification.
 
 ## Release status
 
-The v2 application is a release candidate, not a published `v2.0.0` production
-release.
+The Trebuchet desktop application is a release candidate, not a published
+`v2.0.0` production release.
 
-- The v2 desktop shell, guarded execution bridge, recovery flows, proof export,
+- The Trebuchet desktop shell, guarded execution bridge, recovery flows, proof export,
   packaged runtime smoke, API-backed E2E, viewport checks, and Classic fallback
   are implemented and tested.
 - A `v2+` tag fails closed unless the repository contains a recent, non-demo
@@ -70,9 +70,10 @@ npm start
 Useful launch variants:
 
 ```bash
-npm run start:v2       # v2 terminal, also the desktop default
+npm start              # Trebuchet desktop
+npm run start:v2       # compatibility alias for the current Trebuchet shell
 npm run start:classic  # parchment Classic fallback
-npm run web            # local Express app; open /v2/ for the v2 shell
+npm run web            # local Express app; open /v2/ for the Trebuchet shell
 ```
 
 The Electron process starts an authenticated loopback Express server on a free
@@ -229,15 +230,15 @@ Common commands:
 | `npm run check:package` | Verify packaged runtime import coverage. |
 | `npm test` | Run the Node test suite. |
 | `npm run test:e2e` | Run the Classic Playwright flow. |
-| `npm run test:e2e:v2` | Run the API-backed v2 flow. |
+| `npm run test:e2e:v2` | Run the API-backed Trebuchet flow. |
 | `npm run test:e2e:devnet` | Run the secret-gated funded devnet transaction smoke. |
-| `npm run test:v2:viewport` | Verify desktop/mobile cockpit layout and proof contract. |
-| `npm run test:electron:v2` | Smoke the v2 Electron runtime. |
-| `npm run test:electron:v2:packaged` | Smoke a packaged v2 application. |
+| `npm run test:v2:viewport` | Verify the Trebuchet desktop/mobile cockpit and proof contract. |
+| `npm run test:electron:v2` | Smoke the Trebuchet Electron runtime. |
+| `npm run test:electron:v2:packaged` | Smoke a packaged Trebuchet application. |
 | `npm run test:visual` | Compare UI screenshots with visual goldens. |
 | `npm run test:visual:golden:linux` | Regenerate canonical Linux goldens in the pinned CI container. |
 | `npm run shots` | Regenerate the Classic reference walkthrough. |
-| `npm run shots:marketing` | Regenerate the current v2 website screenshots and social preview. |
+| `npm run shots:marketing` | Regenerate the current Trebuchet website screenshots and social preview. |
 | `npm run smoke:mainnet:readonly` | Run read-only mainnet compatibility probes. |
 | `npm run build:c` | Build the native Vanity CA helper. |
 | `npm run build:js` | Rebuild Classic `public/app.js` from `public/modules/`. |
@@ -252,9 +253,10 @@ Dependency and secret-handling constraints are documented in
 | Document | Audience |
 | --- | --- |
 | [PRD.md](PRD.md) | Product scope, requirements, and acceptance criteria. |
-| [DESIGN.md](DESIGN.md) | v2 terminal visual and interaction contract. |
+| [DESIGN.md](DESIGN.md) | Trebuchet visual and interaction contract. |
 | [ENG.md](ENG.md) | Runtime architecture, APIs, state, tests, and release engineering. |
-| [GAP_ANALYSIS.md](GAP_ANALYSIS.md) | Remaining gap from release candidate to production v2. |
+| [CLI_UX_GAP_ANALYSIS.md](CLI_UX_GAP_ANALYSIS.md) | Refactor plan for a stable CLI/core and independently evolving desktop UX. |
+| [GAP_ANALYSIS.md](GAP_ANALYSIS.md) | Remaining gap from release candidate to the production 2.0 release. |
 | [SECURITY.md](SECURITY.md) | Local security model and dependency risk snapshot. |
 | [docs/releasing.md](docs/releasing.md) | Tagging, signing, artifacts, and publishing. |
 | [release-evidence/v2/README.md](release-evidence/v2/README.md) | Authorized field-run and attestation procedure. |

@@ -1,16 +1,16 @@
-# Trebuchet v2 production gap
+# Trebuchet production gap
 
 Status date: 2026-08-08
 
 ## Executive summary
 
-The implementation gap from Classic to the v2 token-launch experience is
+The implementation gap from Classic to the current Trebuchet token-launch experience is
 largely closed. The remaining gap to a production `v2.0.0` is operational
 proof and release trust. Auto-release now enforces
 `TREBUCHET_MIN_RELEASE_MAJOR=2`, so the earlier v1-tag bypass is closed in
-automation while v2 is the desktop default.
+automation while Trebuchet is the desktop default.
 
-The current v2-default pull request may be mergeable as code, but it is not safe
+The current Trebuchet-default pull request may be mergeable as code, but it is not safe
 to merge and auto-publish until field evidence, independent review, signing
 inputs, and the residual dependency-risk decision are complete.
 
@@ -18,19 +18,19 @@ inputs, and the residual dependency-risk decision are complete.
 
 | Area | State | Evidence |
 | --- | --- | --- |
-| v2 desktop default | Complete | `main.js`, default/Classic tests |
-| Terminal design and responsive shell | Complete | v2 viewport and visual checks |
+| Trebuchet desktop default | Complete | `main.js`, default/Classic tests |
+| Terminal design and responsive shell | Complete | Trebuchet viewport and visual checks |
 | Managed wallet, Recovery PIN, recovery inventory | Complete | wallet/PIN/recovery tests |
 | Token/pool/airdrop/support configuration | Complete | plan/readiness and parity tests |
-| Oversized logo normalization | Complete | v2 logo tests and server upload validation |
+| Oversized logo normalization | Complete | Trebuchet logo tests and server upload validation |
 | Guarded Classic-backed execution | Complete in code | API E2E, unit, mutex, resume tests |
 | In-app typed sweep confirmation | Complete | prompt regression tests |
 | Mainnet mint inspection fallback | Complete | Discovery service tests and readonly smoke |
 | Report/dossier and final-sweep proof | Complete in code | proof staleness/binding tests |
 | Structured Classic comparison | Complete in code | JSON/HTML exact-evidence tests |
 | Independent production release gate | Complete | adversarial release-gate tests |
-| V2 minimum-major release invariant | Complete | `auto-release.yml`, auto-version tests |
-| Package/runtime smoke | Complete | Linux packaged v2 plus platform build jobs |
+| 2.0 minimum-major release invariant | Complete | `auto-release.yml`, auto-version tests |
+| Package/runtime smoke | Complete | Linux packaged Trebuchet app plus platform build jobs |
 | Classic fallback | Complete | explicit startup route and E2E |
 
 “Complete in code” is deliberately different from “field-proven on mainnet.”
@@ -76,7 +76,7 @@ Repository administrators must supply:
 - one complete Apple notarization method;
 - Windows signing identity (`WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD`).
 
-V2 cannot publish unsigned test artifacts.
+Trebuchet 2.0 cannot publish unsigned test artifacts.
 
 ### 4. Dependency advisory disposition
 
@@ -130,9 +130,9 @@ pass state alone is not acceptance.
 
 ## Exit criteria
 
-The v2 production gap is closed only when:
+The Trebuchet production gap is closed only when:
 
-- no v1 tag can ship the v2-default product;
+- no v1 tag can ship the Trebuchet-default product;
 - the exact field evidence and attestation are committed;
 - the production gate passes on the release commit;
 - all required platform credentials are present;
@@ -142,14 +142,14 @@ The v2 production gap is closed only when:
 
 Until then, the accurate state is:
 
-> v2 token-launch release candidate; code-complete for guarded launch parity,
+> Trebuchet token-launch release candidate; code-complete for guarded launch parity,
 > awaiting production field proof, independent review, and trust inputs.
 
-## Post-v2 work
+## Post-2.0 work
 
 These are improvements, not substitutes for the blockers above:
 
-- modularize the large v2 renderer and proof code;
+- modularize the large Trebuchet renderer and proof code;
 - add richer Discovery data providers;
 - track Fee Key portfolios;
 - add multi-launch operational views;

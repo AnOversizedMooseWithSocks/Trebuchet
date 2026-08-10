@@ -68,6 +68,10 @@ async function launchRouteSmoke({ classic = false } = {}) {
       await page.waitForFunction(() => (
         document.querySelector('#globalStrip')?.textContent?.includes('Local API connected')
       ), null, { timeout: 30_000 });
+      assert.equal(await page.getAttribute('body', 'data-experience-mode'), 'guided');
+      assert.equal(await page.isVisible('.sidebar'), false, 'Guided Mode should use the focused tutorial shell');
+      await page.click('[data-action="select-experience"][data-experience="advanced"]');
+      await page.waitForSelector('.sidebar', { state: 'visible' });
       await page.click('[data-view="wallet"]');
       await page.click('[data-action="import-wallet"]');
       await page.waitForSelector('#operatorPromptGate:not([hidden])');

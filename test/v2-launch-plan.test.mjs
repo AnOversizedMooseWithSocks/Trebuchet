@@ -226,6 +226,50 @@ test('removed collection configuration is ignored by the v2 launch contract', ()
   assert.equal(plan.operations.some((operation) => operation.id.includes('avatar')), false);
 });
 
+test('guided recipe identity is carried by the plan and bound to its fingerprint', () => {
+  const base = {
+    token: { name: 'First Token', symbol: 'FIRST', supply: '1000000000' },
+    launchSol: 3.5,
+    mode: 'dry-run',
+    vanity: { mode: 'random' },
+    poolTopology: {
+      targetMarketCapUsd: 100000,
+      pools: [{
+        id: 'sol-main',
+        quoteToken: 'SOL',
+        quoteSymbol: 'SOL',
+        supplyPercent: 100,
+        ammConfigIndex: 8,
+        distribution: [{ sharePercent: 100, recipient: VALID_SWEEP_DESTINATION }],
+        bootstrap: { mode: 'minimal' },
+        ladder: { mode: 'off' },
+        support: { mode: 'off' },
+      }],
+      preallocation: { enabled: false, supplyPercent: 0 },
+      airdrop: { enabled: false, recipientCount: 0, supplyPercent: 0 },
+      feeKeyRecipient: VALID_SWEEP_DESTINATION,
+      sweepDestination: VALID_SWEEP_DESTINATION,
+      report: { publish: true, download: true },
+    },
+  };
+  const guided = {
+    ...base,
+    experience: { mode: 'guided', recipeId: 'simple-sol-v1', version: 1 },
+  };
+  const advanced = {
+    ...base,
+    experience: { mode: 'advanced', recipeId: null, version: null },
+  };
+
+  assert.notEqual(launchPlanConfigFingerprint(guided), launchPlanConfigFingerprint(advanced));
+  const plan = buildV2LaunchPlan(guided, { demoMode: true });
+  assert.deepEqual(plan.experience, guided.experience);
+  assert.equal(plan.poolTopology.pools.length, 1);
+  assert.equal(plan.poolTopology.pools[0].supplyPercent, 100);
+  assert.equal(plan.poolTopology.pools[0].ladder.mode, 'off');
+  assert.equal(plan.poolTopology.pools[0].support.mode, 'off');
+});
+
 test('buildV2LaunchPlan rejects invalid launch config before staging', () => {
   assert.throws(
     () => buildV2LaunchPlan({ token: { name: '', symbol: 'TOK', supply: '1000' } }),
@@ -1976,7 +2020,7 @@ test('server v2 report publish requires a complete launch-config snapshot', () =
   });
   assert.equal(incomplete.state, 'incomplete');
   assert.equal(incomplete.complete, false);
-  assert.deepEqual([...incomplete.missing], ['v2 snapshot marker', 'token identity', 'token supply', 'planned pools']);
+  assert.deepEqual([...incomplete.missing], ['Trebuchet snapshot marker', 'token identity', 'token supply', 'planned pools']);
 
   const unmarkedShapeComplete = sandbox.v2LaunchDataConfigSnapshotState({
     launchConfig: {
@@ -1986,7 +2030,7 @@ test('server v2 report publish requires a complete launch-config snapshot', () =
   });
   assert.equal(unmarkedShapeComplete.state, 'incomplete');
   assert.equal(unmarkedShapeComplete.complete, false);
-  assert.deepEqual([...unmarkedShapeComplete.missing], ['v2 snapshot marker']);
+  assert.deepEqual([...unmarkedShapeComplete.missing], ['Trebuchet snapshot marker']);
 
   const complete = sandbox.v2LaunchDataConfigSnapshotState({
     launchConfig: {
@@ -2750,7 +2794,7 @@ test('server exposes the v2 launch-plan contract as an authenticated API route',
   assert.match(serverSource, /v2NormalizeAirdropForFingerprint\(proof\?\.airdrop \|\| \{\}\)/);
   assert.match(serverSource, /function v2LaunchDataConfigSnapshotState/);
   assert.match(serverSource, /function v2LaunchConfigSnapshotHasV2Envelope/);
-  assert.match(serverSource, /missing\.push\('v2 snapshot marker'\)/);
+  assert.match(serverSource, /missing\.push\('Trebuchet snapshot marker'\)/);
   assert.match(serverSource, /v2TrimmedText\(position\?\.transferredTo\) === v2TrimmedText\(position\?\.recipient\)/);
   assert.match(serverSource, /v2TrimmedText\(position\?\.transferredTo\) !== v2TrimmedText\(position\?\.recipient\)/);
   assert.match(serverSource, /journal Fee Key recipient delivery proof/);
