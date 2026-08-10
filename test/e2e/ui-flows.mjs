@@ -189,6 +189,7 @@ async function withPage(fn, size = 'desktop') {
       await p.addStyleTag({
         content: 'html,body{scroll-behavior:auto!important;overflow-anchor:none!important}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}',
       });
+      const stableLabel = shotLabel.replace(/-mobile$/, '');
       // Finish font/layout work before choosing the viewport. If fonts settle
       // after the reset, Chromium scroll anchoring can move the page back to
       // the active card and produce a second, equally valid-looking baseline.
@@ -205,17 +206,28 @@ async function withPage(fn, size = 'desktop') {
         // No application timer should be able to override the final test-only
         // placement once the flow has completed.
         Element.prototype.scrollIntoView = () => {};
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
 
         const placeViewport = () => {
+          const scroller = document.scrollingElement || document.documentElement;
           let top = 0;
           if (label.replace(/-mobile$/, '') === '06') {
             const element = document.querySelector('#step6-card');
             if (element) {
               const rect = element.getBoundingClientRect();
-              top = window.scrollY + rect.top - Math.max(0, (window.innerHeight - rect.height) / 2);
+              top = scroller.scrollTop + rect.top - Math.max(0, (window.innerHeight - rect.height) / 2);
             }
           }
-          window.scrollTo({ top: Math.max(0, top), left: 0, behavior: 'instant' });
+          scroller.scrollTo({ top: Math.max(0, top), left: 0, behavior: 'instant' });
+          // Chromium can temporarily expose body as the effective scroller
+          // while a modal is closing. Pin both aliases so focus restoration
+          // cannot bring an off-screen action button back into view.
+          if (label.replace(/-mobile$/, '') !== '06') {
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
+          }
         };
 
         placeViewport();
@@ -225,7 +237,7 @@ async function withPage(fn, size = 'desktop') {
         // Repeat after layout/paint so a queued scroll or anchor adjustment
         // cannot win between the first placement and the screenshot.
         placeViewport();
-      }, shotLabel);
+      }, stableLabel);
       await p.screenshot({ path: path.join(dest, shotLabel + '.png'), fullPage: false });
     }
     return true;
@@ -251,6 +263,15 @@ async function clickWhenReady(p, selector) {
     return button instanceof HTMLButtonElement && button.disabled === false;
   }, selector, { timeout: 30000 });
   await p.click(selector);
+}
+
+async function waitForCostPreview(p) {
+  await p.waitForFunction(() => {
+    const preview = document.querySelector('#costPreview');
+    const value = document.querySelector('#costPreviewValue');
+    return preview && !preview.classList.contains('hidden')
+      && value && value.textContent.includes('SOL');
+  }, undefined, { timeout: 15000 });
 }
 
 // Shared: generate wallet and advance to step 2
@@ -326,6 +347,7 @@ const flows = {
     async run(p) {
       await genWallet(p);
       await p.fill('#tokenName', 'MkToken'); await p.fill('#tokenSymbol', 'MKT');
+      await waitForCostPreview(p);
       await clickWhenReady(p, '#continueToFundingBtn'); await stepIs(p, 3);
       await fundDemoWallet(p);
       await p.locator('#continueToTokenBtn').scrollIntoViewIfNeeded();
@@ -341,6 +363,7 @@ const flows = {
     async run(p) {
       await genWallet(p);
       await p.fill('#tokenName', 'LPToken'); await p.fill('#tokenSymbol', 'LPT');
+      await waitForCostPreview(p);
       await clickWhenReady(p, '#continueToFundingBtn'); await stepIs(p, 3);
       await fundDemoWallet(p);
       await p.locator('#continueToTokenBtn').scrollIntoViewIfNeeded();
@@ -365,6 +388,7 @@ const flows = {
     async run(p) {
       await genWallet(p);
       await p.fill('#tokenName', 'XferTkn'); await p.fill('#tokenSymbol', 'XFR');
+      await waitForCostPreview(p);
       await clickWhenReady(p, '#continueToFundingBtn'); await stepIs(p, 3);
       await fundDemoWallet(p);
       await p.locator('#continueToTokenBtn').scrollIntoViewIfNeeded();
