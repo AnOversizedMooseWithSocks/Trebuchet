@@ -187,9 +187,23 @@ async function withPage(fn, size = 'desktop') {
     if (GOLDEN_MODE || SCREENSHOT_MODE) {
       const dest = GOLDEN_MODE ? SCREENSHOTS : tmpScreenshots;
       await p.addStyleTag({
-        content: '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}',
+        content: 'html{scroll-behavior:auto!important}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}',
       });
-      await p.evaluate(() => window.scrollTo(0, 0));
+      // Step activation and the old snapshot reset both used smooth scrolling,
+      // so the Transfer baseline depended on which animation won the race.
+      // Most flows intentionally prove the page chrome from the top; Transfer
+      // instead frames its active card so the screenshot actually verifies the
+      // destination, action, and final token summary.
+      if (shotLabel.replace(/-mobile$/, '') === '06') {
+        await p.locator('#step6-card').evaluate((element) => {
+          element.scrollIntoView({ behavior: 'auto', block: 'center' });
+        });
+      } else {
+        await p.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
+      }
+      await p.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
       await p.evaluate(async () => {
         if (document.fonts?.ready) await document.fonts.ready;
       });
