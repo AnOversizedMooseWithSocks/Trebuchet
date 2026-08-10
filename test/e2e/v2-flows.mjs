@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// API-backed v2 browser smoke.
+// API-backed Trebuchet browser smoke.
 //
 // Unlike the file:// viewport proof, this boots the real local Express app,
-// lets the v2 client establish its authenticated API session, creates a
+// lets the Trebuchet client establish its authenticated API session, creates a
 // Trebuchet-managed demo wallet, verifies the secure import dialog, and runs
 // the complete demo token/liquidity/sweep contract.
 
@@ -118,8 +118,12 @@ try {
     return response.json();
   });
   assert.equal(session.success, true);
-  assert.ok(session.token, 'v2 did not receive a local API session token');
+  assert.ok(session.token, 'Trebuchet did not receive a local API session token');
 
+  assert.equal(await page.getAttribute('body', 'data-experience-mode'), 'guided');
+  assert.equal(await page.isVisible('.sidebar'), false, 'Guided Mode should start as a focused tutorial');
+  await page.click('[data-action="select-experience"][data-experience="advanced"]');
+  await page.waitForSelector('.sidebar', { state: 'visible' });
   await page.click('[data-view="wallet"]');
   await page.waitForSelector('#view-wallet.is-active');
   await page.click('#newVaultButton');
@@ -138,26 +142,32 @@ try {
   assert.doesNotMatch(await page.locator('body').innerText(), new RegExp(sentinelSecret));
 
   await page.click('[data-view="launch"]');
-  await page.click('.launch-workspace-tab[data-launch-workspace="execute"]');
-  const runDemo = page.locator('[data-action="run-demo-launch"]');
-  await runDemo.waitFor({ state: 'visible', timeout: 20_000 });
-  assert.equal(await runDemo.isEnabled(), true, 'v2 demo action is disabled after wallet generation');
-  await runDemo.click();
+  await page.click('[data-action="select-experience"][data-experience="guided"]');
+  await page.click('[data-action="guided-next"]');
+  await page.fill('[data-guided-field="name"]', 'First Launch');
+  await page.fill('[data-guided-field="symbol"]', 'FIRST');
+  await page.click('[data-action="guided-next"]');
+  await page.click('[data-action="guided-use-practice-wallet"]');
+  await page.click('[data-action="guided-next"]');
+  await page.click('[data-action="guided-value-preset"][data-value="100000"]');
+  await page.click('[data-action="guided-next"]');
+  await page.click('[data-action="guided-practice"]');
   await page.waitForFunction(() => (
-    document.querySelector('#parityPanel')?.textContent?.includes('Demo run completed for')
+    document.querySelector('#guidedRunShell')?.textContent?.includes('Practice complete')
   ), null, { timeout: 60_000 });
 
-  const parityText = await page.locator('#parityPanel').innerText();
+  const guidedRunText = await page.locator('#guidedRunShell').innerText();
   const runText = await page.locator('#globalStrip').innerText();
-  assert.match(parityText, /Demo run completed for/);
+  assert.match(guidedRunText, /The complete launch recipe worked/);
+  assert.match(guidedRunText, /Review practice proof/);
   assert.match(runText, /Run\s+\d+\/\d+ done \/ 0 queued/);
-  assert.deepEqual(nativeDialogs, [], 'v2 opened a native prompt/confirm dialog');
-  assert.deepEqual(pageErrors, [], 'v2 emitted page errors');
-  assert.deepEqual(consoleErrors, [], 'v2 emitted console errors');
+  assert.deepEqual(nativeDialogs, [], 'Trebuchet opened a native prompt/confirm dialog');
+  assert.deepEqual(pageErrors, [], 'Trebuchet emitted page errors');
+  assert.deepEqual(consoleErrors, [], 'Trebuchet emitted console errors');
 
-  console.log('v2 API-backed E2E passed: session, wallet, secure dialog, full demo launch');
+  console.log('Trebuchet API-backed E2E passed: session, wallet, secure dialog, Guided practice launch');
 } catch (error) {
-  if (serverOutput) process.stderr.write(`\n--- v2 E2E server output ---\n${serverOutput}\n`);
+  if (serverOutput) process.stderr.write(`\n--- Trebuchet E2E server output ---\n${serverOutput}\n`);
   throw error;
 } finally {
   await browser?.close().catch(() => {});
