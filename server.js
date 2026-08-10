@@ -496,25 +496,29 @@ function _captureLog(level, args) {
   }
 }
 
-// Monkey-patch the global console. Save the originals so we can still
-// write to the real stdout/stderr (useful when running from a terminal
-// in dev mode). _captureLog is wrapped in try/catch so a capture failure
-// can't break the original log emission.
-const _origConsoleLog = console.log.bind(console);
-const _origConsoleWarn = console.warn.bind(console);
-const _origConsoleError = console.error.bind(console);
-console.log = (...args) => {
-  try { _captureLog('info', args); } catch (_) { /* ignore */ }
-  _origConsoleLog(...redactSensitiveLogArgs(args));
-};
-console.warn = (...args) => {
-  try { _captureLog('warn', args); } catch (_) { /* ignore */ }
-  _origConsoleWarn(...redactSensitiveLogArgs(args));
-};
-console.error = (...args) => {
-  try { _captureLog('error', args); } catch (_) { /* ignore */ }
-  _origConsoleError(...redactSensitiveLogArgs(args));
-};
+// Install capture only when the local API is constructed. Importing this
+// module must be safe for Core, CLI, and tests: it must not replace process
+// globals or bind a network port as a side effect.
+let _consoleCaptureInstalled = false;
+function installServerLogCapture() {
+  if (_consoleCaptureInstalled) return;
+  _consoleCaptureInstalled = true;
+  const originalLog = console.log.bind(console);
+  const originalWarn = console.warn.bind(console);
+  const originalError = console.error.bind(console);
+  console.log = (...args) => {
+    try { _captureLog('info', args); } catch (_) { /* ignore */ }
+    originalLog(...redactSensitiveLogArgs(args));
+  };
+  console.warn = (...args) => {
+    try { _captureLog('warn', args); } catch (_) { /* ignore */ }
+    originalWarn(...redactSensitiveLogArgs(args));
+  };
+  console.error = (...args) => {
+    try { _captureLog('error', args); } catch (_) { /* ignore */ }
+    originalError(...redactSensitiveLogArgs(args));
+  };
+}
 
 // __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -556,14 +560,14 @@ const __dirname = path.dirname(__filename);
  */
 const AUTOSWAP_CONCURRENCY = 1;
 
+export function createLocalApiApp() {
 const app = express();
-const PORT = process.env.PORT || 3000;
+installServerLogCapture();
 
 // Boot-time log: confirms which config values the server is actually
 // using on this launch. Streams to the in-app activity log via the
 // console-capture wiring above.
 console.log(`[boot] AUTOSWAP_CONCURRENCY = ${AUTOSWAP_CONCURRENCY}`);
-console.log(`[boot] PORT = ${PORT}`);
 console.log('[boot] RPC endpoint: configured via in-app RPC settings');
 
 // ---------------------------------------------------------------------------
@@ -8063,8 +8067,11 @@ app.post('/api/find-funder', async (req, res) => {
   }
 });
 
+return app;
+}
+
 // ---------------------------------------------------------------------------
-// Start server
+// Local API lifecycle
 // ---------------------------------------------------------------------------
 
 // Bind explicitly to 127.0.0.1 rather than all interfaces. Without the
@@ -8077,10 +8084,11 @@ app.post('/api/find-funder', async (req, res) => {
 // the two together. The bind kills network-reachable access; the
 // Host check kills the DNS-rebinding-through-the-user's-browser path
 // that survives a loopback bind.
-app.listen(PORT, '127.0.0.1', () => {
+function logLocalApiStartup(port) {
   const cfg = getRpcConfig();
   const active = cfg.saved.find((r) => r.url === cfg.active);
-  console.log(`Server running on http://127.0.0.1:${PORT}`);
+  console.log(`[boot] PORT = ${port}`);
+  console.log(`Server running on http://127.0.0.1:${port}`);
   console.log(`Active RPC: ${redactSensitiveText(active ? active.name : '(unnamed)')} — ${redactUrl(cfg.active)}`);
   console.log(`Saved RPCs: ${cfg.saved.length} (manage in the UI)`);
   console.log('\nIMPORTANT: For pool creation, use a dedicated RPC (Helius, Triton, QuickNode — free tier is plenty).');
@@ -8100,4 +8108,76 @@ app.listen(PORT, '127.0.0.1', () => {
       console.log('  End-user release builds include this binary; this only affects dev environments.\n');
     }
   });
-});
+}
+
+export function createLocalApiServer({
+  application = null,
+  host = '127.0.0.1',
+  port = Number(process.env.PORT || 3000),
+  onStarted = logLocalApiStartup,
+} = {}) {
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new TypeError('Local API port must be an integer from 0 to 65535');
+  }
+  if (host !== '127.0.0.1') {
+    throw new TypeError('Trebuchet Local API must bind to 127.0.0.1');
+  }
+  const localApplication = application || createLocalApiApp();
+  if (typeof localApplication.listen !== 'function') {
+    throw new TypeError('Local API application must provide listen(port, host, callback)');
+  }
+  if (typeof onStarted !== 'function') {
+    throw new TypeError('Local API onStarted hook must be a function');
+  }
+
+  let httpServer = null;
+  let startPromise = null;
+
+  return Object.freeze({
+    application: localApplication,
+    get server() {
+      return httpServer;
+    },
+    get address() {
+      const bound = httpServer?.address();
+      if (!bound || typeof bound === 'string') return null;
+      return { host, port: bound.port, url: `http://${host}:${bound.port}` };
+    },
+    async start() {
+      if (httpServer?.listening) return this.address;
+      if (startPromise) return startPromise;
+      startPromise = new Promise((resolve, reject) => {
+        const candidate = localApplication.listen(port, host, () => {
+          httpServer = candidate;
+          const address = this.address;
+          onStarted(address.port);
+          resolve(address);
+        });
+        candidate.once('error', (error) => {
+          if (httpServer === candidate) httpServer = null;
+          startPromise = null;
+          reject(error);
+        });
+        httpServer = candidate;
+      });
+      return startPromise;
+    },
+    async stop() {
+      const current = httpServer;
+      if (!current) return;
+      startPromise = null;
+      httpServer = null;
+      await new Promise((resolve, reject) => {
+        current.close((error) => error ? reject(error) : resolve());
+      });
+    },
+  });
+}
+
+const isDirectRun = process.argv[1]
+  && path.resolve(process.argv[1]) === path.resolve(__filename);
+
+if (isDirectRun) {
+  const localApi = createLocalApiServer();
+  await localApi.start();
+}

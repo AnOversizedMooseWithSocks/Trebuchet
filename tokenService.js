@@ -40,6 +40,7 @@ import {
   uploadTokenMetadata,
 } from './metadataUploadService.js';
 import { landTxWithRetry } from './chainRetry.js';
+import { redactUrl } from './logRedaction.js';
 
 // The RPC URL is sourced from rpcConfig.js, which seeds itself with a
 // public-mainnet default on first run and persists user-selected RPCs to
@@ -47,7 +48,7 @@ import { landTxWithRetry } from './chainRetry.js';
 // in the UI — server.js calls refreshConnection() after a successful change.
 function makeConnection() {
   const url = getRpcUrl();
-  console.log('Using RPC endpoint:', url);
+  console.log('Using RPC endpoint:', redactUrl(url));
   return new Connection(url, {
     commitment: 'confirmed',
     confirmTransactionInitialTimeout: 60000,

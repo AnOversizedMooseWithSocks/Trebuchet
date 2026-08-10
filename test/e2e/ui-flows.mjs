@@ -94,7 +94,9 @@ swapService.setTradeApiForTests({
 let SERVER = null;
 const _o = console.log;
 console.log = (...a) => { _o(...a); const m = a.join(' ').match(/Server running on (http:\/\/127\.0\.0\.1:\d+)/); if (m) SERVER = m[1]; };
-await import('../../server.js');
+const { createLocalApiServer } = await import('../../server.js');
+const localApiServer = createLocalApiServer({ port: Number(process.env.PORT) });
+await localApiServer.start();
 for (let i = 0; i < 50 && !SERVER; i++) await new Promise(r => setTimeout(r, 100));
 console.log = _o;
 if (!SERVER) { console.error('Server did not start'); process.exit(1); }

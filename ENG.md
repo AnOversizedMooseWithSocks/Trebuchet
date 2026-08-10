@@ -17,7 +17,7 @@ The central engineering rule is:
 Electron main process
   ├─ selects a free 127.0.0.1 port
   ├─ configures Electron safeStorage and user-data paths
-  ├─ starts server.js in-process
+  ├─ constructs and starts the Local API explicitly
   └─ opens /v2/ by default (or / for Classic)
 
 Loopback Express service
@@ -56,7 +56,8 @@ links are opened by `main.js` only after URL parsing and an HTTPS-scheme check.
 
 - `main.js` — Electron lifecycle, local server boot, menus, safeStorage wiring,
   update checks, and external-link policy.
-- `server.js` — HTTP API, orchestration boundary, progress, launch/recovery
+- `server.js` — constructible HTTP adapter, orchestration boundary, progress,
+  launch/recovery
   handlers, and report integration.
 - `serverMiddleware.js` — Host defense, CSP/security headers, API session, logo
   upload limits, and packaged public-directory resolution.
