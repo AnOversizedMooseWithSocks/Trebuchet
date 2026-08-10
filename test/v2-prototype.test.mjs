@@ -1979,11 +1979,17 @@ test('v2 is the Electron default with an explicit tested Classic fallback', () =
   assert.match(v2ElectronSmokeJs, /const expectedPath = classic \? '\/' : '\/v2\/'/);
 });
 
-test('v2 Discovery is a live, locally persisted evidence registry without social mechanics', () => {
+test('v2 Discovery combines a personal wallet graph with live evidence and no social mechanics', () => {
   const combined = `${html}\n${css}\n${js}`;
 
-  assert.match(combined, /Market \+ chain evidence/);
-  assert.match(combined, /Token explorer/);
+  assert.match(combined, /Your wallets → on-chain network/);
+  assert.match(combined, /Personal discovery/);
+  assert.match(combined, /Wallets you know/);
+  assert.match(combined, /Scan holder network/);
+  assert.match(combined, /Network discoveries/);
+  assert.match(combined, /networkScore/);
+  assert.match(combined, /data-action="inspect-personal-token"/);
+  assert.match(combined, /data-action="toggle-discovery-wallet"/);
   assert.match(combined, /inspectDiscoveryToken/);
   assert.match(combined, /Solana RPC chain facts/);
   assert.match(combined, /GeckoTerminal market history/);
@@ -6451,11 +6457,11 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=66/);
+  assert.match(html, /styles\.css\?v=67/);
   assert.match(html, /runtime-state\.js\?v=1/);
-  assert.match(html, /api-client\.js\?v=35/);
-  assert.match(html, /app\.js\?v=155/);
-  assert.doesNotMatch(html, /app\.js\?v=155" type="module"/);
+  assert.match(html, /api-client\.js\?v=36/);
+  assert.match(html, /app\.js\?v=156/);
+  assert.doesNotMatch(html, /app\.js\?v=156" type="module"/);
   assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
@@ -10392,6 +10398,22 @@ test('v2 API client bootstraps local session and read-only app state', async () 
         },
       },
     },
+    '/api/v2/discovery/personal': {
+      success: true,
+      wallets: [{
+        publicKey: 'Discover1111222233334444555566667777888',
+        label: 'Tracked wallet',
+        source: 'watch-only',
+        enabled: true,
+      }],
+      snapshot: {
+        schema: 'trebuchet-personal-discovery/v1',
+        completedAt: '2026-06-30T00:00:00.000Z',
+        knownTokens: [{ mint: 'Known111', symbol: 'KNOWN' }],
+        candidates: [{ mint: 'Found111', symbol: 'FOUND', networkScore: 72 }],
+      },
+      job: { status: 'complete' },
+    },
   };
   const api = loadApiClient();
   const client = api.createV2ApiClient({
@@ -10430,6 +10452,9 @@ test('v2 API client bootstraps local session and read-only app state', async () 
   assert.equal(boot.vanity.candidates[0].publicKey, 'Vanity11112222333344445555666677778888');
   assert.equal(boot.feeTiers.available, true);
   assert.equal(boot.feeTiers.tiers[0].tickSpacing, 120);
+  assert.equal(boot.discovery.available, true);
+  assert.equal(boot.discovery.wallets[0].label, 'Tracked wallet');
+  assert.equal(boot.discovery.snapshot.candidates[0].networkScore, 72);
   assert.equal(boot.viewportSmoke.passed, true);
   assert.equal(boot.viewportSmoke.artifactVersion, 1);
   assert.equal(boot.viewportSmoke.kind, 'trebuchet-v2-viewport-smoke');
@@ -10628,6 +10653,47 @@ test('v2 API client inspects discovery mints through the authenticated local API
   const record = await client.inspectDiscoveryToken(mint);
   assert.equal(record.symbol, 'USDC');
   assert.equal(calls.filter((call) => call.url === '/api/v2/discovery/inspect').length, 1);
+});
+
+test('v2 API client manages personal Discovery wallets and background scans', async () => {
+  const calls = [];
+  const publicKey = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const api = loadApiClient();
+  const client = api.createV2ApiClient({
+    locationLike: { protocol: 'http:' },
+    timeoutMs: 0,
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url, init });
+      if (url === '/api/session') return jsonResponse({ success: true, token: 'personal-discovery-token' });
+      if (url === '/api/v2/discovery/personal') {
+        return jsonResponse({ success: true, wallets: [], snapshot: null, job: { status: 'idle' } });
+      }
+      if (url === '/api/v2/discovery/wallets' && init.method === 'POST') {
+        assert.deepEqual(JSON.parse(init.body), { publicKey, label: 'Treasury' });
+        return jsonResponse({ success: true, wallets: [{ publicKey, label: 'Treasury', enabled: true }] });
+      }
+      if (url.endsWith('/enabled')) {
+        assert.deepEqual(JSON.parse(init.body), { enabled: false });
+        return jsonResponse({ success: true, wallets: [{ publicKey, label: 'Treasury', enabled: false }] });
+      }
+      if (url === '/api/v2/discovery/scan') {
+        assert.equal(init.method, 'POST');
+        return jsonResponse({ success: true, wallets: [{ publicKey }], job: { status: 'running' } }, 202);
+      }
+      if (url === `/api/v2/discovery/wallets/${publicKey}` && init.method === 'DELETE') {
+        return jsonResponse({ success: true, wallets: [] });
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    },
+  });
+
+  assert.equal((await client.getPersonalDiscovery()).job.status, 'idle');
+  assert.equal((await client.addDiscoveryWallet({ publicKey, label: 'Treasury' })).wallets.length, 1);
+  assert.equal((await client.setDiscoveryWalletEnabled(publicKey, false)).wallets[0].enabled, false);
+  assert.equal((await client.scanPersonalDiscovery()).job.status, 'running');
+  assert.deepEqual((await client.removeDiscoveryWallet(publicKey)).wallets, []);
+  assert.equal(calls.filter((call) => call.url === '/api/session').length, 1);
+  assert.ok(calls.slice(1).every((call) => call.init.headers['x-trebuchet-session'] === 'personal-discovery-token'));
 });
 
 test('v2 API client manages Trebuchet local wallets and run envelopes', async () => {

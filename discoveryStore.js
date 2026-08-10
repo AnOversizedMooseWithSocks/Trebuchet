@@ -1,0 +1,185 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const STORE_VERSION = 1;
+const MAX_TRACKED_WALLETS = 25;
+const MAX_LABEL_LENGTH = 48;
+
+function configDir() {
+  return process.env.TREBUCHET_CONFIG_DIR || __dirname;
+}
+
+function storeFile() {
+  return path.join(configDir(), 'personalDiscovery.json');
+}
+
+function emptyStore() {
+  return {
+    version: STORE_VERSION,
+    wallets: [],
+    snapshot: null,
+  };
+}
+
+function normalizeLabel(label, fallback = 'Tracked wallet') {
+  const value = String(label || '').trim().replace(/\s+/g, ' ');
+  return (value || fallback).slice(0, MAX_LABEL_LENGTH);
+}
+
+function normalizeWallet(wallet = {}) {
+  const publicKey = String(wallet.publicKey || '').trim();
+  if (!publicKey) return null;
+  const createdAt = Number.isFinite(Date.parse(wallet.createdAt))
+    ? new Date(wallet.createdAt).toISOString()
+    : new Date().toISOString();
+  const updatedAt = Number.isFinite(Date.parse(wallet.updatedAt))
+    ? new Date(wallet.updatedAt).toISOString()
+    : createdAt;
+  return {
+    publicKey,
+    label: normalizeLabel(wallet.label),
+    source: wallet.source === 'managed' ? 'managed' : 'watch-only',
+    enabled: wallet.enabled !== false,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function normalizeSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const completedAt = Date.parse(snapshot.completedAt || '');
+  if (!Number.isFinite(completedAt)) return null;
+  return {
+    ...snapshot,
+    completedAt: new Date(completedAt).toISOString(),
+    knownTokens: Array.isArray(snapshot.knownTokens) ? snapshot.knownTokens.slice(0, 100) : [],
+    candidates: Array.isArray(snapshot.candidates) ? snapshot.candidates.slice(0, 10) : [],
+    warnings: Array.isArray(snapshot.warnings) ? snapshot.warnings.slice(0, 50).map(String) : [],
+  };
+}
+
+function load() {
+  try {
+    if (!fs.existsSync(storeFile())) return emptyStore();
+    const parsed = JSON.parse(fs.readFileSync(storeFile(), 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return emptyStore();
+    return {
+      version: STORE_VERSION,
+      wallets: Array.isArray(parsed.wallets)
+        ? parsed.wallets.map(normalizeWallet).filter(Boolean).slice(0, MAX_TRACKED_WALLETS)
+        : [],
+      snapshot: normalizeSnapshot(parsed.snapshot),
+    };
+  } catch (error) {
+    console.warn('discoveryStore: failed to read, using an empty personal graph:', error.message);
+    return emptyStore();
+  }
+}
+
+function persist(store) {
+  fs.mkdirSync(configDir(), { recursive: true });
+  const target = storeFile();
+  const temporary = `${target}.tmp`;
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(temporary, target);
+  } catch (error) {
+    try {
+      if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+    } catch {
+      // Preserve the original write failure.
+    }
+    const wrapped = new Error('Trebuchet could not save personal Discovery data.');
+    wrapped.code = 'DISCOVERY_PERSIST_FAILED';
+    wrapped.statusCode = 500;
+    wrapped.cause = error;
+    throw wrapped;
+  }
+}
+
+export function listWallets() {
+  return load().wallets.map((wallet) => ({ ...wallet }));
+}
+
+export function upsertWallet(publicKey, options = {}) {
+  const address = String(publicKey || '').trim();
+  if (!address) throw new Error('Tracked wallet public key is required.');
+  const store = load();
+  const now = new Date().toISOString();
+  const existing = store.wallets.find((wallet) => wallet.publicKey === address);
+  if (existing) {
+    const nextLabel = normalizeLabel(options.label, existing.label);
+    const nextSource = options.source === 'managed' ? 'managed' : existing.source;
+    const nextEnabled = typeof options.enabled === 'boolean' ? options.enabled : existing.enabled;
+    const changed = existing.label !== nextLabel
+      || existing.source !== nextSource
+      || existing.enabled !== nextEnabled;
+    if (!changed) return { ...existing };
+    existing.label = nextLabel;
+    existing.source = nextSource;
+    existing.enabled = nextEnabled;
+    existing.updatedAt = now;
+    store.snapshot = null;
+    persist(store);
+    return { ...existing };
+  }
+  if (store.wallets.length >= MAX_TRACKED_WALLETS) {
+    const error = new Error(`Personal Discovery supports up to ${MAX_TRACKED_WALLETS} tracked wallets.`);
+    error.code = 'DISCOVERY_WALLET_LIMIT';
+    error.statusCode = 409;
+    throw error;
+  }
+  const wallet = normalizeWallet({
+    publicKey: address,
+    label: options.label,
+    source: options.source,
+    enabled: options.enabled,
+    createdAt: now,
+    updatedAt: now,
+  });
+  store.wallets.push(wallet);
+  store.snapshot = null;
+  persist(store);
+  return { ...wallet };
+}
+
+export function setWalletEnabled(publicKey, enabled) {
+  const store = load();
+  const wallet = store.wallets.find((entry) => entry.publicKey === publicKey);
+  if (!wallet) return null;
+  if (wallet.enabled === (enabled === true)) return { ...wallet };
+  wallet.enabled = enabled === true;
+  wallet.updatedAt = new Date().toISOString();
+  store.snapshot = null;
+  persist(store);
+  return { ...wallet };
+}
+
+export function removeWallet(publicKey) {
+  const store = load();
+  const nextWallets = store.wallets.filter((wallet) => wallet.publicKey !== publicKey);
+  if (nextWallets.length === store.wallets.length) return false;
+  store.wallets = nextWallets;
+  store.snapshot = null;
+  persist(store);
+  return true;
+}
+
+export function getSnapshot() {
+  return normalizeSnapshot(load().snapshot);
+}
+
+export function saveSnapshot(snapshot) {
+  const store = load();
+  store.snapshot = normalizeSnapshot(snapshot);
+  if (!store.snapshot) throw new Error('Personal Discovery snapshot is invalid.');
+  persist(store);
+  return store.snapshot;
+}
+
+export const PERSONAL_DISCOVERY_STORE_VERSION = STORE_VERSION;
+export const PERSONAL_DISCOVERY_MAX_WALLETS = MAX_TRACKED_WALLETS;

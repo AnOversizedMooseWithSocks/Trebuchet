@@ -1,0 +1,158 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Keypair, PublicKey } from '@solana/web3.js';
+import { AccountLayout, TOKEN_PROGRAM_ID } from '@solana/spl-token';
+
+import {
+  normalizePortfolioResponses,
+  resolveLargestAccountOwners,
+  scanPersonalDiscovery,
+} from '../personalDiscoveryService.js';
+
+function parsedTokenAccount(mint, amount, decimals = 6) {
+  const divisor = 10 ** decimals;
+  return {
+    account: {
+      data: {
+        parsed: {
+          info: {
+            mint,
+            tokenAmount: {
+              amount: String(amount),
+              decimals,
+              uiAmount: Number(amount) / divisor,
+              uiAmountString: String(Number(amount) / divisor),
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+function tokenAccountInfo(owner) {
+  const data = Buffer.alloc(AccountLayout.span);
+  owner.toBuffer().copy(data, 32);
+  return { data, executable: false, owner: TOKEN_PROGRAM_ID };
+}
+
+test('personal Discovery aggregates fungible balances and removes NFT-like receipts', () => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  const nft = Keypair.generate().publicKey.toBase58();
+  const holdings = normalizePortfolioResponses([
+    { value: [parsedTokenAccount(mint, 1_500_000), parsedTokenAccount(nft, 1, 0)] },
+    { value: [parsedTokenAccount(mint, 500_000)] },
+  ]);
+
+  assert.deepEqual(holdings, [{
+    mint,
+    amountRaw: '2000000',
+    amountUi: 2,
+    decimals: 6,
+  }]);
+});
+
+test('personal Discovery resolves token-account addresses to their owners', () => {
+  const tokenAccount = Keypair.generate().publicKey;
+  const owner = Keypair.generate().publicKey;
+  const rows = resolveLargestAccountOwners(
+    [{ address: tokenAccount, amount: '420' }],
+    [tokenAccountInfo(owner)],
+  );
+
+  assert.deepEqual(rows, [{
+    tokenAccount: tokenAccount.toBase58(),
+    owner: owner.toBase58(),
+    amountRaw: '420',
+  }]);
+});
+
+test('personal Discovery builds a bounded one-hop graph with explainable paths', async () => {
+  const tracked = Keypair.generate().publicKey;
+  const seed = Keypair.generate().publicKey;
+  const holder = Keypair.generate().publicKey;
+  const holderTokenAccount = Keypair.generate().publicKey;
+  const candidateA = Keypair.generate().publicKey;
+  const candidateB = Keypair.generate().publicKey;
+  const knownOutsideSummary = Keypair.generate().publicKey;
+  const portfolios = new Map([
+    [tracked.toBase58(), [
+      parsedTokenAccount(seed.toBase58(), 5_000_000),
+      parsedTokenAccount(knownOutsideSummary.toBase58(), 1_000_000),
+    ]],
+    [holder.toBase58(), [
+      parsedTokenAccount(candidateA.toBase58(), 900_000_000),
+      parsedTokenAccount(candidateB.toBase58(), 100_000_000),
+      parsedTokenAccount(knownOutsideSummary.toBase58(), 800_000_000),
+      parsedTokenAccount(seed.toBase58(), 10_000),
+    ]],
+  ]);
+  let multipleAccountCall = 0;
+  const connection = {
+    getParsedTokenAccountsByOwner: async (owner, filter) => ({
+      value: filter.programId.equals(TOKEN_PROGRAM_ID)
+        ? portfolios.get(owner.toBase58()) || []
+        : [],
+    }),
+    getTokenLargestAccounts: async (mint) => {
+      assert.equal(mint.toBase58(), seed.toBase58());
+      return { value: [{ address: holderTokenAccount, amount: '5000000' }] };
+    },
+    getMultipleAccountsInfo: async (addresses) => {
+      multipleAccountCall += 1;
+      if (multipleAccountCall === 1) {
+        assert.equal(addresses[0].toBase58(), holderTokenAccount.toBase58());
+        return [tokenAccountInfo(holder)];
+      }
+      assert.equal(addresses[0].toBase58(), holder.toBase58());
+      return [null];
+    },
+  };
+  const phases = [];
+  const snapshot = await scanPersonalDiscovery({
+    connection,
+    wallets: [{ publicKey: tracked.toBase58(), label: 'My wallet', enabled: true }],
+    limits: { maxKnownTokens: 1, maxSeeds: 1, maxHoldersPerSeed: 1, maxPortfolioTokens: 10 },
+    enrichToken: async (mint) => ({ symbol: mint === seed.toBase58() ? 'SEED' : 'FOUND' }),
+    onProgress: (progress) => phases.push(progress.phase),
+    now: () => new Date('2026-08-09T12:00:00.000Z'),
+  });
+
+  assert.equal(snapshot.schema, 'trebuchet-personal-discovery/v1');
+  assert.equal(snapshot.knownTokens.length, 1);
+  assert.equal(snapshot.knownTokens[0].symbol, 'SEED');
+  assert.equal(snapshot.candidates.length, 2);
+  assert.equal(snapshot.candidates.some((token) => token.mint === knownOutsideSummary.toBase58()), false);
+  assert.equal(snapshot.candidates[0].mint, candidateA.toBase58());
+  assert.equal(snapshot.candidates[0].holderCount, 1);
+  assert.equal(snapshot.candidates[0].seedCount, 1);
+  assert.equal(snapshot.candidates[0].paths[0].seedMint, seed.toBase58());
+  assert.equal(snapshot.candidates[0].paths[0].holder, holder.toBase58());
+  assert.ok(snapshot.candidates[0].networkScore > 0);
+  assert.equal(snapshot.coverage.confidence, 'High');
+  assert.ok(phases.includes('known-wallets'));
+  assert.ok(phases.includes('holder-network'));
+  assert.ok(phases.includes('candidate-details'));
+});
+
+test('personal Discovery skips executable program addresses used as wallet seeds', async () => {
+  const program = Keypair.generate().publicKey;
+  let portfolioCalls = 0;
+  const connection = {
+    getAccountInfo: async () => ({ executable: true, owner: PublicKey.default }),
+    getParsedTokenAccountsByOwner: async () => {
+      portfolioCalls += 1;
+      return { value: [] };
+    },
+  };
+  const snapshot = await scanPersonalDiscovery({
+    connection,
+    wallets: [{ publicKey: program.toBase58(), label: 'Not a wallet', enabled: true }],
+    now: () => new Date('2026-08-09T12:00:00.000Z'),
+  });
+
+  assert.equal(portfolioCalls, 0);
+  assert.equal(snapshot.knownTokens.length, 0);
+  assert.equal(snapshot.candidates.length, 0);
+  assert.match(snapshot.warnings[0], /not an ordinary wallet address/i);
+});

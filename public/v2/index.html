@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TREBUCHET · makesometokens</title>
   <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="./styles.css?v=66">
+  <link rel="stylesheet" href="./styles.css?v=67">
 </head>
 <body>
   <div class="app-shell">
@@ -495,10 +495,39 @@
           <section class="surface surface-main">
             <div class="section-heading">
               <div>
-                <span class="eyebrow">Market + chain evidence</span>
-                <h2>Token explorer</h2>
+                <span class="eyebrow">Your wallets → on-chain network</span>
+                <h2>Personal discovery</h2>
               </div>
               <span class="badge" id="discoveryRegistryCount">0 saved</span>
+            </div>
+            <section class="personal-discovery-panel" aria-labelledby="personalDiscoveryTitle">
+              <div class="personal-discovery-head">
+                <span>
+                  <small>Private seed set</small>
+                  <strong id="personalDiscoveryTitle">Wallets you know</strong>
+                </span>
+                <button class="primary-button compact" id="personalDiscoveryScanButton" type="button" data-action="scan-personal-discovery">
+                  <i class="fa-solid fa-diagram-project"></i>
+                  <span>Scan holder network</span>
+                </button>
+              </div>
+              <p class="personal-discovery-explainer">Trebuchet reads tokens held by wallets you add, follows qualifying holders one hop, and ranks their other meaningful holdings. The graph stays on this machine.</p>
+              <form class="discovery-wallet-form" id="discoveryWalletForm">
+                <label class="visually-hidden" for="discoveryWalletInput">Wallet address</label>
+                <input id="discoveryWalletInput" name="publicKey" type="text" placeholder="Add a wallet address" autocomplete="off" spellcheck="false">
+                <label class="visually-hidden" for="discoveryWalletLabelInput">Wallet label</label>
+                <input id="discoveryWalletLabelInput" name="label" type="text" maxlength="48" placeholder="Label (optional)" autocomplete="off">
+                <button class="secondary-button compact" id="discoveryWalletAddButton" type="submit">
+                  <i class="fa-solid fa-plus"></i><span>Track</span>
+                </button>
+              </form>
+              <div class="discovery-wallets" id="discoveryWallets"></div>
+              <div class="personal-discovery-status" id="personalDiscoveryStatus" aria-live="polite"></div>
+              <div class="personal-token-network" id="personalTokenNetwork"></div>
+            </section>
+            <div class="detail-section-label discovery-manual-label">
+              <span>Inspect any token</span>
+              <small>Manual evidence registry</small>
             </div>
             <form class="discovery-inspect-bar" id="discoveryInspectForm">
               <label class="visually-hidden" for="discoveryMintInput">Token mint</label>
@@ -657,7 +686,7 @@
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
   <script src="./runtime-state.js?v=1"></script>
-  <script src="./api-client.js?v=35"></script>
-  <script src="./app.js?v=155"></script>
+  <script src="./api-client.js?v=36"></script>
+  <script src="./app.js?v=156"></script>
 </body>
 </html>

@@ -295,9 +295,15 @@ const state = {
   selectedDiscoveryId: null,
   discovery: {
     records: [],
+    wallets: [],
+    snapshot: null,
+    job: { status: 'idle' },
     query: '',
     filter: 'all',
     inspecting: false,
+    walletBusy: false,
+    scanning: false,
+    personalError: null,
     error: null,
     lastInspectedMint: null,
   },
@@ -1249,6 +1255,148 @@ async function inspectDiscoveryMint(mint = $('#discoveryMintInput')?.value) {
     state.discovery.error = error.message || 'Token inspection failed.';
   } finally {
     state.discovery.inspecting = false;
+    renderDiscovery();
+  }
+}
+
+let personalDiscoveryPollTimer = null;
+
+function applyPersonalDiscoveryState(payload = {}) {
+  state.discovery.wallets = Array.isArray(payload.wallets) ? payload.wallets : [];
+  state.discovery.snapshot = payload.snapshot && typeof payload.snapshot === 'object'
+    ? payload.snapshot
+    : null;
+  state.discovery.job = payload.job && typeof payload.job === 'object'
+    ? payload.job
+    : { status: 'idle' };
+  state.discovery.scanning = state.discovery.job.status === 'running';
+  state.discovery.personalError = state.discovery.job.status === 'failed'
+    ? state.discovery.job.error || 'Personal Discovery scan failed.'
+    : payload.error || null;
+}
+
+function personalDiscoveryProgressLabel() {
+  const job = state.discovery.job || {};
+  if (job.status === 'failed') return job.error || 'Scan failed.';
+  if (job.status !== 'running') return null;
+  const progress = job.progress || {};
+  const phaseLabels = {
+    starting: 'Preparing wallet graph',
+    'known-wallets': 'Reading your known tokens',
+    'holder-network': 'Following qualifying holders',
+    'known-details': 'Resolving known token details',
+    'candidate-details': 'Scoring discoveries',
+    complete: 'Scan complete',
+  };
+  const label = phaseLabels[progress.phase] || 'Scanning personal token network';
+  const count = Number(progress.total) > 0
+    ? ` · ${Math.min(Number(progress.current) || 0, Number(progress.total))}/${Number(progress.total)}`
+    : '';
+  return `${label}${count}`;
+}
+
+async function refreshPersonalDiscovery({ poll = false } = {}) {
+  if (state.apiStatus !== 'connected' || !state.apiClient?.getPersonalDiscovery) return;
+  try {
+    const payload = await state.apiClient.getPersonalDiscovery();
+    applyPersonalDiscoveryState(payload);
+  } catch (error) {
+    state.discovery.personalError = error.message || 'Personal Discovery state could not be refreshed.';
+    state.discovery.scanning = false;
+  }
+  renderDiscovery();
+  if (poll && state.discovery.scanning) schedulePersonalDiscoveryPoll();
+}
+
+function schedulePersonalDiscoveryPoll() {
+  if (personalDiscoveryPollTimer) window.clearTimeout(personalDiscoveryPollTimer);
+  personalDiscoveryPollTimer = window.setTimeout(() => {
+    personalDiscoveryPollTimer = null;
+    refreshPersonalDiscovery({ poll: true });
+  }, 1000);
+}
+
+async function addTrackedDiscoveryWallet() {
+  const publicKey = String($('#discoveryWalletInput')?.value || '').trim();
+  const label = String($('#discoveryWalletLabelInput')?.value || '').trim();
+  if (!isProbablySolanaAddress(publicKey)) {
+    state.discovery.personalError = 'Enter a valid Solana wallet address.';
+    renderDiscovery();
+    return;
+  }
+  if (state.apiStatus !== 'connected' || !state.apiClient?.addDiscoveryWallet) {
+    state.discovery.personalError = 'Wallet tracking requires the local Trebuchet app.';
+    renderDiscovery();
+    return;
+  }
+  state.discovery.walletBusy = true;
+  state.discovery.personalError = null;
+  renderDiscovery();
+  try {
+    const payload = await state.apiClient.addDiscoveryWallet({ publicKey, label });
+    applyPersonalDiscoveryState(payload);
+    if ($('#discoveryWalletInput')) $('#discoveryWalletInput').value = '';
+    if ($('#discoveryWalletLabelInput')) $('#discoveryWalletLabelInput').value = '';
+    notify('Wallet added to personal Discovery');
+  } catch (error) {
+    state.discovery.personalError = error.message || 'Wallet could not be added.';
+  } finally {
+    state.discovery.walletBusy = false;
+    renderDiscovery();
+  }
+}
+
+async function setTrackedDiscoveryWalletEnabled(publicKey, enabled) {
+  if (!state.apiClient?.setDiscoveryWalletEnabled) return;
+  state.discovery.walletBusy = true;
+  state.discovery.personalError = null;
+  renderDiscovery();
+  try {
+    applyPersonalDiscoveryState(await state.apiClient.setDiscoveryWalletEnabled(publicKey, enabled));
+  } catch (error) {
+    state.discovery.personalError = error.message || 'Wallet tracking could not be changed.';
+  } finally {
+    state.discovery.walletBusy = false;
+    renderDiscovery();
+  }
+}
+
+async function removeTrackedDiscoveryWallet(publicKey) {
+  if (!state.apiClient?.removeDiscoveryWallet) return;
+  state.discovery.walletBusy = true;
+  state.discovery.personalError = null;
+  renderDiscovery();
+  try {
+    applyPersonalDiscoveryState(await state.apiClient.removeDiscoveryWallet(publicKey));
+    notify('Wallet removed from personal Discovery');
+  } catch (error) {
+    state.discovery.personalError = error.message || 'Wallet could not be removed.';
+  } finally {
+    state.discovery.walletBusy = false;
+    renderDiscovery();
+  }
+}
+
+async function startPersonalDiscoveryScan() {
+  if (!state.discovery.wallets.some((wallet) => wallet.enabled !== false)) {
+    state.discovery.personalError = 'Add or enable a wallet before scanning.';
+    renderDiscovery();
+    return;
+  }
+  if (!state.apiClient?.scanPersonalDiscovery) {
+    state.discovery.personalError = 'Personal Discovery requires the local Trebuchet app.';
+    renderDiscovery();
+    return;
+  }
+  state.discovery.scanning = true;
+  state.discovery.personalError = null;
+  renderDiscovery();
+  try {
+    applyPersonalDiscoveryState(await state.apiClient.scanPersonalDiscovery());
+    schedulePersonalDiscoveryPoll();
+  } catch (error) {
+    state.discovery.scanning = false;
+    state.discovery.personalError = error.message || 'Personal Discovery scan could not start.';
     renderDiscovery();
   }
 }
@@ -14676,6 +14824,119 @@ function renderWallet() {
   ` : '';
 }
 
+function personalTokenName(token) {
+  return token?.symbol || token?.name || shortAddress(token?.mint);
+}
+
+function personalTokenDetail(token, type, knownByMint) {
+  if (type === 'known') {
+    const walletCount = Number(token.walletCount) || 0;
+    return `${walletCount} tracked wallet${walletCount === 1 ? '' : 's'} · ${formatDiscoveryPrice(token.priceUsd)}`;
+  }
+  const holderCount = Number(token.holderCount) || 0;
+  const seedCount = Number(token.seedCount) || 0;
+  const firstSeed = knownByMint.get(token.paths?.[0]?.seedMint);
+  const via = firstSeed ? ` · via ${personalTokenName(firstSeed)}` : '';
+  return `${holderCount} holder${holderCount === 1 ? '' : 's'} across ${seedCount} known token${seedCount === 1 ? '' : 's'}${via}`;
+}
+
+function personalTokenCards(tokens, type, knownByMint) {
+  return tokens.map((token) => `
+    <button class="personal-token-card" type="button" data-action="inspect-personal-token" data-token="${escapeHtml(token.mint)}">
+      <span>
+        <strong>${escapeHtml(personalTokenName(token))} ${token.name && token.name !== token.symbol ? `<span class="muted">${escapeHtml(token.name)}</span>` : ''}</strong>
+        <small>${escapeHtml(personalTokenDetail(token, type, knownByMint))}</small>
+      </span>
+      ${type === 'candidate'
+        ? `<span class="network-score" title="Personal network score">${Math.max(0, Math.min(100, Number(token.networkScore) || 0))}</span>`
+        : `<span class="risk-badge">Known</span>`}
+    </button>
+  `).join('');
+}
+
+function renderPersonalDiscovery() {
+  const connected = state.apiStatus === 'connected';
+  const wallets = state.discovery.wallets || [];
+  const snapshot = state.discovery.snapshot;
+  const knownTokens = Array.isArray(snapshot?.knownTokens) ? snapshot.knownTokens : [];
+  const candidates = Array.isArray(snapshot?.candidates) ? snapshot.candidates : [];
+  const knownByMint = new Map(knownTokens.map((token) => [token.mint, token]));
+  const scanButton = $('#personalDiscoveryScanButton');
+  const addButton = $('#discoveryWalletAddButton');
+  if (scanButton) {
+    scanButton.disabled = !connected
+      || state.discovery.scanning
+      || !wallets.some((wallet) => wallet.enabled !== false);
+    scanButton.innerHTML = state.discovery.scanning
+      ? '<i class="fa-solid fa-spinner fa-spin"></i><span>Scanning</span>'
+      : '<i class="fa-solid fa-diagram-project"></i><span>Scan holder network</span>';
+  }
+  if (addButton) addButton.disabled = !connected || state.discovery.walletBusy || state.discovery.scanning;
+  ['discoveryWalletInput', 'discoveryWalletLabelInput'].forEach((id) => {
+    if ($(`#${id}`)) $(`#${id}`).disabled = !connected || state.discovery.walletBusy || state.discovery.scanning;
+  });
+
+  $('#discoveryWallets').innerHTML = wallets.length ? wallets.map((wallet) => `
+    <span class="discovery-wallet-chip ${wallet.enabled === false ? 'is-paused' : ''}" title="${escapeHtml(wallet.publicKey)}">
+      <i class="fa-solid ${wallet.source === 'managed' ? 'fa-key' : 'fa-eye'}"></i>
+      <strong>${escapeHtml(wallet.label || shortAddress(wallet.publicKey))}</strong>
+      <span>${escapeHtml(shortAddress(wallet.publicKey))}</span>
+      <button type="button" data-action="toggle-discovery-wallet" data-wallet="${escapeHtml(wallet.publicKey)}" data-enabled="${wallet.enabled === false ? 'true' : 'false'}" aria-label="${wallet.enabled === false ? 'Resume' : 'Pause'} ${escapeHtml(wallet.label || 'wallet')}" ${state.discovery.walletBusy || state.discovery.scanning ? 'disabled' : ''}>
+        <i class="fa-solid ${wallet.enabled === false ? 'fa-play' : 'fa-pause'}"></i>
+      </button>
+      ${wallet.source === 'watch-only' ? `
+        <button type="button" data-action="remove-discovery-wallet" data-wallet="${escapeHtml(wallet.publicKey)}" aria-label="Remove ${escapeHtml(wallet.label || 'wallet')}" ${state.discovery.walletBusy || state.discovery.scanning ? 'disabled' : ''}>
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      ` : ''}
+    </span>
+  `).join('') : `
+    <span class="muted"><i class="fa-solid fa-wallet"></i> Add a wallet to build your personal token network.</span>
+  `;
+
+  const progressLabel = personalDiscoveryProgressLabel();
+  const scanWarnings = Array.isArray(snapshot?.warnings) ? snapshot.warnings : [];
+  const scanSummary = snapshot
+    ? `${knownTokens.length} known token${knownTokens.length === 1 ? '' : 's'} · ${candidates.length} network discover${candidates.length === 1 ? 'y' : 'ies'} · scanned ${formatAge(snapshot.completedAt)}`
+    : null;
+  const status = state.discovery.personalError
+    || progressLabel
+    || (snapshot
+      ? scanWarnings.length
+        ? `${scanSummary} · ${scanWarnings[0]}${scanWarnings.length > 1 ? ` (+${scanWarnings.length - 1} more)` : ''}`
+        : scanSummary
+      : wallets.length ? 'Ready to scan. Only enabled wallets are included.' : 'Wallet addresses and graph results are stored locally.');
+  const statusNode = $('#personalDiscoveryStatus');
+  statusNode.classList.toggle('is-error', Boolean(state.discovery.personalError));
+  statusNode.classList.toggle('is-warning', !state.discovery.personalError && scanWarnings.length > 0);
+  statusNode.innerHTML = `<i class="fa-solid ${state.discovery.personalError || scanWarnings.length ? 'fa-triangle-exclamation' : state.discovery.scanning ? 'fa-spinner fa-spin' : 'fa-shield-halved'}"></i> ${escapeHtml(status)}`;
+
+  if (!snapshot) {
+    $('#personalTokenNetwork').innerHTML = '';
+    return;
+  }
+  $('#personalTokenNetwork').innerHTML = `
+    <section class="personal-token-section">
+      <div class="personal-token-section-head">
+        <span><small>From your wallets</small><strong>Known tokens</strong></span>
+        <small>${knownTokens.length} found</small>
+      </div>
+      <div class="personal-token-grid">
+        ${knownTokens.length ? personalTokenCards(knownTokens.slice(0, 10), 'known', knownByMint) : '<span class="muted">No meaningful fungible-token balances were found.</span>'}
+      </div>
+    </section>
+    <section class="personal-token-section">
+      <div class="personal-token-section-head">
+        <span><small>One hop from qualifying holders</small><strong>Network discoveries</strong></span>
+        <small>${candidates.length} ranked</small>
+      </div>
+      <div class="personal-token-grid">
+        ${candidates.length ? personalTokenCards(candidates, 'candidate', knownByMint) : '<span class="muted">No qualifying adjacent tokens were found in this bounded scan.</span>'}
+      </div>
+    </section>
+  `;
+}
+
 function renderDiscovery() {
   const selected = selectedDiscovery();
   const rows = filteredDiscoveryRecords();
@@ -14684,10 +14945,12 @@ function renderDiscovery() {
   const mintInput = $('#discoveryMintInput');
   const inspectButton = $('#discoveryInspectButton');
 
+  renderPersonalDiscovery();
+
   $('#discoverySourceBanner').innerHTML = `
     <span class="risk-badge ${connected ? '' : 'warn'}">${connected ? 'Live' : 'Offline'}</span>
     <span>${connected
-      ? 'Solana RPC chain facts · GeckoTerminal market history · local launch provenance'
+      ? 'Personal wallet graph · Solana RPC chain facts · GeckoTerminal market history'
       : 'Connect through the local Trebuchet app to analyze Solana tokens.'}</span>
   `;
 
@@ -19769,6 +20032,7 @@ function applyBootState(boot) {
     failedJournalCount: boot.recovery?.failedJournalCount || 0,
     pendingWalletCount: boot.recovery?.pendingWalletCount || 0,
   };
+  applyPersonalDiscoveryState(boot.discovery || {});
   state.managedWallets = Array.isArray(boot.wallets?.managed)
     ? boot.wallets.managed
     : state.recovery.pendingWallets;
@@ -19810,6 +20074,7 @@ async function bootLocalApi() {
   const boot = await client.bootstrap();
   applyBootState(boot);
   renderAll();
+  if (state.discovery.scanning) schedulePersonalDiscoveryPoll();
   if (boot.api?.available) notify('Local API connected');
 }
 
@@ -20876,6 +21141,29 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'scan-personal-discovery') {
+    startPersonalDiscoveryScan();
+    return;
+  }
+
+  if (action === 'toggle-discovery-wallet') {
+    setTrackedDiscoveryWalletEnabled(
+      actionTarget.dataset.wallet,
+      actionTarget.dataset.enabled === 'true',
+    );
+    return;
+  }
+
+  if (action === 'remove-discovery-wallet') {
+    removeTrackedDiscoveryWallet(actionTarget.dataset.wallet);
+    return;
+  }
+
+  if (action === 'inspect-personal-token') {
+    inspectDiscoveryMint(actionTarget.dataset.token);
+    return;
+  }
+
 }
 
 function bindEvents() {
@@ -20980,6 +21268,10 @@ function bindEvents() {
   $('#discoveryInspectForm').addEventListener('submit', (event) => {
     event.preventDefault();
     inspectDiscoveryMint();
+  });
+  $('#discoveryWalletForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    addTrackedDiscoveryWallet();
   });
   $('#tokenLogoFile').addEventListener('change', (event) => {
     selectTokenLogo(event.target.files?.[0] || null);

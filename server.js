@@ -55,6 +55,7 @@ import * as secretStore from './secretStore.js';
 import { createLaunchReportUmi, publishLaunchReport } from './launchReportService.js';
 import * as launchJournal from './launchJournal.js';
 import * as userPrefs from './userPrefs.js';
+import * as discoveryStore from './discoveryStore.js';
 import * as updateCheckBridge from './updateCheckBridge.js';
 import * as demoChainService from './demoChainService.js';
 import {
@@ -87,6 +88,7 @@ import {
   fetchDiscoveryMarketData,
   isMissingMintRpcError,
 } from './discoveryService.js';
+import { scanPersonalDiscovery } from './personalDiscoveryService.js';
 import {
   redactSensitiveLogArgs,
   redactSensitiveText,
@@ -919,6 +921,226 @@ app.get('/api/v2/viewport-smoke-proof', (_req, res) => {
         detail: `Viewport smoke proof could not be verified: ${error.message}`,
       },
     });
+  }
+});
+
+let personalDiscoveryJob = {
+  id: null,
+  status: 'idle',
+  startedAt: null,
+  completedAt: null,
+  progress: null,
+  error: null,
+};
+
+function publicPersonalDiscoveryJob() {
+  return {
+    id: personalDiscoveryJob.id,
+    status: personalDiscoveryJob.status,
+    startedAt: personalDiscoveryJob.startedAt,
+    completedAt: personalDiscoveryJob.completedAt,
+    progress: personalDiscoveryJob.progress,
+    error: personalDiscoveryJob.error,
+  };
+}
+
+function rememberManagedDiscoveryWallet(wallet, label = 'Trebuchet wallet') {
+  const publicKey = String(wallet?.publicKey || '').trim();
+  if (!publicKey) return;
+  try {
+    const existing = discoveryStore.listWallets().find((entry) => entry.publicKey === publicKey);
+    if (!existing || existing.source !== 'managed') {
+      discoveryStore.upsertWallet(publicKey, {
+        label: existing?.label || label,
+        source: 'managed',
+        enabled: existing?.enabled !== false,
+      });
+    }
+  } catch (error) {
+    console.warn(`Personal Discovery could not remember managed wallet ${publicKey}:`, error.message);
+  }
+}
+
+function syncManagedDiscoveryWallets() {
+  const sourceWallets = isDemoMode()
+    ? Array.from(demoManagedWallets.values())
+    : pendingWallets.list();
+  sourceWallets.forEach((wallet, index) => {
+    rememberManagedDiscoveryWallet(wallet, index === 0 ? 'Launch wallet' : `Trebuchet wallet ${index + 1}`);
+  });
+}
+
+function personalDiscoveryResponse() {
+  syncManagedDiscoveryWallets();
+  return {
+    success: true,
+    wallets: discoveryStore.listWallets(),
+    snapshot: discoveryStore.getSnapshot(),
+    job: publicPersonalDiscoveryJob(),
+  };
+}
+
+function personalDiscoveryWalletFingerprint(wallets = []) {
+  return wallets
+    .filter((wallet) => wallet.enabled !== false)
+    .map((wallet) => String(wallet.publicKey || '').trim())
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
+
+function rejectIfPersonalDiscoveryScanRunning(res) {
+  if (personalDiscoveryJob.status !== 'running') return false;
+  res.status(409).json({
+    success: false,
+    code: 'DISCOVERY_SCAN_RUNNING',
+    error: 'Wait for the current personal Discovery scan before changing tracked wallets.',
+    job: publicPersonalDiscoveryJob(),
+  });
+  return true;
+}
+
+async function enrichPersonalDiscoveryToken(mint, rpcUrl) {
+  const metadataResult = await Promise.resolve()
+    .then(() => getTokenMetadata(mint, { rpcUrl }))
+    .then((value) => ({ status: 'fulfilled', value }))
+    .catch((reason) => ({ status: 'rejected', reason }));
+  const metadata = metadataResult.status === 'fulfilled' ? metadataResult.value : null;
+  const warnings = [];
+  if (metadataResult.status === 'rejected') warnings.push(`Metadata: ${metadataResult.reason?.message || 'lookup failed'}`);
+  return {
+    name: metadata?.name || metadata?.symbol || null,
+    symbol: metadata?.symbol || null,
+    imageUrl: metadata?.imageUrl || null,
+    decimals: Number.isFinite(Number(metadata?.decimals)) ? Number(metadata.decimals) : null,
+    priceUsd: metadata?.priceUsd ?? null,
+    market: null,
+    warnings,
+  };
+}
+
+app.get('/api/v2/discovery/personal', (_req, res) => {
+  try {
+    res.json(personalDiscoveryResponse());
+  } catch (error) {
+    sendErrorResponse(res, error);
+  }
+});
+
+app.post('/api/v2/discovery/wallets', (req, res) => {
+  try {
+    if (rejectIfPersonalDiscoveryScanRunning(res)) return;
+    const publicKey = new PublicKey(String(req.body?.publicKey || '').trim()).toBase58();
+    const wallet = discoveryStore.upsertWallet(publicKey, {
+      label: req.body?.label,
+      source: 'watch-only',
+      enabled: true,
+    });
+    res.status(201).json({ ...personalDiscoveryResponse(), wallet });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+app.post('/api/v2/discovery/wallets/:publicKey/enabled', (req, res) => {
+  try {
+    if (rejectIfPersonalDiscoveryScanRunning(res)) return;
+    const publicKey = new PublicKey(String(req.params.publicKey || '').trim()).toBase58();
+    const wallet = discoveryStore.setWalletEnabled(publicKey, req.body?.enabled === true);
+    if (!wallet) {
+      return res.status(404).json({ success: false, code: 'DISCOVERY_WALLET_NOT_FOUND', error: 'Tracked wallet was not found.' });
+    }
+    res.json({ ...personalDiscoveryResponse(), wallet });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+app.delete('/api/v2/discovery/wallets/:publicKey', (req, res) => {
+  try {
+    if (rejectIfPersonalDiscoveryScanRunning(res)) return;
+    const publicKey = new PublicKey(String(req.params.publicKey || '').trim()).toBase58();
+    const removed = discoveryStore.removeWallet(publicKey);
+    if (!removed) {
+      return res.status(404).json({ success: false, code: 'DISCOVERY_WALLET_NOT_FOUND', error: 'Tracked wallet was not found.' });
+    }
+    res.json(personalDiscoveryResponse());
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
+  }
+});
+
+app.post('/api/v2/discovery/scan', (req, res) => {
+  try {
+    if (personalDiscoveryJob.status === 'running') {
+      return res.status(409).json({
+        success: false,
+        code: 'DISCOVERY_SCAN_RUNNING',
+        error: 'A personal Discovery scan is already running.',
+        job: publicPersonalDiscoveryJob(),
+      });
+    }
+    syncManagedDiscoveryWallets();
+    const wallets = discoveryStore.listWallets().filter((wallet) => wallet.enabled !== false);
+    if (!wallets.length) {
+      return res.status(400).json({
+        success: false,
+        code: 'DISCOVERY_WALLET_REQUIRED',
+        error: 'Add and enable at least one wallet before scanning.',
+      });
+    }
+    const rpc = discoveryRpcCandidates(getRpcConfig())[0];
+    if (!rpc?.url) throw new Error('No Solana RPC is configured for personal Discovery.');
+    const jobId = crypto.randomUUID();
+    const walletFingerprint = personalDiscoveryWalletFingerprint(wallets);
+    personalDiscoveryJob = {
+      id: jobId,
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      progress: { phase: 'starting', current: 0, total: wallets.length },
+      error: null,
+    };
+
+    const connection = new Connection(rpc.url, 'confirmed');
+    void scanPersonalDiscovery({
+      connection,
+      wallets,
+      limits: req.body?.limits || {},
+      enrichToken: (mint) => enrichPersonalDiscoveryToken(mint, rpc.url),
+      onProgress: (progress) => {
+        if (personalDiscoveryJob.id === jobId) personalDiscoveryJob.progress = progress;
+      },
+    }).then((snapshot) => {
+      const currentWallets = discoveryStore.listWallets();
+      if (personalDiscoveryWalletFingerprint(currentWallets) !== walletFingerprint) {
+        const error = new Error('Tracked wallets changed while Discovery was scanning. Scan again for a current graph.');
+        error.code = 'DISCOVERY_WALLETS_CHANGED';
+        throw error;
+      }
+      discoveryStore.saveSnapshot({ ...snapshot, rpcName: rpc.name });
+      if (personalDiscoveryJob.id === jobId) {
+        personalDiscoveryJob.status = 'complete';
+        personalDiscoveryJob.completedAt = snapshot.completedAt;
+        personalDiscoveryJob.progress = { phase: 'complete', current: 1, total: 1 };
+      }
+    }).catch((error) => {
+      console.error('Personal Discovery scan failed:', error);
+      if (personalDiscoveryJob.id === jobId) {
+        personalDiscoveryJob.status = 'failed';
+        personalDiscoveryJob.completedAt = new Date().toISOString();
+        personalDiscoveryJob.error = error.message || 'Personal Discovery scan failed.';
+      }
+    });
+
+    res.status(202).json({
+      success: true,
+      wallets,
+      snapshot: discoveryStore.getSnapshot(),
+      job: publicPersonalDiscoveryJob(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 400);
   }
 });
 
@@ -3958,6 +4180,7 @@ app.post('/api/v2/wallets/generate', async (_req, res) => {
         walletInfo.mnemonic,
       );
     }
+    rememberManagedDiscoveryWallet(managedWallet, 'Launch wallet');
 
     res.json({
       success: true,
@@ -4000,6 +4223,7 @@ app.post('/api/v2/wallets/import', async (req, res) => {
     } else {
       managedWallet = pendingWallets.add(publicKey, secretKey, mnemonic);
     }
+    rememberManagedDiscoveryWallet(managedWallet, 'Imported wallet');
 
     res.json({
       success: true,

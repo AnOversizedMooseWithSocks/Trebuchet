@@ -8,6 +8,9 @@
   const V2_RUN_EXECUTE_NEXT_PATH = '/api/v2/run-envelope/execute-next';
   const V2_VIEWPORT_SMOKE_PROOF_PATH = '/api/v2/viewport-smoke-proof';
   const V2_DISCOVERY_INSPECT_PATH = '/api/v2/discovery/inspect';
+  const V2_PERSONAL_DISCOVERY_PATH = '/api/v2/discovery/personal';
+  const V2_DISCOVERY_WALLETS_PATH = '/api/v2/discovery/wallets';
+  const V2_DISCOVERY_SCAN_PATH = '/api/v2/discovery/scan';
   const WALLET_QR_PATH = '/api/wallet-qr';
   const PENDING_WALLETS_PATH = '/api/pending-wallets';
   const SECRET_PIN_PATH = '/api/secret-pin';
@@ -43,6 +46,7 @@
     v2Wallets: V2_WALLETS_PATH,
     feeTiers: CLMM_FEE_TIERS_PATH,
     viewportSmoke: V2_VIEWPORT_SMOKE_PROOF_PATH,
+    personalDiscovery: V2_PERSONAL_DISCOVERY_PATH,
   };
 
   class V2ApiError extends Error {
@@ -224,6 +228,9 @@
     const vanityAvailabilityKnown = typeof demo.vanity?.available === 'boolean';
     const v2Wallets = safeArray(endpoints.v2Wallets?.ok ? endpoints.v2Wallets.data?.wallets : []);
     const feeTiers = safeArray(endpoints.feeTiers?.ok ? endpoints.feeTiers.data?.tiers : []);
+    const personalDiscovery = endpoints.personalDiscovery?.ok
+      ? endpoints.personalDiscovery.data || {}
+      : {};
     const activeJournals = journals.filter((journal) => journal?.status === 'active');
     const failedJournals = journals.filter((journal) => journal?.status === 'failed');
     const health = normalizeHealth(rpcHealth.health);
@@ -300,6 +307,17 @@
         tiers: feeTiers,
         available: endpoints.feeTiers?.ok === true && feeTiers.length > 0,
         error: endpoints.feeTiers?.error || null,
+      },
+      discovery: {
+        wallets: safeArray(personalDiscovery.wallets),
+        snapshot: personalDiscovery.snapshot && typeof personalDiscovery.snapshot === 'object'
+          ? personalDiscovery.snapshot
+          : null,
+        job: personalDiscovery.job && typeof personalDiscovery.job === 'object'
+          ? personalDiscovery.job
+          : { status: 'idle' },
+        available: endpoints.personalDiscovery?.ok === true,
+        error: endpoints.personalDiscovery?.ok ? null : endpoints.personalDiscovery?.error || null,
       },
       viewportSmoke,
       endpointStatus: Object.fromEntries(
@@ -464,6 +482,37 @@
         throw new V2ApiError('Discovery response missing token record.', { code: 'BAD_DISCOVERY_RECORD' });
       }
       return data.record;
+    }
+
+    async function getPersonalDiscovery() {
+      return request(V2_PERSONAL_DISCOVERY_PATH);
+    }
+
+    async function addDiscoveryWallet({ publicKey, label } = {}) {
+      return request(V2_DISCOVERY_WALLETS_PATH, {
+        method: 'POST',
+        body: { publicKey: String(publicKey || '').trim(), label: String(label || '').trim() },
+      });
+    }
+
+    async function setDiscoveryWalletEnabled(publicKey, enabled) {
+      return request(`${V2_DISCOVERY_WALLETS_PATH}/${encodeURIComponent(publicKey)}/enabled`, {
+        method: 'POST',
+        body: { enabled: enabled === true },
+      });
+    }
+
+    async function removeDiscoveryWallet(publicKey) {
+      return request(`${V2_DISCOVERY_WALLETS_PATH}/${encodeURIComponent(publicKey)}`, {
+        method: 'DELETE',
+      });
+    }
+
+    async function scanPersonalDiscovery(limits = {}) {
+      return request(V2_DISCOVERY_SCAN_PATH, {
+        method: 'POST',
+        body: { limits },
+      });
     }
 
     async function runDemoLaunch({ walletPublicKey, config, fundingEstimate, airdropRecipients } = {}) {
@@ -934,7 +983,9 @@
       safeGet,
       armRunEnvelope,
       generateManagedWallet,
+      getPersonalDiscovery,
       importManagedWallet,
+      addDiscoveryWallet,
       inspectDiscoveryToken,
       listLaunchJournals,
       listVanityCandidates,
@@ -943,6 +994,7 @@
       publishLaunchReport,
       revealPendingWallet,
       removeVanityCandidate,
+      removeDiscoveryWallet,
       resetSecretPin,
       retryAirdrop,
       runAirdrop,
@@ -950,11 +1002,13 @@
       addRpc,
       removeRpc,
       selectRpc,
+      setDiscoveryWalletEnabled,
       testRpc,
       setUserPrefs,
       resumeLaunchJournal,
       setupSecretPin,
       stageLaunchPlan,
+      scanPersonalDiscovery,
       sweepPendingWallet,
       unlockSecretPin,
     };
@@ -986,6 +1040,9 @@
     V2_DEMO_LAUNCH_RUN_PATH,
     V2_EXECUTION_READINESS_PATH,
     V2_DISCOVERY_INSPECT_PATH,
+    V2_PERSONAL_DISCOVERY_PATH,
+    V2_DISCOVERY_WALLETS_PATH,
+    V2_DISCOVERY_SCAN_PATH,
     V2_RUN_ARM_PATH,
     V2_WALLETS_PATH,
     V2ApiError,

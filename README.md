@@ -130,10 +130,20 @@ as the Trebuchet launch signer.
 
 ### Discovery
 
-Discovery is a local evidence registry, not a social or promotional feed. An
-operator can inspect a mint through the configured RPC and review authority,
-Token-2022 compatibility, Raydium route, pool, holder, and confidence evidence.
-Unavailable evidence is labeled unavailable; it is not invented.
+Discovery is a personal, local token network rather than a global promotional
+feed. Trebuchet-managed wallets are remembered as public-address seeds, and an
+operator can add watch-only wallet addresses explicitly. A bounded scan reads
+the fungible tokens held by those wallets, follows qualifying top holders one
+hop, and ranks up to ten adjacent tokens with an explainable network score.
+Executable/non-wallet seeds, obvious program-controlled owners, and NFT-like
+receipts are excluded; repeated holder evidence is required when coverage
+permits, and the relationship graph is stored only in the local
+`personalDiscovery.json` profile file.
+
+The network score measures personal holder overlap, not safety. Selecting a
+known or discovered token runs the separate evidence inspection for authority,
+Token-2022 compatibility, Raydium route, market, concentration, provenance, and
+confidence. Unavailable evidence is labeled unavailable; it is not invented.
 
 ### History
 
