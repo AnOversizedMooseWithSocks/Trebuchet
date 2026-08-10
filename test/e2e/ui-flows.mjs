@@ -187,27 +187,45 @@ async function withPage(fn, size = 'desktop') {
     if (GOLDEN_MODE || SCREENSHOT_MODE) {
       const dest = GOLDEN_MODE ? SCREENSHOTS : tmpScreenshots;
       await p.addStyleTag({
-        content: 'html{scroll-behavior:auto!important}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}',
+        content: 'html,body{scroll-behavior:auto!important;overflow-anchor:none!important}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}',
       });
+      // Finish font/layout work before choosing the viewport. If fonts settle
+      // after the reset, Chromium scroll anchoring can move the page back to
+      // the active card and produce a second, equally valid-looking baseline.
+      await p.evaluate(async () => {
+        if (document.fonts?.ready) await document.fonts.ready;
+      });
+      await p.waitForTimeout(500);
       // Step activation and the old snapshot reset both used smooth scrolling,
       // so the Transfer baseline depended on which animation won the race.
       // Most flows intentionally prove the page chrome from the top; Transfer
       // instead frames its active card so the screenshot actually verifies the
       // destination, action, and final token summary.
-      if (shotLabel.replace(/-mobile$/, '') === '06') {
-        await p.locator('#step6-card').evaluate((element) => {
-          element.scrollIntoView({ behavior: 'auto', block: 'center' });
+      await p.evaluate(async (label) => {
+        // No application timer should be able to override the final test-only
+        // placement once the flow has completed.
+        Element.prototype.scrollIntoView = () => {};
+
+        const placeViewport = () => {
+          let top = 0;
+          if (label.replace(/-mobile$/, '') === '06') {
+            const element = document.querySelector('#step6-card');
+            if (element) {
+              const rect = element.getBoundingClientRect();
+              top = window.scrollY + rect.top - Math.max(0, (window.innerHeight - rect.height) / 2);
+            }
+          }
+          window.scrollTo({ top: Math.max(0, top), left: 0, behavior: 'instant' });
+        };
+
+        placeViewport();
+        await new Promise((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
         });
-      } else {
-        await p.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
-      }
-      await p.evaluate(() => new Promise((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(resolve));
-      }));
-      await p.evaluate(async () => {
-        if (document.fonts?.ready) await document.fonts.ready;
-      });
-      await p.waitForTimeout(500);
+        // Repeat after layout/paint so a queued scroll or anchor adjustment
+        // cannot win between the first placement and the screenshot.
+        placeViewport();
+      }, shotLabel);
       await p.screenshot({ path: path.join(dest, shotLabel + '.png'), fullPage: false });
     }
     return true;
