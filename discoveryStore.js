@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const STORE_VERSION = 1;
-const MAX_TRACKED_WALLETS = 25;
+const MAX_WATCH_ONLY_WALLETS = 25;
 const MAX_LABEL_LENGTH = 48;
 
 function configDir() {
@@ -49,6 +49,22 @@ function normalizeWallet(wallet = {}) {
   };
 }
 
+function normalizeWallets(wallets = []) {
+  const byPublicKey = new Map();
+  wallets.map(normalizeWallet).filter(Boolean).forEach((wallet) => {
+    const existing = byPublicKey.get(wallet.publicKey);
+    if (!existing || (wallet.source === 'managed' && existing.source !== 'managed')) {
+      byPublicKey.set(wallet.publicKey, wallet);
+    }
+  });
+  let watchOnlyCount = 0;
+  return [...byPublicKey.values()].filter((wallet) => {
+    if (wallet.source === 'managed') return true;
+    watchOnlyCount += 1;
+    return watchOnlyCount <= MAX_WATCH_ONLY_WALLETS;
+  });
+}
+
 function normalizeSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return null;
   const completedAt = Date.parse(snapshot.completedAt || '');
@@ -70,7 +86,7 @@ function load() {
     return {
       version: STORE_VERSION,
       wallets: Array.isArray(parsed.wallets)
-        ? parsed.wallets.map(normalizeWallet).filter(Boolean).slice(0, MAX_TRACKED_WALLETS)
+        ? normalizeWallets(parsed.wallets)
         : [],
       snapshot: normalizeSnapshot(parsed.snapshot),
     };
@@ -127,8 +143,10 @@ export function upsertWallet(publicKey, options = {}) {
     persist(store);
     return { ...existing };
   }
-  if (store.wallets.length >= MAX_TRACKED_WALLETS) {
-    const error = new Error(`Personal Discovery supports up to ${MAX_TRACKED_WALLETS} tracked wallets.`);
+  const source = options.source === 'managed' ? 'managed' : 'watch-only';
+  const watchOnlyCount = store.wallets.filter((wallet) => wallet.source === 'watch-only').length;
+  if (source === 'watch-only' && watchOnlyCount >= MAX_WATCH_ONLY_WALLETS) {
+    const error = new Error(`Personal Discovery supports up to ${MAX_WATCH_ONLY_WALLETS} watch-only wallets. Trebuchet-managed wallets do not count toward this limit.`);
     error.code = 'DISCOVERY_WALLET_LIMIT';
     error.statusCode = 409;
     throw error;
@@ -182,4 +200,6 @@ export function saveSnapshot(snapshot) {
 }
 
 export const PERSONAL_DISCOVERY_STORE_VERSION = STORE_VERSION;
-export const PERSONAL_DISCOVERY_MAX_WALLETS = MAX_TRACKED_WALLETS;
+export const PERSONAL_DISCOVERY_MAX_WATCH_ONLY_WALLETS = MAX_WATCH_ONLY_WALLETS;
+// Compatibility alias for integrations that read the original exported cap.
+export const PERSONAL_DISCOVERY_MAX_WALLETS = MAX_WATCH_ONLY_WALLETS;

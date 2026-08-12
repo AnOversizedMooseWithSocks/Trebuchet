@@ -173,6 +173,14 @@ function confidenceForCoverage(coverage) {
   return 'Low';
 }
 
+export function selectPersonalDiscoveryWallets(wallets = [], maxWallets = PERSONAL_DISCOVERY_LIMITS.maxWallets) {
+  const active = wallets.filter((wallet) => wallet?.enabled !== false);
+  return [
+    ...active.filter((wallet) => wallet.source !== 'managed'),
+    ...active.filter((wallet) => wallet.source === 'managed'),
+  ].slice(0, Math.max(1, Math.min(PERSONAL_DISCOVERY_LIMITS.maxWallets, Number(maxWallets) || 1)));
+}
+
 async function enrichRecords(records, enrichToken, onProgress, phase) {
   if (typeof enrichToken !== 'function') return records;
   const enriched = new Array(records.length);
@@ -216,10 +224,14 @@ export async function scanPersonalDiscovery({
       Number(limits[key]) || 1,
     ));
   });
-  const activeWallets = wallets.filter((wallet) => wallet?.enabled !== false).slice(0, effective.maxWallets);
+  const availableWallets = wallets.filter((wallet) => wallet?.enabled !== false);
+  const activeWallets = selectPersonalDiscoveryWallets(availableWallets, effective.maxWallets);
   if (!activeWallets.length) throw new Error('Add and enable at least one wallet before scanning.');
 
   const warnings = [];
+  if (availableWallets.length > activeWallets.length) {
+    warnings.push(`Scanned ${activeWallets.length} of ${availableWallets.length} enabled wallets. Watch-only wallets are prioritized; pause wallets to change the scan set.`);
+  }
   const known = new Map();
   onProgress?.({ phase: 'known-wallets', current: 0, total: activeWallets.length });
   for (let index = 0; index < activeWallets.length; index += 1) {
@@ -339,6 +351,7 @@ export async function scanPersonalDiscovery({
     completedAt: now().toISOString(),
     limits: effective,
     coverage: {
+      walletsAvailable: availableWallets.length,
       walletsRequested: activeWallets.length,
       walletsWithTokens: new Set(knownTokens.flatMap((token) => token.wallets?.map((wallet) => wallet.publicKey) || [])).size,
       knownTokenCount: knownTokens.length,

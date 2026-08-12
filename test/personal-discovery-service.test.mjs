@@ -7,6 +7,7 @@ import {
   normalizePortfolioResponses,
   resolveLargestAccountOwners,
   scanPersonalDiscovery,
+  selectPersonalDiscoveryWallets,
 } from '../personalDiscoveryService.js';
 
 function parsedTokenAccount(mint, amount, decimals = 6) {
@@ -65,6 +66,21 @@ test('personal Discovery resolves token-account addresses to their owners', () =
     owner: owner.toBase58(),
     amountRaw: '420',
   }]);
+});
+
+test('personal Discovery prioritizes watch-only wallets inside the scan budget', () => {
+  const wallets = [
+    { publicKey: 'managed-a', source: 'managed', enabled: true },
+    { publicKey: 'managed-b', source: 'managed', enabled: true },
+    { publicKey: 'watch-a', source: 'watch-only', enabled: true },
+    { publicKey: 'watch-paused', source: 'watch-only', enabled: false },
+    { publicKey: 'watch-b', source: 'watch-only', enabled: true },
+  ];
+
+  assert.deepEqual(
+    selectPersonalDiscoveryWallets(wallets, 3).map((wallet) => wallet.publicKey),
+    ['watch-a', 'watch-b', 'managed-a'],
+  );
 });
 
 test('personal Discovery builds a bounded one-hop graph with explainable paths', async () => {

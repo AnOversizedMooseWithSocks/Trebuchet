@@ -310,6 +310,9 @@
       },
       discovery: {
         wallets: safeArray(personalDiscovery.wallets),
+        limits: personalDiscovery.limits && typeof personalDiscovery.limits === 'object'
+          ? personalDiscovery.limits
+          : {},
         snapshot: personalDiscovery.snapshot && typeof personalDiscovery.snapshot === 'object'
           ? personalDiscovery.snapshot
           : null,

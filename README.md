@@ -132,7 +132,8 @@ as the Trebuchet launch signer.
 
 Discovery is a personal, local token network rather than a global promotional
 feed. Trebuchet-managed wallets are remembered as public-address seeds, and an
-operator can add watch-only wallet addresses explicitly. A bounded scan reads
+operator can add up to 25 watch-only wallet addresses explicitly. Managed
+wallets do not consume those watch-only slots. A bounded scan reads
 the fungible tokens held by those wallets, follows qualifying top holders one
 hop, and ranks up to ten adjacent tokens with an explainable network score.
 Executable/non-wallet seeds, obvious program-controlled owners, and NFT-like

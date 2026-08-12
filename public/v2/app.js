@@ -296,6 +296,7 @@ const state = {
   discovery: {
     records: [],
     wallets: [],
+    limits: {},
     snapshot: null,
     job: { status: 'idle' },
     query: '',
@@ -1263,6 +1264,9 @@ let personalDiscoveryPollTimer = null;
 
 function applyPersonalDiscoveryState(payload = {}) {
   state.discovery.wallets = Array.isArray(payload.wallets) ? payload.wallets : [];
+  state.discovery.limits = payload.limits && typeof payload.limits === 'object'
+    ? payload.limits
+    : {};
   state.discovery.snapshot = payload.snapshot && typeof payload.snapshot === 'object'
     ? payload.snapshot
     : null;
@@ -14854,9 +14858,32 @@ function personalTokenCards(tokens, type, knownByMint) {
   `).join('');
 }
 
+function discoveryWalletChip(wallet) {
+  return `
+    <span class="discovery-wallet-chip ${wallet.enabled === false ? 'is-paused' : ''}" title="${escapeHtml(wallet.publicKey)}">
+      <i class="fa-solid ${wallet.source === 'managed' ? 'fa-key' : 'fa-eye'}"></i>
+      <strong>${escapeHtml(wallet.label || shortAddress(wallet.publicKey))}</strong>
+      <span>${escapeHtml(shortAddress(wallet.publicKey))}</span>
+      <button type="button" data-action="toggle-discovery-wallet" data-wallet="${escapeHtml(wallet.publicKey)}" data-enabled="${wallet.enabled === false ? 'true' : 'false'}" aria-label="${wallet.enabled === false ? 'Resume' : 'Pause'} ${escapeHtml(wallet.label || 'wallet')}" ${state.discovery.walletBusy || state.discovery.scanning ? 'disabled' : ''}>
+        <i class="fa-solid ${wallet.enabled === false ? 'fa-play' : 'fa-pause'}"></i>
+      </button>
+      ${wallet.source === 'watch-only' ? `
+        <button type="button" data-action="remove-discovery-wallet" data-wallet="${escapeHtml(wallet.publicKey)}" aria-label="Remove ${escapeHtml(wallet.label || 'wallet')}" ${state.discovery.walletBusy || state.discovery.scanning ? 'disabled' : ''}>
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      ` : ''}
+    </span>
+  `;
+}
+
 function renderPersonalDiscovery() {
   const connected = state.apiStatus === 'connected';
   const wallets = state.discovery.wallets || [];
+  const watchOnlyWallets = wallets.filter((wallet) => wallet.source !== 'managed');
+  const managedWallets = wallets.filter((wallet) => wallet.source === 'managed');
+  const watchOnlyLimit = Number(state.discovery.limits?.watchOnlyLimit) || 25;
+  const scanMaxWallets = Number(state.discovery.limits?.scanMaxWallets) || 5;
+  const watchOnlyAtLimit = watchOnlyWallets.length >= watchOnlyLimit;
   const snapshot = state.discovery.snapshot;
   const knownTokens = Array.isArray(snapshot?.knownTokens) ? snapshot.knownTokens : [];
   const candidates = Array.isArray(snapshot?.candidates) ? snapshot.candidates : [];
@@ -14871,27 +14898,38 @@ function renderPersonalDiscovery() {
       ? '<i class="fa-solid fa-spinner fa-spin"></i><span>Scanning</span>'
       : '<i class="fa-solid fa-diagram-project"></i><span>Scan holder network</span>';
   }
-  if (addButton) addButton.disabled = !connected || state.discovery.walletBusy || state.discovery.scanning;
+  if (addButton) {
+    addButton.disabled = !connected || state.discovery.walletBusy || state.discovery.scanning || watchOnlyAtLimit;
+    addButton.title = watchOnlyAtLimit
+      ? `The ${watchOnlyLimit} watch-only wallet slots are full. Trebuchet wallets do not count toward this limit.`
+      : '';
+  }
   ['discoveryWalletInput', 'discoveryWalletLabelInput'].forEach((id) => {
     if ($(`#${id}`)) $(`#${id}`).disabled = !connected || state.discovery.walletBusy || state.discovery.scanning;
   });
 
-  $('#discoveryWallets').innerHTML = wallets.length ? wallets.map((wallet) => `
-    <span class="discovery-wallet-chip ${wallet.enabled === false ? 'is-paused' : ''}" title="${escapeHtml(wallet.publicKey)}">
-      <i class="fa-solid ${wallet.source === 'managed' ? 'fa-key' : 'fa-eye'}"></i>
-      <strong>${escapeHtml(wallet.label || shortAddress(wallet.publicKey))}</strong>
-      <span>${escapeHtml(shortAddress(wallet.publicKey))}</span>
-      <button type="button" data-action="toggle-discovery-wallet" data-wallet="${escapeHtml(wallet.publicKey)}" data-enabled="${wallet.enabled === false ? 'true' : 'false'}" aria-label="${wallet.enabled === false ? 'Resume' : 'Pause'} ${escapeHtml(wallet.label || 'wallet')}" ${state.discovery.walletBusy || state.discovery.scanning ? 'disabled' : ''}>
-        <i class="fa-solid ${wallet.enabled === false ? 'fa-play' : 'fa-pause'}"></i>
-      </button>
-      ${wallet.source === 'watch-only' ? `
-        <button type="button" data-action="remove-discovery-wallet" data-wallet="${escapeHtml(wallet.publicKey)}" aria-label="Remove ${escapeHtml(wallet.label || 'wallet')}" ${state.discovery.walletBusy || state.discovery.scanning ? 'disabled' : ''}>
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      ` : ''}
-    </span>
-  `).join('') : `
-    <span class="muted"><i class="fa-solid fa-wallet"></i> Add a wallet to build your personal token network.</span>
+  $('#discoveryWallets').innerHTML = `
+    <section class="discovery-wallet-group">
+      <header>
+        <span><i class="fa-solid fa-eye"></i> Watched wallets</span>
+        <small>${watchOnlyWallets.length} / ${watchOnlyLimit} used</small>
+      </header>
+      <div class="discovery-wallet-chip-list">
+        ${watchOnlyWallets.length
+          ? watchOnlyWallets.map(discoveryWalletChip).join('')
+          : '<span class="muted">Add addresses you want Trebuchet to follow.</span>'}
+      </div>
+    </section>
+    ${managedWallets.length ? `
+      <details class="managed-discovery-wallets">
+        <summary>
+          <span><i class="fa-solid fa-key"></i> ${managedWallets.length} Trebuchet wallet${managedWallets.length === 1 ? '' : 's'}</span>
+          <small>Automatic · do not count toward the ${watchOnlyLimit}-wallet limit</small>
+        </summary>
+        <div class="discovery-wallet-chip-list">${managedWallets.map(discoveryWalletChip).join('')}</div>
+      </details>
+    ` : ''}
+    <p class="discovery-scan-budget">Each scan uses up to ${scanMaxWallets} enabled wallets. Watched wallets are considered first.</p>
   `;
 
   const progressLabel = personalDiscoveryProgressLabel();

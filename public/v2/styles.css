@@ -12217,9 +12217,74 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 
 .discovery-wallets {
+  display: grid;
+  gap: 7px;
+}
+
+.discovery-wallet-group,
+.managed-discovery-wallets {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.discovery-wallet-group > header,
+.managed-discovery-wallets > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.discovery-wallet-group > header small,
+.managed-discovery-wallets > summary small {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.managed-discovery-wallets {
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel-strong) 94%, transparent);
+}
+
+.managed-discovery-wallets > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.managed-discovery-wallets > summary::-webkit-details-marker {
+  display: none;
+}
+
+.managed-discovery-wallets > summary::after {
+  content: "+";
+  color: var(--green);
+}
+
+.managed-discovery-wallets[open] > summary::after {
+  content: "−";
+}
+
+.managed-discovery-wallets[open] > .discovery-wallet-chip-list {
+  margin-top: 2px;
+}
+
+.discovery-wallet-chip-list {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+}
+
+.discovery-scan-budget {
+  margin: 0;
+  color: var(--muted);
+  font-size: 8px;
 }
 
 .discovery-wallet-chip {
@@ -12379,6 +12444,12 @@ button.personal-token-card:hover {
 
   .personal-token-section-head {
     align-items: start;
+  }
+
+  .discovery-wallet-group > header,
+  .managed-discovery-wallets > summary {
+    align-items: start;
+    flex-direction: column;
   }
 }
 

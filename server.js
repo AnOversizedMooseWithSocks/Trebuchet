@@ -88,7 +88,10 @@ import {
   fetchDiscoveryMarketData,
   isMissingMintRpcError,
 } from './discoveryService.js';
-import { scanPersonalDiscovery } from './personalDiscoveryService.js';
+import {
+  PERSONAL_DISCOVERY_LIMITS,
+  scanPersonalDiscovery,
+} from './personalDiscoveryService.js';
 import {
   redactSensitiveLogArgs,
   redactSensitiveText,
@@ -972,9 +975,20 @@ function syncManagedDiscoveryWallets() {
 
 function personalDiscoveryResponse() {
   syncManagedDiscoveryWallets();
+  const wallets = discoveryStore.listWallets();
+  const watchOnlyCount = wallets.filter((wallet) => wallet.source === 'watch-only').length;
+  const managedCount = wallets.length - watchOnlyCount;
   return {
     success: true,
-    wallets: discoveryStore.listWallets(),
+    wallets,
+    limits: {
+      watchOnlyCount,
+      watchOnlyLimit: discoveryStore.PERSONAL_DISCOVERY_MAX_WATCH_ONLY_WALLETS,
+      watchOnlyRemaining: Math.max(0, discoveryStore.PERSONAL_DISCOVERY_MAX_WATCH_ONLY_WALLETS - watchOnlyCount),
+      managedCount,
+      managedCountsTowardLimit: false,
+      scanMaxWallets: PERSONAL_DISCOVERY_LIMITS.maxWallets,
+    },
     snapshot: discoveryStore.getSnapshot(),
     job: publicPersonalDiscoveryJob(),
   };
@@ -1098,7 +1112,11 @@ app.post('/api/v2/discovery/scan', (req, res) => {
       status: 'running',
       startedAt: new Date().toISOString(),
       completedAt: null,
-      progress: { phase: 'starting', current: 0, total: wallets.length },
+      progress: {
+        phase: 'starting',
+        current: 0,
+        total: Math.min(wallets.length, PERSONAL_DISCOVERY_LIMITS.maxWallets),
+      },
       error: null,
     };
 
