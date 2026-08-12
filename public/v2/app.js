@@ -2,7 +2,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
 const views = {
-  launch: { eyebrow: 'Step 1 of 6 · Setup', title: 'Launch console' },
+  launch: { eyebrow: 'Six guided phases', title: 'Launch a token' },
   wallet: { eyebrow: 'Wallet', title: 'Signer & asset custody' },
   discovery: { eyebrow: 'Discovery', title: 'Token intelligence' },
   history: { eyebrow: 'History', title: 'Execution journal' },
@@ -10,11 +10,12 @@ const views = {
 };
 
 const launchWorkspaces = [
-  { id: 'configure', title: 'Configure', detail: 'Token, pool topology, distribution, and launch safeguards.' },
-  { id: 'fund', title: 'Fund', detail: 'Estimate SOL, acquire quote tokens, and verify wallet balances.' },
-  { id: 'execute', title: 'Execute', detail: 'Run preflight, arm the local wallet, and watch live checkpoints.' },
-  { id: 'verify', title: 'Verify', detail: 'Review proof, publish the dossier, and compare Classic evidence.' },
-  { id: 'recover', title: 'Recover', detail: 'Resume interrupted work or safely sweep the launch wallet.' },
+  { id: 'wallet', title: 'Launch wallet', detail: 'Choose the isolated local wallet that signs this launch.' },
+  { id: 'configure', title: 'Token & pools', detail: 'Define the token, liquidity, distribution, and final destination.' },
+  { id: 'fund', title: 'Fund wallet', detail: 'Estimate the exact requirement, deposit SOL, and acquire quote tokens.' },
+  { id: 'mint', title: 'Create token', detail: 'Review the permanent token facts, then mint and revoke authorities.' },
+  { id: 'liquidity', title: 'Create liquidity', detail: 'Create pools and positions, lock liquidity, and deliver Fee Keys.' },
+  { id: 'finish', title: 'Finish launch', detail: 'Run airdrops, sweep every remaining asset, and save launch proof.' },
 ];
 
 const GUIDED_RECIPE_ID = 'simple-sol-v1';
@@ -48,42 +49,41 @@ const WALLET_RARITY_CLASSES = Object.freeze([
 
 const launchStages = [
   {
-    id: 'model',
-    title: 'Stage model',
-    detail: 'Token metadata, pool topology, airdrops, report preference, and launch-plan fingerprint.',
-    criteria: ['token-config-parity', 'pool-config-parity'],
-  },
-  {
     id: 'wallet',
-    title: 'Prepare wallet',
-    detail: 'Trebuchet-managed signer, Recovery PIN, saved Vanity CA options, and local custody.',
+    title: 'Choose launch wallet',
+    detail: 'Select the temporary local signer and confirm its recovery protection.',
     criteria: ['wallet-lifecycle', 'vanity-options'],
   },
   {
+    id: 'model',
+    title: 'Review token and pools',
+    detail: 'Confirm token metadata, liquidity, distribution, and the final destination.',
+    criteria: ['token-config-parity', 'pool-config-parity'],
+  },
+  {
     id: 'fund',
-    title: 'Fund and verify',
-    detail: 'Classic estimate, SOL balance, quote-token acquire/manual prefund, and held-reserve backing.',
+    title: 'Fund launch wallet',
+    detail: 'Estimate the requirement, verify SOL, and acquire any required quote tokens.',
     criteria: ['funding-and-quote', 'held-reserve-backing'],
   },
   {
     id: 'live',
-    title: 'Run live launch',
-    detail: 'Non-demo Trebuchet execution through token, pools, locks, Fee Keys, airdrop, and final sweep.',
+    title: 'Create token',
+    detail: 'Create the mint and metadata, then confirm the authority posture.',
     requirements: ['live-proof'],
   },
   {
     id: 'report',
-    title: 'Publish proof',
-    detail: 'Terminal-sweep-bound report or local dossier with final sweep evidence hash.',
-    requirements: ['report-proof'],
-    criteria: ['sweep-report-proof'],
+    title: 'Create liquidity',
+    detail: 'Create pools and positions, lock liquidity, and deliver the Fee Keys.',
+    requirements: ['live-proof'],
   },
   {
     id: 'compare',
-    title: 'Compare and retire',
-    detail: 'Completed Classic artifact comparison, passing audit, and all replacement criteria.',
-    requirements: ['classic-comparison', 'audit', 'replacement-criteria'],
-    criteria: ['classic-artifact-comparison', 'proof-audit'],
+    title: 'Finish and save proof',
+    detail: 'Complete distribution, sweep the wallet, and retain the launch record.',
+    requirements: ['report-proof'],
+    criteria: ['sweep-report-proof'],
   },
 ];
 
@@ -164,17 +164,6 @@ const parityFeatures = [
   { id: 'execution', title: 'Local run execution', real: true, preview: true, detail: 'Mint, pools, locks, airdrops, sweep, reports after one armed run.' },
   { id: 'recovery', title: 'Recovery journal', real: true, preview: true, detail: 'Reads local API inventory when available.' },
   { id: 'sweep-report', title: 'Sweep and report', real: true, preview: true, detail: 'Classic transfer, Fee Key, airdrop, sweep, and report surfaces represented.' },
-];
-
-const classicParityPhases = [
-  { id: 'wallet', title: 'Wallet', detail: 'Generate, import, QR, PIN recovery', action: 'generate-wallet' },
-  { id: 'vanity', title: 'Vanity CA', detail: 'Split start/end grind and saved candidates', action: 'start-vanity' },
-  { id: 'token', title: 'Token', detail: 'Metadata, supply, logo, authorities', action: 'review-plan' },
-  { id: 'pools', title: 'Pools', detail: 'SOL, flywheel, slices, ladder, support', action: 'review-plan' },
-  { id: 'funding', title: 'Funding', detail: 'Estimate SOL and quote acquisition', action: 'estimate-funding' },
-  { id: 'execution', title: 'Execute', detail: 'Mint, create pools, lock, Fee Keys', action: 'check-readiness' },
-  { id: 'recovery', title: 'Recover', detail: 'Journal-aware resume and diagnostics', action: 'inspect-recovery' },
-  { id: 'sweep', title: 'Sweep', detail: 'Airdrop, report, Fee Keys, final sweep', action: 'review-plan' },
 ];
 
 const DEFAULT_SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -886,7 +875,7 @@ function renderGuidedLaunchFlow() {
         </div>
         <div class="guided-welcome-actions">
           <button class="primary-button" type="button" data-action="guided-next">Start the tutorial <i class="fa-solid fa-arrow-right"></i></button>
-          <button class="text-button" type="button" data-action="select-experience" data-experience="advanced">I need advanced controls</button>
+          <button class="text-button" type="button" data-action="select-experience" data-experience="advanced">Open the full launch</button>
         </div>
         <small>Guided Mode is practice-only. It never sends a transaction or spends SOL.</small>
       </div>
@@ -920,10 +909,10 @@ function setExperienceMode(mode) {
   }
   state.experienceMode = next;
   state.guidedErrors = {};
-  setLaunchWorkspace('configure');
+  setLaunchWorkspace(next === 'guided' ? 'configure' : 'wallet');
   persistGuidedDraft();
   renderAll();
-  notify(next === 'guided' ? 'Guided launch opened' : 'Advanced controls opened');
+  notify(next === 'guided' ? 'Guided practice opened' : 'Full launch opened');
 }
 
 function moveGuidedStep(direction) {
@@ -988,7 +977,7 @@ function renderGuidedRunShell() {
   const token = state.lastDemoLaunchRun?.token || proof?.token || currentLaunchConfig().token;
   const poolCount = Number(state.lastDemoLaunchRun?.liquidity?.results?.length || proof?.liquidity?.poolCount || 1);
 
-  if (workspace === 'verify') {
+  if (workspace === 'finish') {
     target.innerHTML = `
       <div class="guided-run-card guided-success-card">
         <span class="guided-run-icon"><i class="fa-solid fa-file-shield"></i></span>
@@ -1042,7 +1031,7 @@ function renderGuidedRunShell() {
           ? '<button class="primary-button" type="button" data-action="guided-review-proof"><i class="fa-solid fa-file-shield"></i> Review practice proof</button>'
           : `<button class="primary-button" type="button" data-action="guided-start-practice" ${state.demoLaunchRunning ? 'disabled' : ''}><i class="fa-solid ${failed ? 'fa-rotate-right' : 'fa-flask'}"></i> ${state.demoLaunchRunning ? 'Running practice' : failed ? 'Try practice again' : 'Start practice launch'}</button>`}
       </div>
-      ${state.demoLaunchRunning ? '' : '<button class="text-button" type="button" data-action="select-experience" data-experience="advanced">Leave tutorial for Advanced controls</button>'}
+      ${state.demoLaunchRunning ? '' : '<button class="text-button" type="button" data-action="select-experience" data-experience="advanced">Leave practice for the full launch</button>'}
     </div>
   `;
 }
@@ -1071,7 +1060,7 @@ async function startGuidedPractice() {
     await stageTransactions({ openApproval: false, announce: false });
     state.activeApprovalId = null;
     state.approvalOpen = false;
-    setLaunchWorkspace('execute');
+    setLaunchWorkspace('mint');
     renderAll();
     await runDemoLaunch();
   } catch (error) {
@@ -1079,7 +1068,7 @@ async function startGuidedPractice() {
     state.demoLaunchRunning = false;
     state.activeApprovalId = null;
     state.approvalOpen = false;
-    setLaunchWorkspace('execute');
+    setLaunchWorkspace('mint');
     renderAll();
     notify('Practice stopped safely; no SOL was spent');
   }
@@ -1428,7 +1417,7 @@ function normalizeExecutionLedgerEntry(entry, { restoring = false } = {}) {
     startedAt,
     startedIso: new Date(startedAt).toISOString(),
     phase: compactLedgerText(entry.phase || 'run', 32) || 'run',
-    label: compactLedgerText(entry.label || 'Classic operation', 90) || 'Classic operation',
+    label: compactLedgerText(entry.label || 'Launch operation', 90) || 'Launch operation',
     detail: compactLedgerText(entry.detail || entry.error || 'Guarded local-wallet execution.'),
     estimatedCostSol: Number.isFinite(Number(entry.estimatedCostSol)) ? Number(entry.estimatedCostSol) : null,
     balanceDeltaSol: Number.isFinite(Number(entry.balanceDeltaSol)) ? Number(entry.balanceDeltaSol) : null,
@@ -2927,10 +2916,10 @@ function executionLedgerDescriptor(input = {}) {
     };
   }
   return {
-    label: input.label || 'Classic operation',
+    label: input.label || 'Launch operation',
     phase: executionLedgerPhase(input),
     estimatedCostSol: null,
-    detail: input.detail || 'Guarded classic endpoint execution.',
+    detail: input.detail || 'Guarded local launch execution.',
   };
 }
 
@@ -3461,7 +3450,7 @@ function liveRunProgressContext() {
             ? 'execution readiness'
             : proof
               ? proof.source || 'launch proof'
-              : 'classic progress';
+              : 'launch progress';
 
   return {
     active: hasLiveEvidence,
@@ -3556,7 +3545,7 @@ function renderAgentConsole() {
   const nextDetail = waitingForPlan
     ? 'Trebuchet will stage one decoded local-wallet run before you arm it.'
     : complete
-      ? 'All visible run checkpoints are complete; inspect the proof and Classic retirement gate.'
+      ? 'All visible run checkpoints are complete; inspect and save the final proof.'
       : activeTx?.effects?.[0] || 'Trebuchet will show the next local-wallet operation here.';
   const activeCheck = agentCheckForStage(activeTx?.stage, activeTx);
 
@@ -4467,7 +4456,7 @@ function customQuoteInfoBadge(pool = {}) {
   if (record?.loading) return { label: 'Checking', className: 'warn', detail: 'Resolving metadata, authorities, and Raydium route.' };
   if (record?.error) return { label: 'Check failed', className: 'danger', detail: record.error };
   const info = customQuoteResolvedInfo(pool);
-  if (!info) return { label: 'Unverified', className: 'warn', detail: 'Run the classic quote-token info check before executing this custom pool.' };
+  if (!info) return { label: 'Unverified', className: 'warn', detail: 'Verify the quote token before executing this custom pool.' };
   if (info.compatible === false) return { label: 'Incompatible', className: 'danger', detail: 'Token is not compatible with the Raydium CLMM launch path.' };
   if (info.freezeAuthorityBlock === true) return { label: 'Freeze block', className: 'danger', detail: 'Quote token freeze authority can strand launch-wallet balances.' };
   if (info.raydiumTradeable === 'no') return { label: 'No route', className: 'danger', detail: 'Raydium could not route this quote token during the Step 2 probe.' };
@@ -4477,7 +4466,7 @@ function customQuoteInfoBadge(pool = {}) {
   if (info.mintAuthorityWarning === true) {
     return { label: 'Mint warning', className: 'warn', detail: 'Quote token mint authority is still active; supply can be inflated.' };
   }
-  return { label: 'Verified', className: '', detail: 'Classic quote-token metadata, compatibility, authority, and route checks passed.' };
+  return { label: 'Verified', className: '', detail: 'Quote-token metadata, compatibility, authority, and route checks passed.' };
 }
 
 function poolQuoteRouteKey(pool = {}) {
@@ -4638,7 +4627,7 @@ function topologyAllocationIssues(topology = {}) {
       state: 'danger',
       poolId: 'pool-allocation',
       title: 'Pool allocation mismatch',
-      detail: `Pool rows add to ${rowTotalPoolPercent.toFixed(2)}% but the topology summary says ${summaryTotalPoolPercent.toFixed(2)}%. Refresh the launch plan before replacing Classic.`,
+      detail: `Pool rows add to ${rowTotalPoolPercent.toFixed(2)}% but the topology summary says ${summaryTotalPoolPercent.toFixed(2)}%. Refresh the launch plan before execution.`,
     });
   }
   if (totalPoolPercent <= 0) {
@@ -4646,7 +4635,7 @@ function topologyAllocationIssues(topology = {}) {
       state: 'danger',
       poolId: 'pool-allocation',
       title: 'No liquidity allocation',
-      detail: 'At least one Classic pool must receive token supply.',
+      detail: 'At least one launch pool must receive token supply.',
     });
   }
   if (supplyUsed > 100.0001) {
@@ -4980,32 +4969,47 @@ function launchWorkspaceStatus() {
   const fundingEstimateStatus = classicFundingEstimateStatus(currentLaunchConfig());
   const estimate = fundingEstimateStatus.matchesConfig ? state.classicFundingEstimate : null;
   const proof = currentLaunchProof();
-  const recoveryCount = Number(state.recovery.failedJournalCount || 0)
-    + Number(state.recovery.pendingWalletCount || 0);
   const readinessStatus = state.executionReadiness?.status;
+  const poolCount = currentLaunchConfig().poolTopology.pools.length;
+  const tokenComplete = Boolean(isReadinessPhaseComplete('token') || proof?.token?.mint);
+  const liquidityComplete = Boolean(
+    isReadinessPhaseComplete('liquidity')
+    || (poolCount > 0 && launchProofPoolIds(proof).length >= poolCount)
+  );
+  const sweepComplete = transferHasWalletEmptyFinalSweepEvidence(proof?.transfer);
   return {
-    configure: state.launchPlan ? 'Plan staged' : 'Token & pools',
+    wallet: selectedLaunchWalletPublicKey()
+      ? walletIsUnlocked() ? 'Ready' : 'Unlock'
+      : 'Choose signer',
+    configure: state.launchPlan ? 'Plan staged' : 'Design launch',
     fund: fundingEstimateStatus.stale
       ? 'Refresh estimate'
       : estimate?.totalSol
         ? `${Number(estimate.totalSol).toFixed(2)} SOL`
         : 'Estimate',
-    execute: state.fullRunRunning || state.realExecutionRunning || state.demoLaunchRunning
+    mint: tokenComplete
+      ? 'Created'
+      : state.fullRunRunning || state.realExecutionRunning || state.demoLaunchRunning
       ? 'Running'
       : readinessStatus === 'ready'
         ? 'Ready'
         : readinessStatus === 'blocked'
           ? 'Blocked'
-          : 'Preflight',
-    verify: proof ? 'Proof loaded' : 'Needs proof',
-    recover: recoveryCount ? `${recoveryCount} item${recoveryCount === 1 ? '' : 's'}` : 'Clear',
+          : 'Review mint',
+    liquidity: liquidityComplete
+      ? 'Locked'
+      : state.fullRunRunning || state.realExecutionRunning
+        ? 'Running'
+        : tokenComplete ? 'Create pools' : 'Waiting',
+    finish: sweepComplete ? 'Complete' : liquidityComplete ? 'Sweep & proof' : 'Waiting',
   };
 }
 
 function renderLaunchWorkspace() {
-  const workspace = launchWorkspaces.some((item) => item.id === state.launchWorkspace)
+  const requestedWorkspace = launchWorkspaces.some((item) => item.id === state.launchWorkspace)
     ? state.launchWorkspace
-    : 'configure';
+    : 'wallet';
+  const workspace = state.experienceMode === 'guided' ? 'configure' : requestedWorkspace;
   state.launchWorkspace = workspace;
   document.body.dataset.launchWorkspace = workspace;
 
@@ -5792,7 +5796,7 @@ function renderPoolEditorPanel() {
           <span class="eyebrow">Main pool</span>
           <h3>SOL pool slices and support</h3>
         </span>
-        <span class="risk-badge">Classic</span>
+        <span class="risk-badge">Built in</span>
       </div>
       <div class="pool-field-grid">
         <label><span>Support depth %</span><input data-base-field="baseSupportDepth" type="number" min="1" max="50" step="1" value="${escapeHtml(state.baseSupportDepth)}"></label>
@@ -5808,7 +5812,7 @@ function renderPoolEditorPanel() {
       <article class="pool-row">
         <div class="pool-row-head">
           <span>
-            <span class="eyebrow">Classic quote pool</span>
+            <span class="eyebrow">Quote pool</span>
             <h3>${escapeHtml(quotePool.quoteSymbol)} route</h3>
           </span>
           <span class="risk-badge warn">Acquire</span>
@@ -5886,7 +5890,7 @@ function renderClassicPhaseTree(topology) {
   return `
     <div class="phase-tree-head">
       <span>
-        <span class="eyebrow">Classic phase tree</span>
+        <span class="eyebrow">Launch position tree</span>
         <h3>Create / open / lock / transfer checkpoints</h3>
       </span>
       <span class="risk-badge warn">${state.liveOps.lpEvents.length} live event${state.liveOps.lpEvents.length === 1 ? '' : 's'}</span>
@@ -11684,7 +11688,7 @@ function renderQuotePoolGuidance() {
   const detail = fundingEstimateStatus.stale
     ? 'Funding estimate is stale for this launch model; rerun it before acquiring quote tokens.'
     : fundingEstimateStatus.matchesConfig
-      ? 'Every non-SOL pool is classified from the current classic funding estimate.'
+      ? 'Every non-SOL pool is classified by the current funding estimate.'
       : 'Run the estimate before launch so flywheel quote-token funding is explicit.';
 
   return `
@@ -11819,7 +11823,7 @@ function renderQuoteAcquirePanel() {
         : manualCount
           ? `${manualCount} quote token${manualCount === 1 ? '' : 's'} require manual prefund.`
           : 'No quote-token acquire needed for this launch plan.')
-      : 'Run the classic funding estimate to discover quote-token acquire routes.';
+      : 'Run the funding estimate to discover quote-token acquire routes.';
   const canStart = state.apiStatus === 'connected'
     && Boolean(selectedLaunchWalletPublicKey())
     && routes.length > 0
@@ -11839,7 +11843,7 @@ function renderQuoteAcquirePanel() {
       <div class="quote-acquire-head">
         <span>
           <span class="eyebrow">Quote-token acquire</span>
-          <h3>Classic funding step</h3>
+          <h3>Funding step</h3>
           <p>${escapeHtml(detail)}</p>
         </span>
         <span class="risk-badge ${escapeHtml(badge.className)}">${escapeHtml(badge.label)}</span>
@@ -12114,7 +12118,7 @@ function finalizationNoticeRows({
   if (staleReport) {
     rows.push({
       state: 'warn',
-      text: 'Existing report proof belongs to an older launch state. Regenerate the report before comparing against Classic.',
+      text: 'Existing report proof belongs to an older launch state. Regenerate it before treating the launch record as current.',
     });
   }
   if (reportNeedsFinalArtifact) {
@@ -12148,14 +12152,6 @@ function renderFinalizationPanel() {
   const proof = currentLaunchProof();
   const config = proofConfigForFingerprint(proof, currentLaunchConfig());
   const badge = finalizationBadge(proof);
-  const reportParityAudit = buildV2ReportParityAudit(proof, config);
-  const retirementGate = buildClassicRetirementGate(proof, reportParityAudit, config);
-  const fieldVerification = buildV2FieldVerification({
-    proof,
-    config,
-    audit: reportParityAudit,
-    retirementGate,
-  });
   const tokenMint = proof?.token?.mint || null;
   const poolCount = launchProofPoolIds(proof).length;
   const positionCount = proofPositions(proof?.liquidity?.results || []);
@@ -12215,11 +12211,6 @@ function renderFinalizationPanel() {
     : airdropNeedsEvidenceRepair ? 'Repair proof'
     : deliveredAirdrop || failedAirdrop ? 'Airdrop recorded' : 'Run airdrop';
   const explorerItems = proofExplorerItems(proof, reportUri, config);
-  const fieldHandoffRows = fieldVerification.ready ? [] : [
-    ...(Array.isArray(fieldVerification.blockers) ? fieldVerification.blockers.map((item) => ({ ...item, group: 'Field' })) : []),
-    ...(Array.isArray(fieldVerification.criteriaBlockers) ? fieldVerification.criteriaBlockers.map((item) => ({ ...item, group: 'Criterion' })) : []),
-  ].filter((item) => item?.pass !== true).slice(0, 3);
-  const fieldHandoffRemaining = Math.max(0, Number(fieldVerification.blockerCount || 0) + Number(fieldVerification.criteriaBlockerCount || 0) - fieldHandoffRows.length);
   const notices = finalizationNoticeRows({
     report,
     localDossier,
@@ -12233,8 +12224,8 @@ function renderFinalizationPanel() {
     <div class="finalize-panel">
       <div class="finalize-head">
         <span>
-          <span class="eyebrow">Classic Step 6 parity</span>
-          <h3>Report, airdrop, proof review</h3>
+          <span class="eyebrow">Launch completion</span>
+          <h3>Report, airdrop, and proof</h3>
           <p>${tokenMint ? `Mint ${shortAddress(tokenMint)} has ${poolCount} recorded pool ID${poolCount === 1 ? '' : 's'}.` : 'Create token and liquidity before final proof.'}</p>
         </span>
         <span class="risk-badge ${escapeHtml(badge.className)}">${escapeHtml(badge.label)}</span>
@@ -12261,12 +12252,8 @@ function renderFinalizationPanel() {
           <em>${finalDestination ? escapeHtml(shortAddress(finalDestination)) : 'no destination'}</em>
         </span>
       </div>
-      <nav class="verify-panel-tabs" role="tablist" aria-label="Verify workspace detail">
-        <button class="${state.verifyPanel === 'proof' ? 'is-selected' : ''}" type="button" role="tab" aria-selected="${state.verifyPanel === 'proof' ? 'true' : 'false'}" data-action="select-verify-panel" data-verify-panel="proof">Proof bundle</button>
-        <button class="${state.verifyPanel === 'audit' ? 'is-selected' : ''}" type="button" role="tab" aria-selected="${state.verifyPanel === 'audit' ? 'true' : 'false'}" data-action="select-verify-panel" data-verify-panel="audit">Parity audit</button>
-      </nav>
       <div class="verify-panel-stage">
-      <div class="proof-review-panel" id="proofExplorer" data-verify-panel-view="proof" ${state.verifyPanel === 'proof' ? '' : 'hidden'}>
+      <div class="proof-review-panel" id="proofExplorer">
         <div class="proof-review-head">
           <span>
             <span class="eyebrow">Proof review</span>
@@ -12281,17 +12268,6 @@ function renderFinalizationPanel() {
               : `<span><small>${escapeHtml(item.label)}</small><strong>${escapeHtml(item.value)}</strong></span>`
           )).join('') : '<span><small>Status</small><strong>No proof yet</strong></span>'}
         </div>
-        ${fieldHandoffRows.length ? `<div class="field-handoff-list" aria-label="Missing field proof">
-          ${fieldHandoffRows.map((item) => `<article>
-            <small>${escapeHtml(item.group || 'Proof')} · ${escapeHtml(item.action || 'review')}</small>
-            <strong>${escapeHtml(item.label || item.id || 'Proof row')}</strong>
-            <span>${escapeHtml(item.detail || item.evidence || 'Evidence is missing.')}</span>
-          </article>`).join('')}
-          ${fieldHandoffRemaining ? `<p>+${fieldHandoffRemaining} more blocker${fieldHandoffRemaining === 1 ? '' : 's'} in the field parity packet.</p>` : ''}
-        </div>` : ''}
-      </div>
-      <div class="verify-panel-audit" data-verify-panel-view="audit" ${state.verifyPanel === 'audit' ? '' : 'hidden'}>
-        ${renderReportParityAuditPanel(reportParityAudit)}
       </div>
       </div>
       <div class="operator-toolbar compact">
@@ -12355,12 +12331,12 @@ function renderCancelRefundPanel(config = currentLaunchConfig()) {
   const detail = state.cancelRefund.error
     || (result
       ? result.message
-      : 'Classic Cancel & Refund parity: sweep the selected launch wallet back to your destination. Already-created token or pools remain on-chain.');
+      : 'Sweep the selected launch wallet back to your destination. Already-created token or pools remain on-chain.');
   return `
     <div class="cancel-refund-panel ${escapeHtml(badge.className)}">
       <div class="cancel-refund-head">
         <span>
-          <span class="eyebrow">Classic cancel/refund</span>
+          <span class="eyebrow">Abort and recover</span>
           <h3>Abort launch and sweep wallet</h3>
           <p>${escapeHtml(detail)}</p>
         </span>
@@ -12420,7 +12396,7 @@ function renderClassicBridge() {
   const readinessDetail = quoteSafety.blockers[0]?.detail
     || blockers[0]?.detail
     || readiness?.nextEndpoint
-    || (state.apiStatus === 'connected' ? 'Check the managed-wallet and classic endpoint payloads.' : 'Open through the local Trebuchet app to check execution.');
+    || (state.apiStatus === 'connected' ? 'Run the preflight check to identify the next safe launch action.' : 'Open through the local Trebuchet app to check execution.');
   const demoRunLabel = state.demoLaunchRunning
     ? 'Running demo'
     : state.lastDemoLaunchRun
@@ -12435,58 +12411,92 @@ function renderClassicBridge() {
     && state.apiStatus === 'connected'
     && Boolean(armedRunEnvelopeId)
     && quoteSafety.blockers.length === 0;
-  const canRunFull = canExecuteNext && !state.fullRunRunning && !state.realExecutionRunning;
-  const executeNextLabel = state.realExecutionRunning
-    ? 'Executing'
-    : readiness?.nextAction || 'Execute next';
-  const fullRunLabel = state.fullRunRunning
-    ? state.fullRunStep || 'Running'
-    : 'Run full';
   $('#classicSummary').textContent = `${poolCount} pool${poolCount === 1 ? '' : 's'} · ${sliceCount} slice${sliceCount === 1 ? '' : 's'} · ${ladderCount} ladder`;
 
-  const phaseRows = classicParityPhases.map((phase) => {
-    const stateName = phaseState(phase, config);
-    const icon = stateName === 'pass' ? 'fa-check' : stateName === 'danger' ? 'fa-ban' : 'fa-triangle-exclamation';
-    const actionLabel = {
-      wallet: 'Wallet',
-      vanity: state.vanityRunning ? 'Cancel' : 'Grind',
-      token: 'Plan',
-      pools: 'Plan',
-      funding: 'Estimate',
-      execution: state.executionChecking ? 'Checking' : 'Check',
-      recovery: 'Journal',
-      sweep: 'Plan',
-    }[phase.id] || 'Open';
-    const detail = phase.id === 'funding' && fundingEstimateStatus.stale
-      ? 'Funding estimate is stale; rerun before execution'
-      : phase.id === 'funding' && estimate
-        ? `${totalSol.toFixed(3)} SOL / ${routeCount} acquire route${routeCount === 1 ? '' : 's'}`
-      : phase.id === 'pools'
-        ? `${poolCount} pools, ${sliceCount} main slices, ${ladderCount} ladder bands`
-        : phase.id === 'vanity' && state.vanityCandidates.length
-          ? `${state.vanityCandidates.length} saved option${state.vanityCandidates.length === 1 ? '' : 's'}`
-          : phase.detail;
-    return `
-      <article class="classic-phase ${stateName}">
-        <i class="fa-solid ${icon}" aria-hidden="true"></i>
+  const walletPublicKey = selectedLaunchWalletPublicKey();
+  const selectedWallet = account();
+  const walletReady = Boolean(walletPublicKey && walletIsUnlocked());
+  const tokenComplete = Boolean(isReadinessPhaseComplete('token') || currentLaunchProof()?.token?.mint);
+  const liquidityComplete = Boolean(
+    isReadinessPhaseComplete('liquidity')
+    || (poolCount > 0 && launchProofPoolIds(currentLaunchProof()).length >= poolCount)
+  );
+  const finalSweepComplete = transferHasWalletEmptyFinalSweepEvidence(currentLaunchProof()?.transfer);
+  const mintCanRun = canExecuteNext && readiness?.nextEndpoint === '/api/create-token';
+  const liquidityCanRun = canExecuteNext && ['/api/create-lp', '/api/resume-launch'].includes(readiness?.nextEndpoint);
+  const finishCanRun = canExecuteNext && readiness?.nextEndpoint === '/api/transfer-assets';
+  const readinessPanel = ({ title, detail, canRun, runLabel, complete, nextWorkspace }) => `
+    <div class="execution-readiness ${escapeHtml(complete ? '' : effectiveReadinessMeta.className)}">
+      <div class="readiness-main">
         <span>
-          <h3>${escapeHtml(phase.title)}</h3>
-          <p>${escapeHtml(detail)}</p>
+          <span class="eyebrow">${complete ? 'Phase complete' : 'Preflight'}</span>
+          <strong>${escapeHtml(complete ? title : readiness?.nextAction || title)}</strong>
+          <small>${escapeHtml(complete ? detail : readinessDetail)}</small>
         </span>
-        <button class="pill-button" type="button" data-action="${escapeHtml(phase.action)}">${escapeHtml(actionLabel)}</button>
-      </article>
-    `;
-  }).join('');
+        <span class="readiness-counts">
+          <strong>${escapeHtml(complete ? 'Recorded in launch proof' : readiness?.nextEndpoint || 'Check required')}</strong>
+          <small>${blockers.length + quoteSafety.blockers.length} blocker${blockers.length + quoteSafety.blockers.length === 1 ? '' : 's'} · ${warnings.length + quoteSafety.warnings.length} warning${warnings.length + quoteSafety.warnings.length === 1 ? '' : 's'}</small>
+        </span>
+        <span class="risk-badge ${escapeHtml(complete ? '' : effectiveReadinessMeta.className)}">${escapeHtml(complete ? 'Done' : effectiveReadinessMeta.label)}</span>
+      </div>
+      <div class="launch-phase-actions">
+        <button class="secondary-button compact" type="button" data-action="check-readiness" ${state.executionChecking ? 'disabled' : ''}>
+          <i class="fa-solid fa-shield-halved"></i><span>${state.executionChecking ? 'Checking' : 'Check prerequisites'}</span>
+        </button>
+        ${complete
+          ? `<button class="primary-button compact" type="button" data-launch-workspace="${escapeHtml(nextWorkspace)}"><span>Continue</span><i class="fa-solid fa-arrow-right"></i></button>`
+          : state.demoActive
+            ? `<button class="primary-button compact" type="button" data-action="run-demo-launch" ${state.demoLaunchRunning ? 'disabled' : ''}><span>${escapeHtml(demoRunLabel)}</span><i class="fa-solid fa-flask"></i></button>`
+            : `<button class="primary-button compact" type="button" data-action="execute-next-run" ${!canRun || state.realExecutionRunning || state.fullRunRunning ? 'disabled' : ''}><span>${escapeHtml(state.realExecutionRunning ? 'Running' : runLabel)}</span><i class="fa-solid fa-arrow-right"></i></button>`}
+      </div>
+      <div class="readiness-phases">${phaseSummary}</div>
+    </div>
+  `;
 
   $('#classicBridge').innerHTML = `
-    <section class="classic-workspace-section classic-workspace-fund" data-classic-workspace="fund">
-      <div class="classic-bridge-head">
-        <span>
-          <span class="eyebrow">Funding workspace</span>
-          <h2>Cost, balance, and quote readiness</h2>
+    <section class="classic-workspace-section launch-phase-workspace" data-classic-workspace="wallet">
+      <section class="launch-step-guide" aria-labelledby="walletStepTitle">
+        <span class="launch-step-kicker">Phase 1 of 6</span>
+        <div>
+          <h2 id="walletStepTitle">Choose a temporary launch wallet</h2>
+          <p>Trebuchet signs from an isolated local wallet, checkpoints every completed action, and returns all remaining assets to your destination in the final phase.</p>
+        </div>
+        <aside><i class="fa-solid fa-shield-halved" aria-hidden="true"></i><span><strong>Your personal wallet never signs the launch.</strong> It only funds this address and receives the final sweep.</span></aside>
+      </section>
+      <article class="launch-wallet-choice ${walletReady ? 'is-ready' : 'needs-action'}">
+        <span class="launch-wallet-choice-icon"><i class="fa-solid ${walletPublicKey ? 'fa-key' : 'fa-wallet'}"></i></span>
+        <span class="launch-wallet-choice-copy">
+          <small>${walletPublicKey ? 'Selected launch wallet' : 'No launch wallet selected'}</small>
+          <strong>${escapeHtml(walletPublicKey ? selectedWallet.name : 'Create or select a wallet')}</strong>
+          <code>${escapeHtml(walletPublicKey || 'Trebuchet will generate and encrypt a fresh keypair.')}</code>
         </span>
-        <span class="risk-badge ${state.apiStatus === 'connected' ? '' : 'warn'}">${state.apiStatus === 'connected' ? 'Local API' : 'Preview'}</span>
+        <span class="risk-badge ${walletReady ? '' : 'warn'}">${walletReady ? 'Ready' : walletPublicKey ? 'Unlock' : 'Required'}</span>
+      </article>
+      <div class="launch-guidance-list">
+        <article><i class="fa-solid fa-lock"></i><span><strong>Encrypted on this Mac</strong><small>The Recovery PIN protects the launch secret.</small></span></article>
+        <article><i class="fa-solid fa-rotate-left"></i><span><strong>Safe to resume</strong><small>The launch journal records every durable checkpoint.</small></span></article>
+        <article><i class="fa-solid fa-arrow-right-arrow-left"></i><span><strong>Single-use signer</strong><small>Funding arrives here; leftovers and Fee Keys leave in Phase 6.</small></span></article>
       </div>
+      <div class="launch-phase-actions launch-phase-actions-split">
+        <div>
+          ${walletPublicKey
+            ? `<button class="secondary-button" type="button" data-action="copy-wallet-address"><i class="fa-solid fa-copy"></i><span>Copy address</span></button>
+               <button class="secondary-button" type="button" data-action="toggle-wallet"><i class="fa-solid ${walletReady ? 'fa-lock' : 'fa-unlock'}"></i><span>${walletReady ? 'Lock wallet' : 'Unlock wallet'}</span></button>`
+            : '<button class="primary-button" type="button" data-action="generate-wallet"><i class="fa-solid fa-plus"></i><span>Create launch wallet</span></button>'}
+          <button class="secondary-button" type="button" data-view="wallet"><i class="fa-solid fa-wallet"></i><span>Manage wallets</span></button>
+        </div>
+        <button class="primary-button" type="button" data-launch-workspace="configure" ${walletPublicKey ? '' : 'disabled'}><span>Continue to token &amp; pools</span><i class="fa-solid fa-arrow-right"></i></button>
+      </div>
+    </section>
+    <section class="classic-workspace-section classic-workspace-fund" data-classic-workspace="fund">
+      <section class="launch-step-guide" aria-labelledby="fundStepTitle">
+        <span class="launch-step-kicker">Phase 3 of 6</span>
+        <div>
+          <h2 id="fundStepTitle">Estimate, fund, and verify the wallet</h2>
+          <p>Trebuchet calculates rent, pool costs, liquidity SOL, and any quote tokens. Fund only the selected launch wallet, then wait for the balance check to pass.</p>
+        </div>
+        <aside><i class="fa-solid fa-coins" aria-hidden="true"></i><span><strong>${escapeHtml(totalSol ? `${totalSol.toFixed(3)} SOL estimated` : 'Run the estimator first')}</strong>${routeCount ? ` · ${routeCount} quote acquire route${routeCount === 1 ? '' : 's'}` : ' · no quote acquisition calculated yet'}</span></aside>
+      </section>
       <div class="classic-stats">
         <span><small>Pools</small><strong>${poolCount}</strong></span>
         <span><small>LP slices</small><strong>${sliceCount}</strong></span>
@@ -12496,45 +12506,88 @@ function renderClassicBridge() {
         <span><small>Funding</small><strong>${fundingEstimateStatus.stale ? 'Re-estimate' : totalSol ? `${totalSol.toFixed(2)} SOL` : 'Run estimate'}</strong></span>
       </div>
       ${renderQuoteAcquirePanel()}
+      <div class="launch-phase-actions launch-phase-actions-split">
+        <button class="secondary-button" type="button" data-launch-workspace="configure"><i class="fa-solid fa-arrow-left"></i><span>Edit token &amp; pools</span></button>
+        <button class="primary-button" type="button" data-launch-workspace="mint" ${estimate ? '' : 'disabled'}><span>Continue to create token</span><i class="fa-solid fa-arrow-right"></i></button>
+      </div>
     </section>
-    <section class="classic-workspace-section classic-workspace-execute" data-classic-workspace="execute">
-      <div class="classic-bridge-head">
-        <span>
-          <span class="eyebrow">Execution workspace</span>
-          <h2>Preflight and guarded launch phases</h2>
-        </span>
-        <span class="risk-badge ${escapeHtml(effectiveReadinessMeta.className)}">${escapeHtml(effectiveReadinessMeta.label)}</span>
-      </div>
-      <div class="execution-readiness ${escapeHtml(effectiveReadinessMeta.className)}">
-        <div class="readiness-main">
-          <span>
-            <span class="eyebrow">Execution readiness</span>
-            <strong>${escapeHtml(readiness?.nextAction || 'Classic endpoint check')}</strong>
-            <small>${escapeHtml(readinessDetail)}</small>
-          </span>
-          <span class="readiness-counts">
-            <strong>${escapeHtml(readiness?.nextEndpoint || 'No endpoint')}</strong>
-            <small>${blockers.length + quoteSafety.blockers.length} blocker${blockers.length + quoteSafety.blockers.length === 1 ? '' : 's'} · ${warnings.length + quoteSafety.warnings.length} warning${warnings.length + quoteSafety.warnings.length === 1 ? '' : 's'}</small>
-          </span>
-          <span class="risk-badge ${escapeHtml(effectiveReadinessMeta.className)}">${escapeHtml(effectiveReadinessMeta.label)}</span>
-          ${state.demoActive ? `<button class="pill-button" type="button" data-action="run-demo-launch" ${state.demoLaunchRunning ? 'disabled' : ''}>${escapeHtml(demoRunLabel)}</button>` : ''}
-          ${!state.demoActive ? `<button class="pill-button danger" type="button" data-action="run-full-launch" ${!canRunFull ? 'disabled' : ''}>${escapeHtml(fullRunLabel)}</button>` : ''}
-          ${!state.demoActive ? `<button class="pill-button" type="button" data-action="execute-next-run" ${!canExecuteNext || state.realExecutionRunning || state.fullRunRunning ? 'disabled' : ''}>${escapeHtml(executeNextLabel)}</button>` : ''}
-          <button class="pill-button" type="button" data-action="check-readiness" ${state.executionChecking ? 'disabled' : ''}>${state.executionChecking ? 'Checking' : 'Check'}</button>
+    <section class="classic-workspace-section classic-workspace-execute" data-classic-workspace="mint">
+      <section class="launch-step-guide irreversible" aria-labelledby="mintStepTitle">
+        <span class="launch-step-kicker">Phase 4 of 6 · first on-chain action</span>
+        <div>
+          <h2 id="mintStepTitle">Create the token and renounce control</h2>
+          <p>Review the permanent facts below. Trebuchet mints the complete supply, attaches metadata, then revokes mint, freeze, and metadata-update authorities.</p>
         </div>
-        <div class="readiness-phases">${phaseSummary}</div>
+        <aside><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span><strong>This cannot be edited afterward.</strong> Correct mistakes in Phase 2 before running this phase.</span></aside>
+      </section>
+      <div class="launch-fact-grid">
+        <span><small>Name</small><strong>${escapeHtml(config.token.name || 'Untitled')}</strong></span>
+        <span><small>Symbol</small><strong>${escapeHtml(config.token.symbol || 'TOK')}</strong></span>
+        <span><small>Supply</small><strong>${escapeHtml(String(config.token.supply || '0'))}</strong></span>
+        <span><small>Contract address</small><strong>${escapeHtml(state.selectedVanityPublicKey ? shortAddress(state.selectedVanityPublicKey) : 'Random')}</strong></span>
       </div>
-      <div class="classic-phase-grid">${phaseRows}</div>
+      ${readinessPanel({
+        title: tokenComplete ? 'Token and authority proof recorded' : 'Create token',
+        detail: tokenComplete ? 'Mint, metadata, and authority posture are attached to the launch journal.' : 'Preflight checks the selected wallet, funding evidence, metadata, and permanent authority policy.',
+        canRun: mintCanRun,
+        runLabel: 'Create token',
+        complete: tokenComplete,
+        nextWorkspace: 'liquidity',
+      })}
+      <div class="launch-phase-secondary"><button class="text-button" type="button" data-launch-workspace="fund"><i class="fa-solid fa-arrow-left"></i> Back to funding</button></div>
+    </section>
+    <section class="classic-workspace-section classic-workspace-execute" data-classic-workspace="liquidity">
+      <section class="launch-step-guide irreversible" aria-labelledby="liquidityStepTitle">
+        <span class="launch-step-kicker">Phase 5 of 6 · market creation</span>
+        <div>
+          <h2 id="liquidityStepTitle">Create pools, open positions, and lock liquidity</h2>
+          <p>Trebuchet creates each planned market, opens main, ladder, support, and bootstrap positions, then locks them through Burn &amp; Earn and records every Fee Key.</p>
+        </div>
+        <aside><i class="fa-solid fa-lock" aria-hidden="true"></i><span><strong>Liquidity locks are permanent.</strong> The journal resumes only missing work if the app or RPC is interrupted.</span></aside>
+      </section>
+      <div class="launch-fact-grid">
+        <span><small>Pools</small><strong>${poolCount}</strong></span>
+        <span><small>Main slices</small><strong>${sliceCount}</strong></span>
+        <span><small>Ladder bands</small><strong>${ladderCount}</strong></span>
+        <span><small>Support</small><strong>${topology.pools.some((pool) => pool.support?.enabled) ? 'On' : 'Off'}</strong></span>
+      </div>
+      ${readinessPanel({
+        title: liquidityComplete ? 'Liquidity and lock proof recorded' : 'Create and lock liquidity',
+        detail: liquidityComplete ? 'Pool IDs, position NFTs, lock transactions, and Fee Keys are attached to the launch journal.' : 'Run this after the token phase completes. It can take several minutes; keep Trebuchet open.',
+        canRun: liquidityCanRun,
+        runLabel: readiness?.nextEndpoint === '/api/resume-launch' ? 'Resume missing work' : 'Create liquidity',
+        complete: liquidityComplete,
+        nextWorkspace: 'finish',
+      })}
       <details class="drawer phase-tree-drawer">
-        <summary><span>Phase topology</span><strong>${poolCount} pool${poolCount === 1 ? '' : 's'} / ${sliceCount} slice${sliceCount === 1 ? '' : 's'}</strong></summary>
+        <summary><span>Position-by-position progress</span><strong>${poolCount} pool${poolCount === 1 ? '' : 's'} / ${sliceCount} slice${sliceCount === 1 ? '' : 's'}</strong></summary>
         <div class="phase-tree">${renderClassicPhaseTree(topology)}</div>
       </details>
+      <div class="launch-phase-secondary"><button class="text-button" type="button" data-launch-workspace="mint"><i class="fa-solid fa-arrow-left"></i> Back to token</button></div>
     </section>
-    <section class="classic-workspace-section classic-workspace-verify" data-classic-workspace="verify">
+    <section class="classic-workspace-section classic-workspace-verify" data-classic-workspace="finish">
+      <section class="launch-step-guide" aria-labelledby="finishStepTitle">
+        <span class="launch-step-kicker">Phase 6 of 6</span>
+        <div>
+          <h2 id="finishStepTitle">Distribute, sweep, and save proof</h2>
+          <p>Deliver any configured airdrop, send Fee Keys and remaining assets to the destination wallet, verify the launch wallet is empty, and save the final dossier.</p>
+        </div>
+        <aside><i class="fa-solid ${finalSweepComplete ? 'fa-check' : 'fa-flag-checkered'}" aria-hidden="true"></i><span><strong>${finalSweepComplete ? 'Final sweep verified.' : finishCanRun ? 'Ready for final sweep.' : 'Complete the earlier phases first.'}</strong> Recovery remains available in History until every asset is accounted for.</span></aside>
+      </section>
+      ${!finalSweepComplete ? readinessPanel({
+        title: 'Finish distribution and sweep',
+        detail: 'The destination is checked again before Trebuchet transfers Fee Keys, airdrops, token balances, and SOL.',
+        canRun: finishCanRun,
+        runLabel: 'Run final sweep',
+        complete: false,
+        nextWorkspace: 'finish',
+      }) : ''}
       ${renderFinalizationPanel()}
-    </section>
-    <section class="classic-workspace-section classic-workspace-recover" data-classic-workspace="recover">
-      ${renderCancelRefundPanel(config)}
+      <details class="drawer launch-recovery-details">
+        <summary><span>Interrupted launch or refund</span><strong>Open recovery actions</strong></summary>
+        ${renderCancelRefundPanel(config)}
+      </details>
+      <div class="launch-phase-secondary"><button class="text-button" type="button" data-view="history"><i class="fa-solid fa-life-ring"></i> Open full recovery history</button></div>
     </section>
   `;
 }
@@ -15235,7 +15288,7 @@ function approvalHtml() {
         <div class="kv-row"><span>Origin</span><strong>makesometokens.com</strong></div>
         <div class="kv-row"><span>Wallet</span><strong>${walletIsUnlocked() ? escapeHtml(current.name) : 'Locked'}</strong></div>
         <div class="kv-row"><span>Policy</span><strong>Fund, simulate, arm</strong></div>
-        <p>No run is armed. Review the run plan after funding the launch wallet.</p>
+        <p>No run is armed. Review the launch plan in Token &amp; pools, then fund the wallet before execution.</p>
       </div>
       <div class="approval-actions">
         <button class="secondary-button" type="button" data-action="close-approval">Close</button>
@@ -17954,7 +18007,7 @@ async function simulateLaunch() {
     if (!state.demoActive && !(await setDemoMode(true, { announce: false }))) return;
     state.launchMode = 'dry-run';
     await stageTransactions();
-    setLaunchWorkspace('execute', { focus: true });
+    setLaunchWorkspace('mint', { focus: true });
     notify('Practice mode active; review the plan and run the demo');
   } catch (error) {
     notify(error.message || 'Could not enable Practice mode');
@@ -18932,10 +18985,10 @@ async function estimateClassicFunding() {
       resetManualPrefundState();
       renderAll();
       refreshManualPrefundBalance({ quiet: true }).catch(() => null);
-      notify(`Classic estimate: ${Number(state.classicFundingEstimate.totalSol || 0).toFixed(3)} SOL`);
+      notify(`Funding estimate: ${Number(state.classicFundingEstimate.totalSol || 0).toFixed(3)} SOL`);
       return;
     } catch (error) {
-      notify(error.message || 'Classic funding estimate failed');
+      notify(error.message || 'Funding estimate failed');
       return;
     }
   }
@@ -19283,13 +19336,13 @@ async function executeNextRunOperation() {
     } else if (Array.isArray(result.executed?.result?.results)) {
       history.unshift({
         title: `${config.token.symbol} liquidity executed`,
-        detail: `${result.executed.result.results.length} pool${result.executed.result.results.length === 1 ? '' : 's'} recorded by classic execution.`,
+        detail: `${result.executed.result.results.length} pool${result.executed.result.results.length === 1 ? '' : 's'} recorded by the launch runner.`,
         time: 'Just now',
       });
     } else {
       history.unshift({
         title: `${config.token.symbol} ${result.executed?.action || 'execution'} complete`,
-        detail: `${result.executed?.endpoint || 'Classic endpoint'} finished through the guarded Trebuchet bridge.`,
+        detail: `${result.executed?.endpoint || 'Launch operation'} finished through the guarded Trebuchet runner.`,
         time: 'Just now',
       });
     }
@@ -19300,7 +19353,7 @@ async function executeNextRunOperation() {
     });
     await refreshLocalApiState();
     pollLiveOps().catch(() => null);
-    notify(`${result.executed?.action || 'Classic operation'} complete`);
+    notify(`${result.executed?.action || 'Launch operation'} complete`);
   } catch (error) {
     applyExecutionErrorReadiness(error);
     finishExecutionLedgerEntry(ledgerId, {
@@ -20527,12 +20580,12 @@ function handleClick(event) {
     return;
   }
   if (action === 'guided-review-proof') {
-    setLaunchWorkspace('verify');
+    setLaunchWorkspace('finish');
     renderAll();
     return;
   }
   if (action === 'guided-return-run') {
-    setLaunchWorkspace('execute');
+    setLaunchWorkspace('mint');
     renderAll();
     return;
   }
@@ -20570,16 +20623,12 @@ function handleClick(event) {
       'start-vanity': 'configure',
       'estimate-funding': 'fund',
       'start-quote-acquire': 'fund',
-      'check-readiness': 'execute',
-      'run-demo-launch': 'execute',
-      'execute-next-run': 'execute',
-      'run-full-launch': 'execute',
-      'publish-launch-report': 'verify',
-      'download-launch-dossier': 'verify',
-      'compare-classic-report': 'verify',
-      'inspect-recovery': 'recover',
-      'cancel-refund-launch': 'recover',
-      'resume-journal': 'recover',
+      'publish-launch-report': 'finish',
+      'download-launch-dossier': 'finish',
+      'compare-classic-report': 'finish',
+      'inspect-recovery': 'finish',
+      'cancel-refund-launch': 'finish',
+      'resume-journal': 'finish',
     }[action];
     if (actionWorkspace) setLaunchWorkspace(actionWorkspace);
   }
@@ -20915,7 +20964,7 @@ function handleClick(event) {
     }
     setView('launch');
     state.verifyPanel = 'proof';
-    setLaunchWorkspace('verify', { focus: true });
+    setLaunchWorkspace('finish', { focus: true });
     renderAll();
     window.requestAnimationFrame(() => document.getElementById('proofExplorer')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
     return;
@@ -20924,7 +20973,7 @@ function handleClick(event) {
   if (action === 'inspect-runbook-blocker') {
     setView('launch');
     state.verifyPanel = 'audit';
-    setLaunchWorkspace('verify', { focus: true });
+    setLaunchWorkspace('finish', { focus: true });
     renderAll();
     notify(actionTarget.dataset.message || 'Review the active field-verification blocker');
     window.requestAnimationFrame(() => $('#stageList .is-active')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TREBUCHET · makesometokens</title>
   <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="./styles.css?v=68">
+  <link rel="stylesheet" href="./styles.css?v=69">
 </head>
 <body>
   <div class="app-shell">
@@ -69,8 +69,8 @@
               <small>makesometokens.com</small>
             </span>
           </span>
-          <span class="eyebrow" id="viewEyebrow">Step 1 of 6 · Setup</span>
-          <h1 id="viewTitle">Launch console</h1>
+          <span class="eyebrow" id="viewEyebrow">Six guided phases</span>
+          <h1 id="viewTitle">Launch a token</h1>
         </div>
         <div class="topbar-actions">
           <button class="icon-button" type="button" id="themeButton" aria-label="Toggle contrast">
@@ -113,8 +113,8 @@
                 <div class="agent-checks" aria-label="Launch checkpoints">
                   <button class="is-active" type="button" data-agent-check="setup" data-launch-workspace="configure">Setup</button>
                   <button type="button" data-agent-check="fund" data-launch-workspace="fund">Fund</button>
-                  <button type="button" data-agent-check="run" data-launch-workspace="execute">Run</button>
-                  <button type="button" data-agent-check="recover" data-launch-workspace="recover">Recover</button>
+                  <button type="button" data-agent-check="run" data-launch-workspace="mint">Run</button>
+                  <button type="button" data-agent-check="recover" data-launch-workspace="finish">Finish</button>
                 </div>
                 <p class="agent-footnote">Launch Solana tokens. No middleman. Your machine / your keys / your launch.</p>
               </section>
@@ -179,26 +179,30 @@
               </aside>
             </section>
 
-            <nav class="launch-workspace-tabs" id="launchWorkspaceTabs" role="tablist" aria-label="Launch workspace">
-              <button class="launch-workspace-tab is-selected" id="launchWorkspaceTabConfigure" type="button" role="tab" aria-selected="true" aria-controls="launchWorkspaceViewport" data-launch-workspace="configure">
+            <nav class="launch-workspace-tabs" id="launchWorkspaceTabs" role="tablist" aria-label="Six launch phases">
+              <button class="launch-workspace-tab is-selected" id="launchWorkspaceTabWallet" type="button" role="tab" aria-selected="true" aria-controls="launchWorkspaceViewport" data-launch-workspace="wallet">
+                <i class="fa-solid fa-wallet" aria-hidden="true"></i>
+                <span><strong>Wallet</strong><small data-launch-workspace-state="wallet">Choose signer</small></span>
+              </button>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabConfigure" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="configure">
                 <i class="fa-solid fa-sliders" aria-hidden="true"></i>
-                <span><strong>Configure</strong><small data-launch-workspace-state="configure">Token &amp; pools</small></span>
+                <span><strong>Token &amp; pools</strong><small data-launch-workspace-state="configure">Design launch</small></span>
               </button>
               <button class="launch-workspace-tab" id="launchWorkspaceTabFund" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="fund">
                 <i class="fa-solid fa-coins" aria-hidden="true"></i>
                 <span><strong>Fund</strong><small data-launch-workspace-state="fund">Estimate</small></span>
               </button>
-              <button class="launch-workspace-tab" id="launchWorkspaceTabExecute" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="execute">
-                <i class="fa-solid fa-bolt" aria-hidden="true"></i>
-                <span><strong>Execute</strong><small data-launch-workspace-state="execute">Preflight</small></span>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabMint" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="mint">
+                <i class="fa-solid fa-coins" aria-hidden="true"></i>
+                <span><strong>Create token</strong><small data-launch-workspace-state="mint">Review mint</small></span>
               </button>
-              <button class="launch-workspace-tab" id="launchWorkspaceTabVerify" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="verify">
-                <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
-                <span><strong>Verify</strong><small data-launch-workspace-state="verify">Proof</small></span>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabLiquidity" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="liquidity">
+                <i class="fa-solid fa-water" aria-hidden="true"></i>
+                <span><strong>Liquidity</strong><small data-launch-workspace-state="liquidity">Pools &amp; locks</small></span>
               </button>
-              <button class="launch-workspace-tab" id="launchWorkspaceTabRecover" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="recover">
-                <i class="fa-solid fa-life-ring" aria-hidden="true"></i>
-                <span><strong>Recover</strong><small data-launch-workspace-state="recover">Clear</small></span>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabFinish" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="finish">
+                <i class="fa-solid fa-flag-checkered" aria-hidden="true"></i>
+                <span><strong>Finish</strong><small data-launch-workspace-state="finish">Sweep &amp; proof</small></span>
               </button>
             </nav>
 
@@ -214,17 +218,29 @@
               <div class="experience-row" role="tablist" aria-label="Launch experience">
                 <button class="experience-button is-selected" type="button" role="tab" aria-selected="true" data-action="select-experience" data-experience="guided">
                   <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
-                  <span><strong>Guided tutorial</strong><small>Practice, step by step</small></span>
+                  <span><strong>Guided practice</strong><small>Learn with zero spend</small></span>
                 </button>
                 <button class="experience-button" type="button" role="tab" aria-selected="false" data-action="select-experience" data-experience="advanced">
                   <i class="fa-solid fa-sliders" aria-hidden="true"></i>
-                  <span><strong>Advanced controls</strong><small>Leave the tutorial</small></span>
+                  <span><strong>Full launch</strong><small>Six guided on-chain phases</small></span>
                 </button>
               </div>
 
               <section class="guided-launch-flow" id="guidedLaunchFlow" aria-live="polite"></section>
 
               <div class="advanced-launch-controls" id="advancedLaunchControls">
+              <section class="launch-step-guide configure-step-guide" aria-labelledby="configureStepTitle">
+                <span class="launch-step-kicker">Phase 2 of 6</span>
+                <div>
+                  <h2 id="configureStepTitle">Design the token and its markets</h2>
+                  <p>Set the permanent token identity, decide how supply enters liquidity, and choose where Fee Keys and remaining assets go.</p>
+                </div>
+                <aside>
+                  <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                  <span><strong>Next:</strong> review the plan before funding.</span>
+                  <button class="pill-button" type="button" data-action="review-plan">Review plan</button>
+                </aside>
+              </section>
               <div class="mode-row" role="group" aria-label="Run target">
                 <button class="mode-button" type="button" data-mode="guarded" data-label="Guarded live run">
                   <strong>Live run</strong>
@@ -271,13 +287,18 @@
                     <input id="launchSol" type="number" value="3.5" min="0" step="0.1">
                   </label>
                 </form>
-                <section class="vanity-panel" aria-label="Vanity CA grinder">
+                <details class="vanity-panel vanity-details">
+                  <summary>
+                    <span>Contract address</span>
+                    <strong>Random address · recommended</strong>
+                  </summary>
+                  <div class="vanity-details-body" aria-label="Optional Vanity CA grinder">
                   <div class="manifest-head">
                     <span>
                       <span class="eyebrow">Custom Vanity CA</span>
                       <h3>Starts &amp; Ends With</h3>
                     </span>
-                    <span class="risk-badge danger">Classic</span>
+                    <span class="risk-badge">Optional</span>
                   </div>
                   <div class="vanity-inputs">
                     <label>
@@ -293,26 +314,32 @@
                     <button class="pill-button is-active" type="button" data-action="select-vanity" data-public-key="" aria-pressed="true">Random CA</button>
                     <button class="pill-button" type="button" data-action="start-vanity">Grind CA</button>
                   </div>
-                </section>
+                  </div>
+                </details>
               </div>
 
-              <details class="drawer classic-controls">
+              <details class="drawer classic-controls launch-design-details">
                 <summary>
-                  <span>Classic parity controls</span>
-                  <strong id="classicSummary">Wallet · CA · pools · funding · recovery</strong>
+                  <span>Liquidity and distribution recipe</span>
+                  <strong id="classicSummary">Simple SOL pool · no allocation</strong>
                 </summary>
-                <form class="classic-grid" id="classicConfig" aria-label="Classic launch parity configuration">
+                <div class="launch-design-intro">
+                  <strong>The default recipe is ready for a straightforward launch.</strong>
+                  <p>Open this only when you need multiple pools, a token allocation, an airdrop, or a different Fee Key destination.</p>
+                </div>
+                <form class="classic-grid" id="classicConfig" aria-label="Liquidity and distribution configuration">
+                  <div class="launch-control-group-heading">
+                    <span class="eyebrow">Liquidity recipe</span>
+                    <strong>How much supply enters the market?</strong>
+                    <small>The SOL pool is the primary market. Quote pools, slices, ladder bands, and support are optional.</small>
+                  </div>
                   <label>
                     <span>SOL pool %</span>
-                    <input id="mainPoolPercent" type="number" value="70" min="0" max="100" step="0.1">
+                    <input id="mainPoolPercent" type="number" value="100" min="0" max="100" step="0.1">
                   </label>
                   <label>
                     <span>Quote pool %</span>
-                    <input id="quotePoolPercent" type="number" value="10" min="0" max="100" step="0.1">
-                  </label>
-                  <label>
-                    <span>Prealloc %</span>
-                    <input id="preallocationSupplyPercent" type="number" value="0" min="0" max="99" step="0.1">
+                    <input id="quotePoolPercent" type="number" value="0" min="0" max="100" step="0.1">
                   </label>
                   <label>
                     <span>Quote venue</span>
@@ -324,30 +351,39 @@
                   </label>
                   <label>
                     <span>Main slices</span>
-                    <input id="sliceShares" type="text" value="98,1,1" autocomplete="off">
+                    <input id="sliceShares" type="text" value="100" autocomplete="off">
                   </label>
                   <label>
                     <span>Ladder bands</span>
-                    <input id="ladderBands" type="number" value="5" min="0" max="20" step="1">
+                    <input id="ladderBands" type="number" value="0" min="0" max="20" step="1">
                   </label>
                   <label>
                     <span>Support SOL</span>
-                    <input id="supportSol" type="number" value="0.35" min="0" step="0.05">
+                    <input id="supportSol" type="number" value="0" min="0" step="0.05">
+                  </label>
+                  <label>
+                    <span>Fee Key recipient</span>
+                    <input id="feeKeyRecipient" type="text" value="" placeholder="Final owner wallet" autocomplete="off">
+                  </label>
+                  <div class="launch-control-group-heading">
+                    <span class="eyebrow">Distribution and destination</span>
+                    <strong>What stays outside liquidity, and where does it go?</strong>
+                    <small>Allocated and airdropped supply never enters a pool. The sweep destination receives every remaining asset at the end.</small>
+                  </div>
+                  <label>
+                    <span>Preallocation %</span>
+                    <input id="preallocationSupplyPercent" type="number" value="0" min="0" max="99" step="0.1">
                   </label>
                   <label>
                     <span>Airdrop wallets</span>
                     <input id="airdropWallets" type="number" value="0" min="0" step="1">
                   </label>
                   <label>
-                    <span>Fee Key recipient</span>
-                    <input id="feeKeyRecipient" type="text" value="" placeholder="Optional wallet" autocomplete="off">
-                  </label>
-                  <label>
                     <span>Sweep destination</span>
-                    <input id="sweepDestination" type="text" value="" placeholder="Destination wallet" autocomplete="off">
+                    <input id="sweepDestination" type="text" value="" placeholder="Final owner wallet" autocomplete="off">
                   </label>
                 </form>
-                <div class="operator-toolbar" aria-label="Classic pool actions">
+                <div class="operator-toolbar" aria-label="Pool configuration actions">
                   <button class="pill-button" type="button" data-action="round-slices-100">Round slices to 100%</button>
                   <button class="pill-button" type="button" data-action="add-custom-pool">Add quote pool</button>
                 </div>
@@ -383,8 +419,8 @@
                   <section class="operator-subpanel" aria-label="Launch report export">
                     <div class="subpanel-head">
                       <span>
-                        <span class="eyebrow">Report and sweep</span>
-                        <h3>Classic Step 6</h3>
+                        <span class="eyebrow">Final phase</span>
+                        <h3>Report and sweep</h3>
                       </span>
                       <span class="risk-badge" id="reportSummary">Draft</span>
                     </div>
@@ -396,14 +432,21 @@
                   </section>
                 </div>
               </details>
+              <div class="launch-phase-actions launch-phase-actions-split configure-phase-actions">
+                <button class="secondary-button" type="button" data-launch-workspace="wallet"><i class="fa-solid fa-arrow-left"></i><span>Back to wallet</span></button>
+                <div>
+                  <button class="secondary-button" type="button" data-action="review-plan"><i class="fa-solid fa-list-check"></i><span>Review launch plan</span></button>
+                  <button class="primary-button" type="button" data-launch-workspace="fund"><span>Continue to funding</span><i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+              </div>
               </div>
             </section>
 
-            <section class="guided-run-shell" id="guidedRunShell" data-launch-pane="fund execute verify recover" aria-live="polite"></section>
+            <section class="guided-run-shell" id="guidedRunShell" data-launch-pane="fund mint liquidity finish" aria-live="polite"></section>
 
-            <section class="classic-bridge" id="classicBridge" data-launch-pane="fund execute verify recover" aria-label="Classic parity bridge"></section>
+            <section class="classic-bridge" id="classicBridge" data-launch-pane="wallet fund mint liquidity finish" aria-label="Launch phase workspace"></section>
 
-            <section class="launch-console" id="launchConsole" data-launch-pane="execute" aria-label="Launch readout">
+            <section class="launch-console" id="launchConsole" data-launch-pane="mint liquidity" aria-label="Launch readout">
               <div class="asset-lockup">
                 <span class="asset-mark" id="assetMark">MK</span>
                 <span>
@@ -414,19 +457,19 @@
               <div class="launch-readout" id="launchReadout"></div>
             </section>
 
-            <details class="drawer" data-launch-pane="execute">
+            <details class="drawer diagnostics-drawer" hidden aria-hidden="true">
               <summary>
-                <span>2. Launch steps</span>
+                <span>Launch record checks</span>
                 <strong id="runbookSummary">6 phases</strong>
               </summary>
               <div class="stage-list" id="stageList"></div>
             </details>
 
-            <section class="signature-panel" id="signaturePanel" data-launch-pane="execute" aria-label="Launch run progress"></section>
+            <section class="signature-panel" id="signaturePanel" data-launch-pane="mint liquidity" aria-label="Launch run progress"></section>
 
-            <details class="drawer diagnostics-drawer" data-launch-pane="recover">
+            <details class="drawer diagnostics-drawer" data-launch-pane="finish">
               <summary>
-                <span>Diagnostics</span>
+                <span>Developer diagnostics</span>
                 <strong id="preflightSummary">2 warnings</strong>
               </summary>
               <div class="diagnostics-grid">
@@ -687,6 +730,6 @@
 
   <script src="./runtime-state.js?v=1"></script>
   <script src="./api-client.js?v=37"></script>
-  <script src="./app.js?v=157"></script>
+  <script src="./app.js?v=158"></script>
 </body>
 </html>

@@ -1517,6 +1517,76 @@ textarea:focus {
   background: color-mix(in srgb, var(--panel) 70%, transparent);
 }
 
+.launch-control-group-heading {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 3px;
+  padding: 10px 0 2px;
+  border-top: 1px solid var(--line);
+}
+
+.launch-control-group-heading:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.launch-control-group-heading strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.launch-control-group-heading small {
+  max-width: 78ch;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.vanity-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  list-style: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.vanity-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.vanity-details > summary::after {
+  content: "+";
+  color: var(--green);
+}
+
+.vanity-details[open] > summary::after {
+  content: "−";
+}
+
+.vanity-details > summary span {
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.vanity-details > summary strong {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.vanity-details-body {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
 .operator-toolbar {
   display: flex;
   align-items: center;
@@ -8054,7 +8124,7 @@ body[data-experience-mode="guided"] #launchWorkspaceViewport > details.drawer {
 
 .launch-workspace-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 6px;
   min-width: 0;
   padding: 0 0 8px;
@@ -8788,8 +8858,9 @@ body[data-experience-mode="guided"] #launchWorkspaceViewport > details.drawer {
     position: relative;
   }
 
-  body[data-launch-workspace="execute"] #launchWorkspaceViewport > details.drawer[data-launch-pane="execute"],
-  body[data-launch-workspace="recover"] #launchWorkspaceViewport > .diagnostics-drawer {
+  body[data-launch-workspace="mint"] #launchWorkspaceViewport > details.drawer[data-launch-pane~="mint"],
+  body[data-launch-workspace="liquidity"] #launchWorkspaceViewport > details.drawer[data-launch-pane~="liquidity"],
+  body[data-launch-workspace="finish"] #launchWorkspaceViewport > .diagnostics-drawer {
     position: absolute;
     right: 6px;
     bottom: 8px;
@@ -8802,33 +8873,33 @@ body[data-experience-mode="guided"] #launchWorkspaceViewport > details.drawer {
     box-shadow: 0 -10px 24px color-mix(in srgb, #000 26%, transparent);
   }
 
-  body[data-launch-workspace="verify"] #launchWorkspaceViewport {
+  body[data-launch-workspace="finish"] #launchWorkspaceViewport {
     overflow: hidden;
   }
 
-  body[data-launch-workspace="verify"] #classicBridge,
-  body[data-launch-workspace="verify"] .classic-workspace-verify,
-  body[data-launch-workspace="verify"] .finalize-panel {
+  body[data-launch-workspace="finish"] #classicBridge,
+  body[data-launch-workspace="finish"] .classic-workspace-verify,
+  body[data-launch-workspace="finish"] .finalize-panel {
     height: 100%;
     min-height: 0;
   }
 
-  body[data-launch-workspace="verify"] .finalize-panel {
+  body[data-launch-workspace="finish"] .finalize-panel {
     grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
     overflow: hidden;
   }
 
-  body[data-launch-workspace="verify"] .verify-panel-stage {
+  body[data-launch-workspace="finish"] .verify-panel-stage {
     overflow: hidden;
   }
 
-  body[data-launch-workspace="verify"] .verify-panel-stage > [data-verify-panel-view] {
+  body[data-launch-workspace="finish"] .verify-panel-stage > [data-verify-panel-view] {
     height: 100%;
     min-height: 0;
     overflow: hidden auto;
   }
 
-  body[data-launch-workspace="verify"] .finalize-panel > .operator-toolbar {
+  body[data-launch-workspace="finish"] .finalize-panel > .operator-toolbar {
     flex-wrap: nowrap;
     overflow-x: auto;
     padding-bottom: 2px;
@@ -9946,6 +10017,7 @@ select:focus-visible {
 .launch-workspace-tab:nth-child(3)::before { content: "03"; }
 .launch-workspace-tab:nth-child(4)::before { content: "04"; }
 .launch-workspace-tab:nth-child(5)::before { content: "05"; }
+.launch-workspace-tab:nth-child(6)::before { content: "06"; }
 
 .launch-workspace-tab::after {
   inset: auto 0 0;
@@ -12938,5 +13010,388 @@ button.personal-token-card:hover {
   .market-stats > span:nth-child(-n + 2),
   #view-discovery .evidence-summary-strip > span:nth-child(-n + 2) {
     border-bottom: 1px solid var(--line);
+  }
+}
+
+/* Six-phase launch procedure. Product-facing controls follow the launch in the
+   same order as the chain work; migration and parity terminology stays out of
+   the operator's primary path. */
+
+.launch-step-guide {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) minmax(250px, .72fr);
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--green) 7%, transparent), transparent 42%),
+    color-mix(in srgb, var(--panel-strong) 72%, transparent);
+}
+
+.launch-step-guide.irreversible {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--amber) 7%, transparent), transparent 42%),
+    color-mix(in srgb, var(--panel-strong) 72%, transparent);
+}
+
+.launch-step-kicker {
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  border-right: 1px solid var(--line);
+  color: var(--green);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .1em;
+  line-height: 1.4;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.launch-step-guide.irreversible .launch-step-kicker {
+  color: var(--amber);
+}
+
+.launch-step-guide > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.launch-step-guide h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.launch-step-guide p,
+.launch-step-guide aside {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.launch-step-guide aside {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-left: 2px solid var(--green);
+  background: color-mix(in srgb, var(--green) 5%, transparent);
+}
+
+.launch-step-guide.irreversible aside {
+  border-left-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 5%, transparent);
+}
+
+.launch-step-guide aside i {
+  color: var(--green);
+  text-align: center;
+}
+
+.launch-step-guide.irreversible aside i {
+  color: var(--amber);
+}
+
+.launch-step-guide aside strong {
+  color: var(--ink);
+}
+
+.configure-step-guide {
+  margin-bottom: 10px;
+}
+
+.configure-step-guide aside {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+}
+
+.configure-step-guide aside .pill-button {
+  white-space: nowrap;
+}
+
+.launch-design-intro {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--green);
+  background: color-mix(in srgb, var(--green) 4%, transparent);
+}
+
+.launch-design-intro strong {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.launch-design-intro p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.launch-phase-workspace,
+.classic-workspace-fund,
+.classic-workspace-execute,
+.classic-workspace-verify {
+  gap: 12px;
+  padding: 12px;
+}
+
+.launch-wallet-choice {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+}
+
+.launch-wallet-choice.is-ready {
+  border-color: color-mix(in srgb, var(--green) 42%, var(--line));
+}
+
+.launch-wallet-choice-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line-strong);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 6%, transparent);
+}
+
+.launch-wallet-choice-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.launch-wallet-choice-copy small {
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.launch-wallet-choice-copy strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.launch-wallet-choice-copy code {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-guidance-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--line);
+}
+
+.launch-guidance-list article {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px;
+  border-right: 1px solid var(--line);
+}
+
+.launch-guidance-list article:last-child {
+  border-right: 0;
+}
+
+.launch-guidance-list i {
+  color: var(--green);
+  text-align: center;
+}
+
+.launch-guidance-list span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.launch-guidance-list strong {
+  color: var(--ink);
+  font-size: 9px;
+}
+
+.launch-guidance-list small {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.launch-phase-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.launch-phase-actions-split {
+  justify-content: space-between;
+}
+
+.launch-phase-actions-split > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.launch-phase-actions .primary-button,
+.launch-phase-actions .secondary-button {
+  width: auto;
+}
+
+.configure-phase-actions {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.launch-fact-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--line);
+}
+
+.launch-fact-grid > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid var(--line);
+}
+
+.launch-fact-grid > span:last-child {
+  border-right: 0;
+}
+
+.launch-fact-grid small {
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.launch-fact-grid strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-phase-secondary {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.launch-recovery-details {
+  margin-top: 2px;
+}
+
+body[data-experience-mode="advanced"] #view-launch .cockpit-board .agent-console,
+body[data-experience-mode="advanced"] #view-launch .cockpit-board .action-panel {
+  display: none;
+}
+
+body[data-experience-mode="advanced"] #view-launch .cockpit-board {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body[data-experience-mode="advanced"] #view-launch .cockpit-board .chart-deck {
+  border-right: 0;
+}
+
+@media (min-width: 901px) {
+  body[data-experience-mode="advanced"] #view-launch .surface-main {
+    grid-template-rows: auto 112px auto minmax(0, 1fr);
+  }
+
+  body[data-experience-mode="advanced"] #view-launch .cockpit-board {
+    height: 112px;
+  }
+}
+
+@media (max-width: 1100px) and (min-width: 901px) {
+  .launch-workspace-tab {
+    padding-inline: 7px 16px;
+  }
+
+  .launch-workspace-tab i {
+    display: none;
+  }
+
+  .launch-step-guide {
+    grid-template-columns: 88px minmax(0, 1fr);
+  }
+
+  .launch-step-guide aside {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 900px) {
+  .launch-step-guide,
+  .launch-guidance-list,
+  .launch-fact-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .launch-step-kicker {
+    justify-content: start;
+    place-items: start;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+  }
+
+  .configure-step-guide aside {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .configure-step-guide aside .pill-button {
+    grid-column: 1 / -1;
+  }
+
+  .launch-guidance-list article,
+  .launch-fact-grid > span {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .launch-guidance-list article:last-child,
+  .launch-fact-grid > span:last-child {
+    border-bottom: 0;
+  }
+
+  .launch-phase-actions-split,
+  .launch-phase-actions-split > div {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .launch-phase-actions .primary-button,
+  .launch-phase-actions .secondary-button {
+    width: 100%;
+  }
+
+  body[data-experience-mode="advanced"] #view-launch .cockpit-board {
+    height: auto;
   }
 }

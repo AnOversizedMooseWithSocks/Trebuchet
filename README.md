@@ -100,19 +100,22 @@ and current safety limits.
 
 ### Launch
 
-The Launch cockpit is the primary command surface:
+Launch is organized around the six decisions and actions a user actually takes:
 
-- **Configure** — token metadata, logo, Vanity CA targets, pool topology,
-  preallocation, airdrops, support, Fee Key recipients, and sweep destination.
-- **Fund** — a proof-bound Classic funding estimate, selected-wallet balances,
-  quote-token requirements, manual prefund guidance, and guarded quote
-  acquisition.
-- **Execute** — one next authorized operation at a time, or the full guarded
-  runner, with decoded effects, costs, signatures, checkpoints, and retry state.
-- **Verify** — launch dossier, proof audit, report/local artifact status, final
-  sweep evidence, Classic comparison, and field-verification packet.
-- **Recover** — recovery actions related to the active launch without leaving
-  the cockpit.
+- **Launch wallet** — select the temporary, locally controlled signer.
+- **Token & pools** — define the token, choose the simple liquidity recipe, and
+  expand optional distribution controls only when they are needed.
+- **Fund wallet** — calculate the requirement, verify the wallet balance, and
+  acquire or manually deposit any required quote tokens.
+- **Create token** — review the permanent token facts, create the mint and
+  metadata, and confirm the authority posture.
+- **Create liquidity** — create pools and positions, lock liquidity, and deliver
+  the Fee Keys.
+- **Finish launch** — complete airdrops, sweep remaining assets to their final
+  destination, and save the launch proof.
+
+Recovery and release-comparison diagnostics remain available from History and
+the collapsed diagnostics area; they are not presented as launch phases.
 
 ### Wallet
 
@@ -167,31 +170,23 @@ update checks, startup preferences, release state, and local diagnostics.
 
 ## Live launch sequence
 
-1. **Select or create a launch wallet.** Trebuchet generates or imports one
-   managed local wallet and records a durable journal identity.
-2. **Configure the launch.** Add token metadata and logo, choose random or
-   Vanity CA parameters, define pool allocations, optional quote venues,
-   slices, ladders, support, held supply, airdrops, Fee Key recipients, report
-   policy, and sweep destination.
-3. **Review the run plan.** The server normalizes the configuration and binds it
-   to the selected wallet. Client-generated pass flags are not execution
-   authority.
-4. **Estimate and fund.** Attach a fresh Classic funding estimate, check the
-   selected wallet on-chain, and acquire or manually prefund required quote
+1. **Choose a launch wallet.** Trebuchet generates or imports one managed local
+   wallet and records a durable journal identity.
+2. **Review token and pools.** Add token metadata and logo, choose a random or
+   Vanity CA, and use the simple liquidity recipe unless the launch needs quote
+   pools, allocation, support, airdrops, or custom Fee Key routing. Reviewing
+   the plan binds the normalized configuration to the selected wallet.
+3. **Fund the launch wallet.** Calculate the current requirement, check the
+   selected wallet on-chain, and acquire or manually deposit required quote
    tokens.
-5. **Arm execution.** Confirm the exact endpoint and decoded operation. The
-   server rebuilds readiness from local wallet and journal state before
-   dispatching a Classic handler.
-6. **Mint and finalize.** Create metadata, mint supply, and confirm mint,
-   freeze, and metadata-update authority posture.
-7. **Create and lock liquidity.** Create each CLMM pool, open every planned
+4. **Create the token.** Confirm the decoded operation, create metadata and mint
+   supply, then verify mint, freeze, and metadata-update authority posture.
+5. **Create and lock liquidity.** Create each CLMM pool, open every planned
    position, lock it through Burn & Earn, record the Fee Key NFT, and transfer
    configured Fee Keys.
-8. **Finish distribution.** Deliver configured airdrops, produce a proof-bound
-   report or local dossier, and sweep tokens, NFTs, and SOL to the destination.
-9. **Verify.** Inspect transaction links, download the final proof after the
-   wallet-empty sweep, and retain the recovery journal until every asset is
-   accounted for.
+6. **Finish and save proof.** Deliver configured airdrops, sweep tokens, NFTs,
+   and SOL to the destination, produce the final report or local dossier, and
+   retain the recovery journal until every asset is accounted for.
 
 Interrupted work is resumable only when on-chain and journal evidence make the
 next action safe. Trebuchet does not pretend an unknown partial state is

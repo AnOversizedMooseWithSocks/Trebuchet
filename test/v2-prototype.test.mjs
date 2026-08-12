@@ -2142,7 +2142,7 @@ test('v2 launch page presents an agentic control panel instead of instruction wa
   assert.match(combined, /data-action="discard-wallet"/);
   assert.match(combined, /Ready to build the launch plan/);
   assert.match(combined, /Next move/);
-  assert.match(combined, /Step 1 of 6 · Setup/);
+  assert.match(combined, /Six guided phases/);
   assert.match(combined, /Trebuchet holds the launch key locally/);
   assert.match(combined, /Review run plan/);
   assert.match(combined, /Guided launch/);
@@ -2152,7 +2152,7 @@ test('v2 launch page presents an agentic control panel instead of instruction wa
   assert.doesNotMatch(html, /<section class="operator-guide"/);
 });
 
-test('v2 launch page ships a no-scroll parity cockpit with preview charts', () => {
+test('v2 launch page organizes the complete launch into six focused phases', () => {
   const combined = `${html}\n${css}\n${js}`;
 
   assert.match(html, /id="chartDeck"/);
@@ -2167,7 +2167,7 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(html, /id="activityLogDrawer"/);
   assert.match(html, /id="launchWorkspaceTabs"/);
   assert.match(html, /id="launchWorkspaceViewport"/);
-  for (const workspace of ['configure', 'fund', 'execute', 'verify', 'recover']) {
+  for (const workspace of ['wallet', 'configure', 'fund', 'mint', 'liquidity', 'finish']) {
     assert.match(html, new RegExp(`data-launch-workspace="${workspace}"`));
   }
   assert.match(html, /id="poolEditorPanel"/);
@@ -2177,11 +2177,22 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(html, /id="airdropAutoFit"/);
   assert.match(html, /id="airdropBudgetPanel"/);
   assert.match(html, /id="reportPreview"/);
-  assert.match(html, /Classic parity controls/);
+  assert.match(html, /Liquidity and distribution recipe/);
+  assert.doesNotMatch(html, /Classic parity controls/);
+  assert.match(combined, /Phase 1 of 6/);
+  assert.match(combined, /Phase 2 of 6/);
+  assert.match(combined, /Phase 3 of 6/);
+  assert.match(combined, /Phase 4 of 6/);
+  assert.match(combined, /Phase 5 of 6/);
+  assert.match(combined, /Phase 6 of 6/);
+  assert.match(combined, /Choose a temporary launch wallet/);
+  assert.match(combined, /Create the token and renounce control/);
+  assert.match(combined, /Create pools, open positions, and lock liquidity/);
+  assert.match(combined, /Distribute, sweep, and save proof/);
   assert.match(html, /id="tokenSupply" type="text" value="1,000,000,000" inputmode="numeric" max="10000000000"/);
   assert.match(html, /id="mainPoolPercent"/);
   assert.match(html, /id="sliceShares"/);
-  assert.match(html, /id="ladderBands" type="number" value="5" min="0" max="20"/);
+  assert.match(html, /id="ladderBands" type="number" value="0" min="0" max="20"/);
   assert.match(html, /Round slices to 100%/);
   assert.match(html, /Starts &amp; Ends With/);
   assert.match(combined, /Diagnostics/);
@@ -2196,7 +2207,7 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(css, /funding-row\.danger/);
   assert.match(css, /depth-band\.active/);
   assert.match(css, /depth-band\.complete/);
-  assert.match(css, /classic-phase-grid/);
+  assert.match(css, /launch-step-guide/);
   assert.match(css, /live-ops-panel/);
   assert.match(css, /activity-drawer/);
   assert.match(css, /activity-filter-tabs/);
@@ -2370,7 +2381,7 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(js, /const fundingEstimateStatus = classicFundingEstimateStatus\(config\)/);
   assert.match(js, /const fundingEstimateEvidence = fundingEstimateStatus\.matchesConfig/);
   assert.match(js, /const estimate = fundingEstimateStatus\.matchesConfig \? state\.classicFundingEstimate : null/);
-  assert.match(js, /Funding estimate is stale; rerun before execution/);
+  assert.match(js, /Funding estimate is stale for the current token, pools, market cap, or airdrop model/);
   assert.match(js, /function selectedWalletDetailedBalance\(\)/);
   assert.match(js, /const detailedBalance = selectedWalletDetailedBalance\(\)/);
   assert.doesNotMatch(js, /const walletSol = Number\(selectedWallet\?\.balanceSol\)/);
@@ -2571,7 +2582,7 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(js, /renderCancelRefundPanel/);
   assert.match(js, /cancelRefundLaunch/);
   assert.match(js, /cancel-refund-launch/);
-  assert.match(js, /Classic cancel\/refund/);
+  assert.match(js, /Cancel and refund/);
   assert.match(js, /Cancel & Refund/);
   assert.match(js, /kind: 'cancel-refund'/);
   assert.match(js, /quoteManualPrefundItems/);
@@ -2593,10 +2604,7 @@ test('v2 launch page ships a no-scroll parity cockpit with preview charts', () =
   assert.match(js, /renderReportPanel/);
   assert.match(js, /renderFinalizationPanel/);
   assert.match(js, /finalizationNoticeRows/);
-  assert.match(js, /buildClassicRetirementGate\(proof, reportParityAudit, config\)/);
-  assert.match(js, /buildV2FieldVerification\(\{\s*proof,\s*config,\s*audit: reportParityAudit,\s*retirementGate,/);
-  assert.match(js, /fieldHandoffRows/);
-  assert.match(js, /field-handoff-list/);
+  assert.doesNotMatch(js.match(/function renderFinalizationPanel\(\) \{[\s\S]*?\n\}/)?.[0] || '', /Classic artifact|replacement criteria|fieldHandoffRows/);
   assert.match(js, /Report publish failed:/);
   assert.match(js, /Click Publish report to retry/);
   assert.match(js, /Download a fresh final dossier so the artifact carries the final sweep hash/);
@@ -2796,7 +2804,7 @@ test('v2 guided launch is a focused first-launch wizard over the guarded plan', 
   assert.match(html, /id="guidedLaunchFlow"/);
   assert.match(html, /id="guidedRunShell"/);
   assert.match(html, /data-experience="guided"/);
-  assert.match(html, /Advanced controls/);
+  assert.match(html, /Full launch/);
   assert.match(js, /const GUIDED_RECIPE_ID = 'simple-sol-v1'/);
   assert.match(js, /function applyGuidedRecipe/);
   assert.match(js, /function renderGuidedLaunchFlow/);
@@ -3026,11 +3034,12 @@ test('v2 finalization badge does not call report artifacts ready before terminal
   assert.doesNotMatch(phaseTreeSource, /const reportComplete = Boolean\(\s*report\?\.jsonUri/);
 });
 
-test('v2 classic parity bridge models v1 launch controls without firing irreversible work', () => {
+test('v2 six-phase launch procedure preserves the complete v1 feature set without migration UI', () => {
   const combined = `${html}\n${css}\n${js}\n${apiClientJs}`;
 
-  assert.match(combined, /Classic parity bridge/);
-  assert.match(combined, /Wallet · CA · pools · funding · recovery/);
+  assert.match(combined, /Launch phase workspace/);
+  assert.match(combined, /Liquidity and distribution recipe/);
+  assert.doesNotMatch(html, /Classic parity controls/);
   assert.match(combined, /SOL pool %/);
   assert.match(combined, /Quote pool %/);
   assert.match(combined, /Quote venue/);
@@ -3050,10 +3059,10 @@ test('v2 classic parity bridge models v1 launch controls without firing irrevers
   assert.match(combined, /CSV recipients/);
   assert.match(combined, /Manual ladder bands/);
   assert.match(combined, /Pool topology map/);
-  assert.match(combined, /Classic phase tree/);
+  assert.match(combined, /Launch position tree/);
   assert.match(combined, /Launch report export/);
-  assert.match(combined, /Classic Step 6 parity/);
-  assert.match(combined, /Report, airdrop, proof review/);
+  assert.match(combined, /Launch completion/);
+  assert.match(combined, /Report, airdrop, and proof/);
   assert.match(combined, /Proof review/);
   assert.match(combined, /Explorer bundle ready/);
   assert.match(js, /Launch Dossier/);
@@ -3842,8 +3851,9 @@ test('v2 launch runbook follows field verification blockers', () => {
   const rows = buildFieldRunbookStages(context);
 
   assert.equal(rows.length, 6);
-  assert.equal(rows[0].id, 'model');
+  assert.equal(rows[0].id, 'wallet');
   assert.equal(rows[0].state, 'done');
+  assert.equal(rows[1].id, 'model');
   assert.equal(rows[1].state, 'done');
   assert.equal(rows[2].id, 'fund');
   assert.equal(rows[2].state, 'active');
@@ -3852,17 +3862,14 @@ test('v2 launch runbook follows field verification blockers', () => {
   assert.equal(rows[3].state, 'queued');
   assert.match(renderFieldRunbookSummary(context, rows), /3 blockers · run-funding-and-quote-checks/);
   const fundingControl = fieldRunbookActionControl(rows[2].action, rows[2]);
-  const walletControl = fieldRunbookActionControl('generate-or-unlock-wallet', rows[1]);
+  const walletControl = fieldRunbookActionControl('generate-or-unlock-wallet', rows[0]);
   const liveControl = fieldRunbookActionControl('run-non-demo-v2-launch', rows[3]);
-  const loadClassicControl = fieldRunbookActionControl('compare-classic-artifact', rows[5]);
   harness.proof = { token: { mint: 'Mint111' }, canPublishReport: true };
   harness.reportEvidence = true;
   harness.airdropStatus = { complete: false };
   const reportBlockedControl = fieldRunbookActionControl('publish-report-and-sweep', rows[4]);
   harness.airdropStatus = { complete: true };
   const reportReadyControl = fieldRunbookActionControl('publish-report-and-sweep', rows[4]);
-  harness.state.classicReportComparison.input = '{"classic":"artifact"}';
-  const compareControl = fieldRunbookActionControl('compare-classic-artifact', rows[5]);
   assert.equal(fundingControl.dataAction, 'estimate-funding');
   assert.equal(fundingControl.label, 'Estimate');
   assert.equal(walletControl.dataAction, 'generate-wallet');
@@ -3873,13 +3880,9 @@ test('v2 launch runbook follows field verification blockers', () => {
   assert.equal(reportBlockedControl.disabled, true);
   assert.equal(reportReadyControl.dataAction, 'publish-v2-report');
   assert.equal(reportReadyControl.disabled, false);
-  assert.equal(loadClassicControl.dataAction, 'load-classic-artifact');
-  assert.equal(loadClassicControl.label, 'Load artifact');
-  assert.equal(compareControl.dataAction, 'compare-classic-artifact');
-  assert.equal(compareControl.label, 'Compare');
-  assert.match(js, /Stage model/);
-  assert.match(js, /Prepare wallet/);
-  assert.match(js, /Compare and retire/);
+  assert.match(js, /Choose launch wallet/);
+  assert.match(js, /Review token and pools/);
+  assert.match(js, /Finish and save proof/);
   assert.match(js, /fieldRunbookActionControl/);
   assert.match(js, /stage-control/);
   assert.match(js, /data-action="\$\{escapeHtml\(control\.dataAction\)\}"/);
@@ -6461,11 +6464,11 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=68/);
+  assert.match(html, /styles\.css\?v=69/);
   assert.match(html, /runtime-state\.js\?v=1/);
   assert.match(html, /api-client\.js\?v=37/);
-  assert.match(html, /app\.js\?v=157/);
-  assert.doesNotMatch(html, /app\.js\?v=157" type="module"/);
+  assert.match(html, /app\.js\?v=158/);
+  assert.doesNotMatch(html, /app\.js\?v=158" type="module"/);
   assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);

@@ -145,6 +145,7 @@ async function smokeViewport(browser, viewport) {
 
     await page.click('[data-action="select-experience"][data-experience="advanced"]');
     await page.waitForFunction(() => document.body.dataset.experienceMode === 'advanced');
+    await page.click('.launch-workspace-tab[data-launch-workspace="configure"]');
 
     const metrics = await page.evaluate(() => {
       const rectFor = (selector) => {
@@ -189,7 +190,7 @@ async function smokeViewport(browser, viewport) {
     });
 
     const workspaceStates = {};
-    for (const workspace of ['configure', 'fund', 'execute', 'verify', 'recover']) {
+    for (const workspace of ['wallet', 'configure', 'fund', 'mint', 'liquidity', 'finish']) {
       await page.click(`.launch-workspace-tab[data-launch-workspace="${workspace}"]`);
       workspaceStates[workspace] = await page.evaluate((selectedWorkspace) => {
         const selectedTab = document.querySelector(`.launch-workspace-tab[data-launch-workspace="${selectedWorkspace}"]`);
@@ -236,13 +237,13 @@ async function smokeViewport(browser, viewport) {
       `${viewport.name}: launch workspace does not fit its intended viewport`,
     );
 
-    for (const selector of ['launchShell', 'cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'workspaceTabs', 'workspaceViewport', 'actionPanel', 'setupDock']) {
+    for (const selector of ['launchShell', 'cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'workspaceTabs', 'workspaceViewport', 'setupDock']) {
       assertRectSized(metrics.rects[selector], selector, viewport);
     }
 
     const initiallyVisibleSelectors = viewport.name === 'mobile'
       ? ['cockpit', 'chartDeck', 'tokenomicsChart', 'workspaceTabs', 'setupDock']
-      : ['launchShell', 'cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'workspaceTabs', 'workspaceViewport', 'actionPanel', 'setupDock'];
+      : ['launchShell', 'cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'workspaceTabs', 'workspaceViewport', 'setupDock'];
     for (const selector of initiallyVisibleSelectors) {
       assertRectVisible(metrics.rects[selector], selector, viewport);
     }
