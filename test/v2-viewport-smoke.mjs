@@ -98,7 +98,7 @@ async function smokeViewport(browser, viewport) {
     });
     assert.equal(guidedMetrics.experienceMode, 'guided', `${viewport.name}: guided launch is not the default experience`);
     assert.match(guidedMetrics.welcomeText, /Your first launch/);
-    assert.match(guidedMetrics.welcomeText, /never sends a transaction or spends SOL/);
+    assert.match(guidedMetrics.welcomeText, /sends no transaction, and spends no SOL/);
     assert.equal(guidedMetrics.sidebarVisible, false, `${viewport.name}: Guided Mode still shows the app sidebar`);
     assert.equal(guidedMetrics.topbarVisible, false, `${viewport.name}: Guided Mode still shows the terminal header`);
     assert.ok(
@@ -146,6 +146,27 @@ async function smokeViewport(browser, viewport) {
     await page.click('[data-action="select-experience"][data-experience="advanced"]');
     await page.waitForFunction(() => document.body.dataset.experienceMode === 'advanced');
     await page.click('.launch-workspace-tab[data-launch-workspace="configure"]');
+
+    const collapsedMetrics = await page.evaluate(() => {
+      const cockpit = document.querySelector('.launch-summary-drawer');
+      const workspace = document.querySelector('#launchWorkspaceViewport');
+      const shell = document.querySelector('#view-launch .surface-main');
+      const rect = (element) => {
+        const value = element?.getBoundingClientRect();
+        return value ? { top: value.top, bottom: value.bottom, width: value.width, height: value.height } : null;
+      };
+      return {
+        open: cockpit?.open === true,
+        scrollHeight: document.documentElement.scrollHeight,
+        clientHeight: document.documentElement.clientHeight,
+        cockpit: rect(cockpit),
+        workspace: rect(workspace),
+        shell: rect(shell),
+      };
+    });
+    assert.equal(collapsedMetrics.open, false, `${viewport.name}: launch summary should start collapsed`);
+    assert.ok(collapsedMetrics.cockpit?.height > 0 && collapsedMetrics.cockpit.height < 80, `${viewport.name}: collapsed summary is not compact`);
+    await page.click('.launch-summary-drawer > summary');
 
     const metrics = await page.evaluate(() => {
       const rectFor = (selector) => {
@@ -228,10 +249,10 @@ async function smokeViewport(browser, viewport) {
       assert.equal(workspaceState.classicSectionVisible, true, `${viewport.name}: ${workspace} content is hidden`);
     }
     const firstViewportFit = viewport.name === 'desktop'
-      ? metrics.scrollHeight <= metrics.clientHeight + 1
-        && metrics.rects.launchShell.bottom <= metrics.clientHeight + 1
-        && metrics.rects.workspaceViewport.bottom <= metrics.clientHeight + 1
-      : metrics.rects.cockpit.bottom <= viewport.height + 1;
+      ? collapsedMetrics.scrollHeight <= collapsedMetrics.clientHeight + 1
+        && collapsedMetrics.shell.bottom <= collapsedMetrics.clientHeight + 1
+        && collapsedMetrics.workspace.bottom <= collapsedMetrics.clientHeight + 1
+      : collapsedMetrics.cockpit.bottom <= viewport.height + 1;
     assert.ok(
       firstViewportFit,
       `${viewport.name}: launch workspace does not fit its intended viewport`,
@@ -249,8 +270,8 @@ async function smokeViewport(browser, viewport) {
     }
     if (viewport.name === 'mobile') {
       assert.ok(
-        metrics.chartDeckScrollWidth > metrics.chartDeckClientWidth,
-        'mobile: chart deck should expose the non-primary charts as a horizontal rail',
+        metrics.chartDeckScrollWidth <= metrics.chartDeckClientWidth + 1,
+        'mobile: expanded launch summary should not require horizontal scrolling',
       );
     }
     return {

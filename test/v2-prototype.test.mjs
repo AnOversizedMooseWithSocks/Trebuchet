@@ -11,6 +11,7 @@ const html = read('public/v2/index.html');
 const css = read('public/v2/styles.css');
 const js = read('public/v2/app.js');
 const apiClientJs = read('public/v2/api-client.js');
+const serverJs = read('server.js');
 const viewportSmokeJs = read('test/v2-viewport-smoke.mjs');
 const v2BrowserE2eJs = read('test/e2e/v2-flows.mjs');
 const v2ElectronSmokeJs = read('test/e2e/electron-v2-smoke.mjs');
@@ -1989,12 +1990,14 @@ test('v2 Discovery combines a personal wallet graph with live evidence and no so
   assert.match(combined, /Wallets you choose to follow/);
   assert.match(combined, /Watched wallets/);
   assert.match(combined, /no limit/i);
-  assert.match(combined, /Every watched wallet is scanned/);
-  assert.match(combined, /app-created wallets are limited/);
+  assert.match(combined, /Every enabled watched wallet is scanned/);
+  assert.match(combined, /Trebuchet-controlled wallets never enter the personal graph/);
+  assert.match(serverJs, /wallet\.source === 'watch-only'/);
   assert.match(combined, /managed-discovery-wallets/);
   assert.match(combined, /Refresh tokens/);
   assert.match(combined, /personal-token-feed/);
-  assert.match(combined, /Preliminary order/);
+  assert.match(combined, /Sorted by \$\{sortLabel\}/);
+  assert.match(combined, /Network relevance/);
   assert.match(combined, /networkScore/);
   assert.match(combined, /data-action="inspect-personal-token"/);
   assert.match(combined, /data-action="toggle-discovery-wallet"/);
@@ -2030,15 +2033,16 @@ test('v2 Discovery combines a personal wallet graph with live evidence and no so
   assert.doesNotMatch(combined, /\bsocial vote/i);
 });
 
-test('v2 makes custody risk visible across the entire interface', () => {
-  assert.match(html, /id="custodySignalLabel">PRACTICE \/ NO CUSTODY/);
+test('v2 makes custody risk visible without replacing semantic UI colors', () => {
+  assert.match(html, /id="custodySignalLabel">CHECKING ENVIRONMENT/);
   assert.match(js, /function custodySignalState\(\)/);
   assert.match(js, /function balanceContainsControlledFunds\(balance\)/);
   assert.match(js, /document\.body\.dataset\.custodySignal = signal\.id/);
   assert.match(js, /LIVE \/ AWAITING FUNDS/);
   assert.match(js, /LIVE \/ FUNDS IN CUSTODY/);
-  assert.match(css, /body\[data-custody-signal="live"\][\s\S]*?--green: #f2c84b/);
-  assert.match(css, /body\[data-custody-signal="funded"\][\s\S]*?--green: #ff5d5d/);
+  assert.match(css, /body\[data-custody-signal="live"\][\s\S]*?--custody-signal: #f2c84b/);
+  assert.match(css, /body\[data-custody-signal="funded"\][\s\S]*?--custody-signal: #ff5d5d/);
+  assert.doesNotMatch(css, /data-custody-signal="(?:live|funded)"[^}]*--green/);
 });
 
 test('v2 removes the staged NFT collection product surface', () => {
@@ -2819,7 +2823,8 @@ test('v2 guided launch is a focused first-launch wizard over the guarded plan', 
   assert.match(html, /id="guidedLaunchFlow"/);
   assert.match(html, /id="guidedRunShell"/);
   assert.match(html, /data-experience="guided"/);
-  assert.match(html, /Full launch/);
+  assert.match(html, /Advanced/);
+  assert.match(html, /data-action="select-environment"/);
   assert.match(js, /const GUIDED_RECIPE_ID = 'simple-sol-v1'/);
   assert.match(js, /function applyGuidedRecipe/);
   assert.match(js, /function renderGuidedLaunchFlow/);
@@ -2842,7 +2847,9 @@ test('v2 guided launch is a focused first-launch wizard over the guarded plan', 
   assert.match(js, /guidedPracticeErrorMessage/);
   assert.match(apiClientJs, /V2_DEMO_LAUNCH_RUN_PATH[\s\S]*?timeoutMs: 60_000/);
   assert.match(js, /Choose your home wallet, not the temporary launch wallet/);
-  assert.match(combined, /never sends a transaction or spends SOL/);
+  assert.match(combined, /sends no transaction, and spends no SOL/);
+  assert.match(js, /function setExecutionEnvironment/);
+  assert.match(js, /function requestGuidedFundingEstimate/);
   assert.match(css, /data-experience-mode="guided"/);
 });
 
@@ -6481,11 +6488,11 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=73/);
+  assert.match(html, /styles\.css\?v=76/);
   assert.match(html, /runtime-state\.js\?v=1/);
   assert.match(html, /api-client\.js\?v=37/);
-  assert.match(html, /app\.js\?v=163/);
-  assert.doesNotMatch(html, /app\.js\?v=163" type="module"/);
+  assert.match(html, /app\.js\?v=167/);
+  assert.doesNotMatch(html, /app\.js\?v=167" type="module"/);
   assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
@@ -10429,7 +10436,7 @@ test('v2 API client bootstraps local session and read-only app state', async () 
         managedCount: 0,
         trackingUnlimited: true,
         scanAllWatchedWallets: true,
-        managedSeedLimit: 5,
+        managedSeedLimit: 0,
         scanConcurrency: 4,
       },
       wallets: [{
@@ -10488,7 +10495,7 @@ test('v2 API client bootstraps local session and read-only app state', async () 
   assert.equal(boot.discovery.wallets[0].label, 'Tracked wallet');
   assert.equal(boot.discovery.limits.trackingUnlimited, true);
   assert.equal(boot.discovery.limits.scanAllWatchedWallets, true);
-  assert.equal(boot.discovery.limits.managedSeedLimit, 5);
+  assert.equal(boot.discovery.limits.managedSeedLimit, 0);
   assert.equal(boot.discovery.snapshot.candidates[0].networkScore, 72);
   assert.equal(boot.viewportSmoke.passed, true);
   assert.equal(boot.viewportSmoke.artifactVersion, 1);

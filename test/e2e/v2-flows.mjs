@@ -159,13 +159,14 @@ try {
   const guidedRunText = await page.locator('#guidedRunShell').innerText();
   const runText = await page.locator('#globalStrip').innerText();
   assert.match(guidedRunText, /The complete launch recipe worked/);
-  assert.match(guidedRunText, /Review practice proof/);
+  assert.match(guidedRunText, /Prepare live launch/);
+  assert.match(guidedRunText, /Review local practice record/);
   assert.match(runText, /Run\s+\d+\/\d+ done \/ 0 queued/);
   assert.deepEqual(nativeDialogs, [], 'Trebuchet opened a native prompt/confirm dialog');
   assert.deepEqual(pageErrors, [], 'Trebuchet emitted page errors');
   assert.deepEqual(consoleErrors, [], 'Trebuchet emitted console errors');
 
-  console.log('Trebuchet API-backed E2E passed: session, wallet, secure dialog, Guided practice launch');
+  console.log('Trebuchet API-backed E2E passed: session, wallet, secure dialog, Guided launch');
 } catch (error) {
   if (serverOutput) process.stderr.write(`\n--- Trebuchet E2E server output ---\n${serverOutput}\n`);
   throw error;

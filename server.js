@@ -937,7 +937,7 @@ let personalDiscoveryJob = {
   error: null,
 };
 
-const PERSONAL_DISCOVERY_MANAGED_SEED_LIMIT = 5;
+const PERSONAL_DISCOVERY_SEED_POLICY = 'watch-only/v1';
 
 function publicPersonalDiscoveryJob() {
   return {
@@ -981,6 +981,7 @@ function personalDiscoveryResponse() {
   const wallets = discoveryStore.listWallets();
   const watchOnlyCount = wallets.filter((wallet) => wallet.source === 'watch-only').length;
   const managedCount = wallets.length - watchOnlyCount;
+  const storedSnapshot = discoveryStore.getSnapshot();
   return {
     success: true,
     wallets,
@@ -989,10 +990,14 @@ function personalDiscoveryResponse() {
       managedCount,
       trackingUnlimited: true,
       scanAllWatchedWallets: true,
-      managedSeedLimit: PERSONAL_DISCOVERY_MANAGED_SEED_LIMIT,
+      managedSeedLimit: 0,
       scanConcurrency: PERSONAL_DISCOVERY_LIMITS.walletConcurrency,
     },
-    snapshot: discoveryStore.getSnapshot(),
+    // Older builds admitted app-controlled launch wallets into the personal
+    // graph. Never present those results as user-personalized discovery.
+    snapshot: storedSnapshot?.seedPolicy === PERSONAL_DISCOVERY_SEED_POLICY
+      ? storedSnapshot
+      : null,
     job: publicPersonalDiscoveryJob(),
   };
 }
@@ -1102,17 +1107,14 @@ app.post('/api/v2/discovery/scan', (req, res) => {
       });
     }
     syncManagedDiscoveryWallets();
-    const trackedWallets = discoveryStore.listWallets().filter((wallet) => wallet.enabled !== false);
-    const wallets = selectPersonalDiscoveryWallets(
-      trackedWallets,
-      Infinity,
-      PERSONAL_DISCOVERY_MANAGED_SEED_LIMIT,
-    );
+    const trackedWallets = discoveryStore.listWallets()
+      .filter((wallet) => wallet.enabled !== false && wallet.source === 'watch-only');
+    const wallets = selectPersonalDiscoveryWallets(trackedWallets);
     if (!wallets.length) {
       return res.status(400).json({
         success: false,
         code: 'DISCOVERY_WALLET_REQUIRED',
-        error: 'Add and enable at least one wallet before scanning.',
+        error: 'Add and enable at least one watched wallet before scanning.',
       });
     }
     const rpc = discoveryRpcCandidates(getRpcConfig())[0];
@@ -1149,16 +1151,19 @@ app.post('/api/v2/discovery/scan', (req, res) => {
       },
     }).then((snapshot) => {
       const currentWallets = selectPersonalDiscoveryWallets(
-        discoveryStore.listWallets(),
-        Infinity,
-        PERSONAL_DISCOVERY_MANAGED_SEED_LIMIT,
+        discoveryStore.listWallets()
+          .filter((wallet) => wallet.enabled !== false && wallet.source === 'watch-only'),
       );
       if (personalDiscoveryWalletFingerprint(currentWallets) !== walletFingerprint) {
         const error = new Error('Tracked wallets changed while Discovery was scanning. Scan again for a current graph.');
         error.code = 'DISCOVERY_WALLETS_CHANGED';
         throw error;
       }
-      discoveryStore.saveSnapshot({ ...snapshot, rpcName: rpc.name });
+      discoveryStore.saveSnapshot({
+        ...snapshot,
+        rpcName: rpc.name,
+        seedPolicy: PERSONAL_DISCOVERY_SEED_POLICY,
+      });
       if (personalDiscoveryJob.id === jobId) {
         personalDiscoveryJob.status = 'complete';
         personalDiscoveryJob.completedAt = snapshot.completedAt;

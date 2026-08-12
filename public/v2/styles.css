@@ -6686,6 +6686,7 @@ body[data-experience-mode="guided"][data-active-view="launch"] .guided-form-card
 
 body[data-experience-mode="guided"][data-active-view="launch"] .guided-review {
   width: 100%;
+  padding-bottom: 14px;
 }
 
 body[data-experience-mode="guided"][data-active-view="launch"] .guided-review-hero {
@@ -13794,14 +13795,306 @@ body[data-experience-mode="advanced"] #view-launch .cockpit-board .chart-deck {
   }
 }
 
-/* Custody is the global safety signal: practice is green, live is yellow,
-   and any detected assets in a Trebuchet-controlled wallet turn the UI red. */
-body[data-custody-signal="live"],
-body[data-experience-mode][data-custody-signal="live"] {
-  --green: #f2c84b;
+/* Custody is persistent safety context, not a replacement for every semantic
+   color in the product. Brand, selection, success, warning, and destructive
+   colors stay stable while the rail and custody-specific controls change. */
+body[data-custody-signal="loading"] { --custody-signal: var(--muted); }
+body[data-custody-signal="practice"] { --custody-signal: var(--green); }
+body[data-custody-signal="live"] { --custody-signal: #f2c84b; }
+body[data-custody-signal="funded"] { --custody-signal: #ff5d5d; }
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 10000;
+  height: 3px;
+  background: var(--custody-signal, var(--muted));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--custody-signal, var(--muted)) 38%, transparent);
+  pointer-events: none;
 }
 
-body[data-custody-signal="funded"],
-body[data-experience-mode][data-custody-signal="funded"] {
-  --green: #ff5d5d;
+#custodySignalLabel,
+.setup-help {
+  color: var(--custody-signal, var(--muted)) !important;
+}
+
+.terminal-tape-wide,
+.global-strip {
+  border-color: color-mix(in srgb, var(--custody-signal, var(--line)) 32%, var(--line));
+}
+
+.custody-action {
+  border-color: color-mix(in srgb, var(--custody-signal, var(--green)) 72%, var(--line)) !important;
+  box-shadow: inset 3px 0 0 var(--custody-signal, var(--green));
+}
+
+/* Explicit environment and experience choices. */
+.launch-choice-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 10px 0 14px;
+}
+
+.launch-choice-group {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.launch-choice-label {
+  color: var(--subtle);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.environment-row,
+.launch-choice-bar .experience-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  width: 100%;
+  margin: 0;
+}
+
+.environment-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.environment-button > i {
+  color: var(--muted);
+}
+
+.environment-button span,
+.environment-button strong,
+.environment-button small {
+  display: block;
+  min-width: 0;
+}
+
+.environment-button strong { color: var(--ink); font-size: 10px; }
+.environment-button small { margin-top: 2px; color: var(--muted); font-size: 8px; }
+.environment-button:disabled { cursor: wait; opacity: .62; }
+
+.environment-button.is-selected {
+  border-color: color-mix(in srgb, var(--custody-signal, var(--green)) 72%, var(--line));
+  background: color-mix(in srgb, var(--custody-signal, var(--green)) 9%, var(--panel-strong));
+  box-shadow: inset 3px 0 0 var(--custody-signal, var(--green));
+}
+
+.environment-button.is-selected > i { color: var(--custody-signal, var(--green)); }
+
+/* Advanced launch data is available on demand instead of occupying the first
+   viewport before the user has configured anything. */
+.launch-summary-drawer.cockpit-board {
+  display: block;
+  height: auto;
+  min-height: 0;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.launch-summary-drawer > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 42px;
+  padding: 9px 12px;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.launch-summary-drawer > summary::-webkit-details-marker { display: none; }
+.launch-summary-drawer > summary span { display: flex; align-items: center; gap: 8px; }
+.launch-summary-drawer > summary strong { color: var(--ink); font-size: 10px; }
+.launch-summary-drawer > summary small { font-size: 8px; }
+.launch-summary-drawer > summary::after { content: "+"; color: var(--green); font-size: 14px; }
+.launch-summary-drawer[open] > summary::after { content: "−"; }
+
+body[data-experience-mode="advanced"] .launch-summary-drawer .agent-console,
+body[data-experience-mode="advanced"] .launch-summary-drawer .action-panel {
+  display: none !important;
+}
+
+body[data-experience-mode="advanced"] .launch-summary-drawer .chart-deck {
+  display: grid;
+  border-top: 1px solid var(--line);
+  border-right: 0;
+}
+
+body[data-experience-mode="advanced"] #view-launch .launch-summary-drawer.cockpit-board {
+  height: auto;
+  min-height: 0;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .launch-choice-bar {
+  width: min(calc(100% - 36px), 940px);
+  margin: 14px auto 4px;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body[data-experience-mode="guided"][data-active-view="launch"] .launch-choice-bar .experience-row,
+body[data-experience-mode="guided"][data-active-view="launch"] .launch-choice-bar .environment-row {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+@media (min-width: 901px) {
+  body[data-experience-mode="advanced"] #view-launch .surface-main {
+    /* Heading, summary, phase tabs, launch choices, then the scrollable phase.
+       Keeping all five tracks explicit prevents the choice buttons from
+       overflowing underneath the workspace and becoming unclickable. */
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  }
+}
+
+/* Guided wallet, funding, and truthful practice-result surfaces. */
+.guided-practice-wallet {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--green) 44%, var(--line));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--green) 7%, var(--panel));
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.guided-practice-wallet > i { color: var(--green); }
+.guided-practice-wallet span,
+.guided-practice-wallet strong,
+.guided-practice-wallet small { display: block; }
+.guided-practice-wallet strong { color: var(--ink); font-size: 11px; }
+.guided-practice-wallet small { margin-top: 3px; font-size: 9px; }
+.guided-practice-wallet.is-selected { box-shadow: inset 3px 0 0 var(--green); }
+
+.guided-choice-divider {
+  position: relative;
+  color: var(--subtle);
+  font-size: 8px;
+  text-align: center;
+}
+
+.guided-choice-divider::before {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto;
+  border-top: 1px solid var(--line);
+}
+
+.guided-choice-divider span { position: relative; padding: 0 8px; background: var(--panel-strong); }
+
+.guided-presets button strong,
+.guided-presets button small { display: block; }
+.guided-presets button small { margin-top: 2px; color: var(--subtle); font-size: 8px; font-weight: 600; }
+
+.guided-funding-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--panel-strong);
+}
+
+.guided-funding-summary > span {
+  display: grid;
+  gap: 4px;
+  padding: 13px;
+  border-right: 1px solid var(--line);
+}
+
+.guided-funding-summary > span:last-of-type { border-right: 0; }
+.guided-funding-summary small { color: var(--muted); font-size: 8px; }
+.guided-funding-summary strong { color: var(--ink); font-size: 12px; }
+.guided-funding-summary > button { margin: 8px; }
+.guided-funding-summary.has-error { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); }
+
+.guided-funding-note {
+  margin: 7px 2px 10px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+/* Discovery keeps onboarding and feed controls visible while the list scales. */
+.discovery-personalize-banner {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--green) 40%, var(--line));
+  background: color-mix(in srgb, var(--green) 7%, var(--panel));
+}
+
+.discovery-personalize-banner[hidden] { display: none; }
+.discovery-personalize-banner > i { color: var(--green); text-align: center; }
+.discovery-personalize-banner span,
+.discovery-personalize-banner strong,
+.discovery-personalize-banner small { display: block; }
+.discovery-personalize-banner strong { color: var(--ink); font-size: 10px; }
+.discovery-personalize-banner small { margin-top: 2px; color: var(--muted); font-size: 8px; line-height: 1.35; }
+
+.token-feed-controls {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 7px 0;
+}
+
+.token-feed-controls label { color: var(--subtle); font-size: 8px; text-transform: uppercase; }
+.token-feed-controls select { min-height: 28px; padding: 4px 24px 4px 7px; border: 1px solid var(--line); background: var(--field); color: var(--ink); font-size: 9px; }
+.token-feed-controls .pill-button { margin-left: auto; }
+
+.network-score { min-width: 46px; border-radius: 4px; }
+.network-score strong,
+.network-score small { display: block; overflow: visible; }
+.network-score strong { color: var(--green); font-size: 10px; }
+.network-score small { color: var(--subtle); font-size: 6px; text-transform: uppercase; }
+
+.discovery-overview-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(100%, 320px);
+  margin: 10px 0;
+  border: 1px solid var(--line);
+}
+
+.discovery-overview-stats > span { display: grid; gap: 3px; padding: 9px; border-right: 1px solid var(--line); }
+.discovery-overview-stats > span:last-child { border-right: 0; }
+.discovery-overview-stats small { color: var(--subtle); font-size: 7px; }
+.discovery-overview-stats strong { color: var(--ink); font-size: 12px; }
+
+@media (max-width: 760px) {
+  .launch-choice-bar,
+  .guided-funding-summary { grid-template-columns: 1fr; }
+  .guided-funding-summary > span { border-right: 0; border-bottom: 1px solid var(--line); }
+  .discovery-personalize-banner { grid-template-columns: 24px minmax(0, 1fr); }
+  .discovery-personalize-banner .primary-button { grid-column: 1 / -1; width: 100%; }
+  .token-feed-controls { align-items: stretch; flex-direction: column; }
+  .token-feed-controls .pill-button { margin-left: 0; }
 }
