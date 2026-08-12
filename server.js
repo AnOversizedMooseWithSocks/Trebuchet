@@ -937,8 +937,6 @@ let personalDiscoveryJob = {
   error: null,
 };
 
-const PERSONAL_DISCOVERY_SEED_POLICY = 'watch-only/v1';
-
 function publicPersonalDiscoveryJob() {
   return {
     id: personalDiscoveryJob.id,
@@ -981,7 +979,6 @@ function personalDiscoveryResponse() {
   const wallets = discoveryStore.listWallets();
   const watchOnlyCount = wallets.filter((wallet) => wallet.source === 'watch-only').length;
   const managedCount = wallets.length - watchOnlyCount;
-  const storedSnapshot = discoveryStore.getSnapshot();
   return {
     success: true,
     wallets,
@@ -990,14 +987,10 @@ function personalDiscoveryResponse() {
       managedCount,
       trackingUnlimited: true,
       scanAllWatchedWallets: true,
-      managedSeedLimit: 0,
+      managedSeedLimit: null,
       scanConcurrency: PERSONAL_DISCOVERY_LIMITS.walletConcurrency,
     },
-    // Older builds admitted app-controlled launch wallets into the personal
-    // graph. Never present those results as user-personalized discovery.
-    snapshot: storedSnapshot?.seedPolicy === PERSONAL_DISCOVERY_SEED_POLICY
-      ? storedSnapshot
-      : null,
+    snapshot: discoveryStore.getSnapshot(),
     job: publicPersonalDiscoveryJob(),
   };
 }
@@ -1108,13 +1101,13 @@ app.post('/api/v2/discovery/scan', (req, res) => {
     }
     syncManagedDiscoveryWallets();
     const trackedWallets = discoveryStore.listWallets()
-      .filter((wallet) => wallet.enabled !== false && wallet.source === 'watch-only');
+      .filter((wallet) => wallet.enabled !== false);
     const wallets = selectPersonalDiscoveryWallets(trackedWallets);
     if (!wallets.length) {
       return res.status(400).json({
         success: false,
         code: 'DISCOVERY_WALLET_REQUIRED',
-        error: 'Add and enable at least one watched wallet before scanning.',
+        error: 'Add and enable at least one wallet before scanning.',
       });
     }
     const rpc = discoveryRpcCandidates(getRpcConfig())[0];
@@ -1152,18 +1145,14 @@ app.post('/api/v2/discovery/scan', (req, res) => {
     }).then((snapshot) => {
       const currentWallets = selectPersonalDiscoveryWallets(
         discoveryStore.listWallets()
-          .filter((wallet) => wallet.enabled !== false && wallet.source === 'watch-only'),
+          .filter((wallet) => wallet.enabled !== false),
       );
       if (personalDiscoveryWalletFingerprint(currentWallets) !== walletFingerprint) {
         const error = new Error('Tracked wallets changed while Discovery was scanning. Scan again for a current graph.');
         error.code = 'DISCOVERY_WALLETS_CHANGED';
         throw error;
       }
-      discoveryStore.saveSnapshot({
-        ...snapshot,
-        rpcName: rpc.name,
-        seedPolicy: PERSONAL_DISCOVERY_SEED_POLICY,
-      });
+      discoveryStore.saveSnapshot({ ...snapshot, rpcName: rpc.name });
       if (personalDiscoveryJob.id === jobId) {
         personalDiscoveryJob.status = 'complete';
         personalDiscoveryJob.completedAt = snapshot.completedAt;

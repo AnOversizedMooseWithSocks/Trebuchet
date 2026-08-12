@@ -6980,6 +6980,7 @@ body[data-experience-mode="guided"] #launchWorkspaceViewport > details.drawer {
   width: min(100%, 980px);
   margin: 0 auto;
   padding: 4px 0 18px;
+  overflow-anchor: none;
 }
 
 .guided-progress {

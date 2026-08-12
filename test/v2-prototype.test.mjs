@@ -1990,9 +1990,9 @@ test('v2 Discovery combines a personal wallet graph with live evidence and no so
   assert.match(combined, /Wallets you choose to follow/);
   assert.match(combined, /Watched wallets/);
   assert.match(combined, /no limit/i);
-  assert.match(combined, /Every enabled watched wallet is scanned/);
-  assert.match(combined, /Trebuchet-controlled wallets never enter the personal graph/);
-  assert.match(serverJs, /wallet\.source === 'watch-only'/);
+  assert.match(combined, /Every enabled wallet is scanned/);
+  assert.match(combined, /included without reducing tracked-wallet capacity/);
+  assert.match(serverJs, /const trackedWallets = discoveryStore\.listWallets\(\)[\s\S]*?wallet\.enabled !== false/);
   assert.match(combined, /managed-discovery-wallets/);
   assert.match(combined, /Refresh tokens/);
   assert.match(combined, /personal-token-feed/);
@@ -2850,6 +2850,9 @@ test('v2 guided launch is a focused first-launch wizard over the guarded plan', 
   assert.match(combined, /sends no transaction, and spends no SOL/);
   assert.match(js, /function setExecutionEnvironment/);
   assert.match(js, /function requestGuidedFundingEstimate/);
+  assert.match(js, /function settleGuidedStepPosition/);
+  assert.match(js, /focus\(\{ preventScroll: true \}\)/);
+  assert.match(css, /\.guided-launch-flow\s*\{[\s\S]*?overflow-anchor: none/);
   assert.match(css, /data-experience-mode="guided"/);
 });
 
@@ -6488,11 +6491,11 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=76/);
+  assert.match(html, /styles\.css\?v=77/);
   assert.match(html, /runtime-state\.js\?v=1/);
   assert.match(html, /api-client\.js\?v=37/);
-  assert.match(html, /app\.js\?v=167/);
-  assert.doesNotMatch(html, /app\.js\?v=167" type="module"/);
+  assert.match(html, /app\.js\?v=168/);
+  assert.doesNotMatch(html, /app\.js\?v=168" type="module"/);
   assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
@@ -10436,7 +10439,7 @@ test('v2 API client bootstraps local session and read-only app state', async () 
         managedCount: 0,
         trackingUnlimited: true,
         scanAllWatchedWallets: true,
-        managedSeedLimit: 0,
+        managedSeedLimit: null,
         scanConcurrency: 4,
       },
       wallets: [{
@@ -10495,7 +10498,7 @@ test('v2 API client bootstraps local session and read-only app state', async () 
   assert.equal(boot.discovery.wallets[0].label, 'Tracked wallet');
   assert.equal(boot.discovery.limits.trackingUnlimited, true);
   assert.equal(boot.discovery.limits.scanAllWatchedWallets, true);
-  assert.equal(boot.discovery.limits.managedSeedLimit, 0);
+  assert.equal(boot.discovery.limits.managedSeedLimit, null);
   assert.equal(boot.discovery.snapshot.candidates[0].networkScore, 72);
   assert.equal(boot.viewportSmoke.passed, true);
   assert.equal(boot.viewportSmoke.artifactVersion, 1);

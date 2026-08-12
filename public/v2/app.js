@@ -854,14 +854,14 @@ function guidedValueStep() {
     <div class="guided-step-layout">
       <div class="guided-step-copy">
         <span class="eyebrow">Step 3 of 4</span>
-        <h2>Choose value and liquidity</h2>
-        <p>Set the intended starting valuation and your liquidity budget. Trebuchet derives the simplest useful three-band strategy and estimates network costs separately.</p>
+        <h2>Choose a target and liquidity budget</h2>
+        <p>Choose the opening market-cap target and the SOL you want available to the pool. The target guides the initial price; it is not money you spend or a guaranteed valuation.</p>
       </div>
       <div class="guided-form-card single-column">
         <div class="guided-presets" aria-label="Starting value presets">
           ${[25000, 100000, 250000].map((value) => `<button class="${marketCap === value ? 'is-selected' : ''}" type="button" data-action="guided-value-preset" data-value="${value}">$${value.toLocaleString('en-US')}</button>`).join('')}
         </div>
-        <label><span>Starting market value</span><input data-guided-field="startingMarketCapUsd" value="${escapeHtml(marketCap ? marketCap.toLocaleString('en-US') : '')}" inputmode="decimal" autocomplete="off" aria-invalid="${state.guidedErrors.startingMarketCapUsd ? 'true' : 'false'}">${guidedError('startingMarketCapUsd')}</label>
+        <label><span>Target starting market cap</span><input data-guided-field="startingMarketCapUsd" value="${escapeHtml(marketCap ? marketCap.toLocaleString('en-US') : '')}" inputmode="decimal" autocomplete="off" aria-invalid="${state.guidedErrors.startingMarketCapUsd ? 'true' : 'false'}"><small>Used to derive the opening token price. This is not a fee or a promise of market value.</small>${guidedError('startingMarketCapUsd')}</label>
         <div class="guided-presets" aria-label="Liquidity budget presets">
           ${[
             [0, 'Minimum', 'Launch costs only'],
@@ -870,7 +870,7 @@ function guidedValueStep() {
             [100, '100 SOL', 'Three deep bands'],
           ].map(([value, label, detail]) => `<button class="${liquidityBudgetSol === value ? 'is-selected' : ''}" type="button" data-action="guided-budget-preset" data-value="${value}"><strong>${label}</strong><small>${detail}</small></button>`).join('')}
         </div>
-        <label><span>Liquidity budget</span><input data-guided-field="liquidityBudgetSol" value="${escapeHtml(liquidityBudgetSol)}" inputmode="decimal" autocomplete="off"><small>${escapeHtml(strategy.label)} · ${escapeHtml(strategy.structure)}</small></label>
+        <label><span>Pool liquidity budget</span><input data-guided-field="liquidityBudgetSol" value="${escapeHtml(liquidityBudgetSol)}" inputmode="decimal" autocomplete="off"><small>${escapeHtml(strategy.label)} · ${escapeHtml(strategy.structure)} · only a live launch uses this SOL</small></label>
         <div class="guided-price-preview"><small>What this choice does</small><strong>${escapeHtml(strategy.detail)}</strong><span>Network fees, rent, publishing, and a safety buffer are calculated separately on Review.</span></div>
         <div class="guided-price-preview"><small>Approximate starting token price</small><strong>$${tokenPrice.toFixed(tokenPrice < 0.001 ? 8 : 4)}</strong><span>Based on one billion tokens and your starting market value.</span></div>
       </div>
@@ -918,12 +918,12 @@ function guidedReviewStep() {
       </div>
       <section class="guided-funding-summary ${funding.status === 'error' ? 'has-error' : ''}" aria-live="polite">
         <span><small>Liquidity allocation</small><strong>${fmtSol(liquidityBudgetSol)}</strong></span>
-        <span><small>Estimated launch costs</small><strong>${costValue}</strong></span>
-        <span><small>Estimated funding required</small><strong>${fundingValue}</strong></span>
+        <span><small>${practice ? 'Estimated live launch costs' : 'Estimated launch costs'}</small><strong>${costValue}</strong></span>
+        <span><small>${practice ? 'Estimated live funding total' : 'Total to fund launch wallet'}</small><strong>${fundingValue}</strong></span>
         ${funding.status === 'error' ? `<button class="pill-button" type="button" data-action="guided-retry-estimate">Retry estimate</button>` : ''}
       </section>
       <p class="guided-funding-note">${funding.status === 'ready'
-        ? `Includes estimated rent, network fees, publishing, and safety buffer. ${strategy.coreSol > 0 ? `${fmtSol(strategy.coreSol)} is reserved for core liquidity.` : 'This minimum recipe adds no discretionary liquidity.'}`
+        ? `${practice ? 'Practice still spends 0 SOL. The live estimate includes' : 'Includes'} rent, network fees, publishing, and safety buffer. ${strategy.coreSol > 0 ? `${fmtSol(strategy.coreSol)} is reserved for core liquidity.` : 'This minimum recipe adds no discretionary liquidity.'}`
         : funding.status === 'error'
           ? `The local estimator did not respond: ${escapeHtml(funding.error || 'unknown error')}. You can retry or continue to the Funding phase.`
           : 'Trebuchet is calculating the launch costs separately from your liquidity allocation.'}</p>
@@ -1012,6 +1012,16 @@ function renderGuidedLaunchFlow() {
     return;
   }
   target.hidden = false;
+  const renderedStep = target.dataset.renderedStep;
+  const sameStep = renderedStep === String(state.guidedStep);
+  const viewport = $('#launchWorkspaceViewport');
+  const savedScrollTop = sameStep ? Number(viewport?.scrollTop || 0) : 0;
+  const activeField = sameStep && target.contains(document.activeElement)
+    ? document.activeElement?.dataset?.guidedField || null
+    : null;
+  const selectionStart = activeField ? document.activeElement.selectionStart : null;
+  const selectionEnd = activeField ? document.activeElement.selectionEnd : null;
+  const technicalDetailsOpen = sameStep && target.querySelector('.guided-technical-details')?.open === true;
   const practice = practiceEnvironmentSelected();
   let body = '';
   if (state.guidedStep === 0) {
@@ -1045,10 +1055,32 @@ function renderGuidedLaunchFlow() {
         ? `<button class="primary-button" type="button" data-action="guided-next">${state.guidedStep === 3 ? 'Review launch recipe' : 'Continue'} <i class="fa-solid fa-arrow-right"></i></button>`
         : practice
           ? '<button class="primary-button" type="button" data-action="guided-practice"><i class="fa-solid fa-flask"></i> Start practice launch</button>'
-          : '<button class="primary-button custody-action" type="button" data-action="guided-live-handoff"><i class="fa-solid fa-shield-halved"></i> Continue to protected wallet</button>'}
+          : '<button class="primary-button custody-action" type="button" data-action="guided-live-handoff"><i class="fa-solid fa-shield-halved"></i> Set up live launch wallet</button>'}
     </div>
   `;
   target.innerHTML = `${guidedStepProgress()}${body}${controls}`;
+  target.dataset.renderedStep = String(state.guidedStep);
+  if (technicalDetailsOpen) target.querySelector('.guided-technical-details')?.setAttribute('open', '');
+  if (activeField) {
+    const replacement = target.querySelector(`[data-guided-field="${activeField}"]`);
+    replacement?.focus({ preventScroll: true });
+    if (replacement && Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)) {
+      replacement.setSelectionRange(selectionStart, selectionEnd);
+    }
+  }
+  if (sameStep && viewport) viewport.scrollTop = savedScrollTop;
+}
+
+function settleGuidedStepPosition({ focusInvalid = false } = {}) {
+  window.requestAnimationFrame(() => {
+    const target = $('#guidedLaunchFlow');
+    const viewport = $('#launchWorkspaceViewport');
+    if (viewport) viewport.scrollTop = 0;
+    if (window.matchMedia?.('(max-width: 900px)').matches) {
+      target?.scrollIntoView({ block: 'start', behavior: 'auto' });
+    }
+    if (focusInvalid) target?.querySelector('[aria-invalid="true"]')?.focus({ preventScroll: true });
+  });
 }
 
 function setExperienceMode(mode) {
@@ -1067,6 +1099,7 @@ function setExperienceMode(mode) {
   setLaunchWorkspace(next === 'guided' ? 'configure' : 'wallet');
   persistGuidedDraft();
   renderAll();
+  if (next === 'guided') settleGuidedStepPosition();
   notify(next === 'guided' ? 'Guided launch opened' : 'Advanced launch controls opened');
 }
 
@@ -1114,6 +1147,7 @@ async function handoffGuidedLiveLaunch() {
     state.guidedErrors = errors;
     state.guidedStep = 2;
     renderAll();
+    settleGuidedStepPosition({ focusInvalid: true });
     return;
   }
   applyGuidedRecipe();
@@ -1136,7 +1170,11 @@ async function prepareGuidedLiveLaunch() {
   state.guidedRunError = null;
   setLaunchWorkspace('configure');
   persistGuidedDraft();
-  renderAll();
+  renderLaunchPreview();
+  renderGuidedLaunchFlow();
+  renderGuidedRunShell();
+  renderLaunchWorkspace();
+  settleGuidedStepPosition();
 }
 
 function moveGuidedStep(direction) {
@@ -1145,7 +1183,7 @@ function moveGuidedStep(direction) {
     if (Object.keys(errors).length) {
       state.guidedErrors = errors;
       renderGuidedLaunchFlow();
-      window.requestAnimationFrame(() => $('#guidedLaunchFlow [aria-invalid="true"]')?.focus());
+      settleGuidedStepPosition({ focusInvalid: true });
       return;
     }
   }
@@ -1153,8 +1191,11 @@ function moveGuidedStep(direction) {
   state.guidedStep = clampNumber(state.guidedStep + direction, 0, guidedSteps.length - 1);
   if (state.guidedStep === guidedSteps.length - 1) applyGuidedRecipe();
   persistGuidedDraft();
-  renderAll();
-  $('#guidedLaunchFlow')?.scrollTo({ top: 0, behavior: 'smooth' });
+  renderLaunchPreview();
+  renderGuidedLaunchFlow();
+  renderGuidedRunShell();
+  renderLaunchWorkspace();
+  settleGuidedStepPosition();
   if (state.guidedStep === guidedSteps.length - 1) {
     requestGuidedFundingEstimate().catch(() => null);
   }
@@ -1214,7 +1255,7 @@ function renderGuidedRunShell() {
         <p>${proof ? 'This record previews the token, liquidity, destination, and recovery evidence a live run must produce. It is not public proof and represents no on-chain asset.' : 'Return to the recipe and run the practice launch first.'}</p>
         <div class="guided-proof-summary">
           <span><small>Token</small><strong>${escapeHtml(token?.symbol || 'Waiting')}</strong></span>
-          <span><small>Pool</small><strong>${proof ? `${poolCount} SOL pool${poolCount === 1 ? '' : 's'}` : 'Waiting'}</strong></span>
+          <span><small>Liquidity</small><strong>${proof ? `${fmtSol(state.guidedIntent.liquidityBudgetSol)} · ${poolCount} pool${poolCount === 1 ? '' : 's'}` : 'Waiting'}</strong></span>
           <span><small>Mode</small><strong>Practice</strong></span>
         </div>
         <div class="guided-run-actions">
@@ -1249,7 +1290,7 @@ function renderGuidedRunShell() {
       ${complete ? `
         <div class="guided-proof-summary">
           <span><small>Token</small><strong>${escapeHtml(token?.symbol || currentLaunchConfig().token.symbol)}</strong></span>
-          <span><small>Liquidity</small><strong>${poolCount} SOL pool${poolCount === 1 ? '' : 's'}</strong></span>
+          <span><small>Liquidity</small><strong>${fmtSol(state.guidedIntent.liquidityBudgetSol)} · ${poolCount} pool${poolCount === 1 ? '' : 's'}</strong></span>
           <span><small>Spend</small><strong>0 SOL</strong></span>
         </div>
       ` : ''}
@@ -15360,6 +15401,7 @@ function renderPersonalDiscovery() {
   const managedWallets = wallets.filter((wallet) => wallet.source === 'managed');
   const scanConcurrency = Number(state.discovery.limits?.scanConcurrency) || 4;
   const enabledWatchOnlyCount = watchOnlyWallets.filter((wallet) => wallet.enabled !== false).length;
+  const enabledManagedCount = managedWallets.filter((wallet) => wallet.enabled !== false).length;
   const walletRenderLimit = Math.max(100, Number(state.discovery.walletRenderLimit) || 100);
   const visibleWatchOnlyWallets = watchOnlyWallets.slice(-walletRenderLimit).reverse();
   const visibleManagedWallets = managedWallets.slice(0, walletRenderLimit);
@@ -15376,14 +15418,14 @@ function renderPersonalDiscovery() {
     personalizeBanner.hidden = watchOnlyWallets.length > 0;
     personalizeBanner.innerHTML = watchOnlyWallets.length ? '' : `
       <i class="fa-solid fa-user-group"></i>
-      <span><strong>Make this feed yours</strong><small>Add wallets you follow to build your private token graph. Trebuchet-controlled launch wallets are never used as discovery seeds.</small></span>
+      <span><strong>Make this feed yours</strong><small>Trebuchet-managed wallets already contribute. Add wallets you follow to expand your private token graph.</small></span>
       <button class="primary-button compact" type="button" data-action="open-wallet-tracking">Add watched wallets</button>
     `;
   }
   if (scanButton) {
     scanButton.disabled = !connected
       || state.discovery.scanning
-      || enabledWatchOnlyCount === 0;
+      || enabledWatchOnlyCount + enabledManagedCount === 0;
     scanButton.innerHTML = state.discovery.scanning
       ? '<i class="fa-solid fa-spinner fa-spin"></i><span>Scanning</span>'
       : '<i class="fa-solid fa-rotate"></i><span>Refresh tokens</span>';
@@ -15417,7 +15459,7 @@ function renderPersonalDiscovery() {
       <details class="managed-discovery-wallets">
         <summary>
           <span><i class="fa-solid fa-key"></i> ${managedWallets.length} Trebuchet wallet${managedWallets.length === 1 ? '' : 's'}</span>
-          <small>Automatic · excluded from your discovery graph</small>
+          <small>Automatic · included without reducing tracked-wallet capacity</small>
         </summary>
         <div class="discovery-wallet-chip-list">${visibleManagedWallets.map(discoveryWalletChip).join('')}</div>
         ${managedWallets.length > visibleManagedWallets.length ? `
@@ -15427,7 +15469,7 @@ function renderPersonalDiscovery() {
         ` : ''}
       </details>
     ` : ''}
-    <p class="discovery-scan-budget">${enabledWatchOnlyCount} watched wallet${enabledWatchOnlyCount === 1 ? '' : 's'} queued. Every enabled watched wallet is scanned with ${scanConcurrency} concurrent lookups; Trebuchet-controlled wallets never enter the personal graph.</p>
+    <p class="discovery-scan-budget">${enabledWatchOnlyCount} watched + ${enabledManagedCount} Trebuchet-managed wallet${enabledManagedCount === 1 ? '' : 's'} queued. Every enabled wallet is scanned with ${scanConcurrency} concurrent lookups; neither group has an artificial limit.</p>
   `;
 
   const progressLabel = personalDiscoveryProgressLabel();

@@ -146,6 +146,21 @@ try {
   await page.click('[data-action="guided-next"]');
   await page.fill('[data-guided-field="name"]', 'First Launch');
   await page.fill('[data-guided-field="symbol"]', 'FIRST');
+  await page.evaluate(() => {
+    const symbol = document.querySelector('[data-guided-field="symbol"]');
+    symbol.focus();
+    symbol.setSelectionRange(2, 2);
+    document.querySelector('[data-action="select-environment"][data-environment="live"]').click();
+  });
+  await page.waitForFunction(() => document.body.dataset.executionEnvironment === 'live');
+  assert.deepEqual(await page.evaluate(() => ({
+    field: document.activeElement?.dataset?.guidedField,
+    cursor: document.activeElement?.selectionStart,
+  })), { field: 'symbol', cursor: 2 }, 'environment refresh moved focus inside Guided Mode');
+  await page.evaluate(() => {
+    document.querySelector('[data-action="select-environment"][data-environment="practice"]').click();
+  });
+  await page.waitForFunction(() => document.body.dataset.executionEnvironment === 'practice');
   await page.click('[data-action="guided-next"]');
   await page.click('[data-action="guided-use-practice-wallet"]');
   await page.click('[data-action="guided-next"]');
