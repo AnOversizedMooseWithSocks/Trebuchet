@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   createTrebuchetCore,
   v2LaunchProofFingerprint,
+  v2TransferEvidenceHash,
 } from '@trebuchet/core';
 import { buildV2LaunchPlan as compatibilityPlanBuilder } from '../v2LaunchPlan.js';
 
@@ -26,6 +27,47 @@ function planSummary(plan) {
     operationIds: plan.operations.map(({ id }) => id),
     integrityDigest: plan.integrity.digest,
   };
+}
+
+function completeProof() {
+  const proof = {
+    status: 'completed',
+    stage: 'transfer_completed',
+    journalId: 'journal-core-1',
+    walletPublicKey: '11111111111111111111111111111115',
+    token: {
+      mint: '11111111111111111111111111111117',
+      mintAuthorityRenounced: true,
+      freezeAuthorityDisabled: true,
+      metadataUpdateAuthorityRevoked: true,
+      metadataImmutable: true,
+    },
+    liquidity: {
+      poolIds: ['11111111111111111111111111111118'],
+      results: [{
+        poolId: '11111111111111111111111111111118',
+        createPoolTx: 'create-pool-tx',
+        mainPositions: [{
+          positionNftMint: '11111111111111111111111111111119',
+          feeKeyNftMint: '1111111111111111111111111111111A',
+          locked: true,
+          openTx: 'open-position-tx',
+          lockTx: 'lock-position-tx',
+        }],
+      }],
+    },
+    airdrop: { plannedRecipientCount: 0, deliveredCount: 0, failedCount: 0 },
+    transfer: {
+      status: 'completed',
+      destinationWallet: '11111111111111111111111111111116',
+      walletEmpty: true,
+      solTxId: 'sweep-sol-tx',
+      tokenTransferErrors: [],
+      nftTransferErrors: [],
+    },
+  };
+  proof.terminalTransferEvidenceHash = v2TransferEvidenceHash(proof.transfer);
+  return proof;
 }
 
 test('Core plan contract matches the committed Guided SOL golden fixture', () => {
@@ -61,12 +103,7 @@ test('Core estimate is detached from the runtime object receiver', () => {
 
 test('Core independently verifies stored proof fingerprints', () => {
   const core = createTrebuchetCore();
-  const proof = {
-    walletPublicKey: '11111111111111111111111111111115',
-    token: { mint: '11111111111111111111111111111117' },
-    liquidity: { poolIds: [], results: [] },
-    transfer: null,
-  };
+  const proof = completeProof();
   const fingerprint = v2LaunchProofFingerprint(proof);
   const payload = {
     schema: 'trebuchet-v2-proof',
@@ -79,4 +116,17 @@ test('Core independently verifies stored proof fingerprints', () => {
   const invalid = core.verifyProof(payload);
   assert.equal(invalid.valid, false);
   assert.ok(invalid.errors.some(({ code }) => code === 'FINGERPRINT_MISMATCH'));
+});
+
+test('Core rejects fabricated, incomplete, and unbound proof objects', () => {
+  const core = createTrebuchetCore();
+  const fabricated = core.verifyProof({ token: {}, liquidity: {} });
+  assert.equal(fabricated.valid, false);
+  assert.ok(fabricated.errors.some(({ code }) => code === 'PROVENANCE_MISMATCH'));
+  assert.ok(fabricated.errors.some(({ code }) => code === 'PROOF_INCOMPLETE'));
+
+  const proof = completeProof();
+  const unbound = core.verifyProof({ schema: 'trebuchet-v2-proof', source: 'trebuchet-v2', proof });
+  assert.equal(unbound.valid, false);
+  assert.ok(unbound.errors.some(({ code }) => code === 'FINGERPRINT_MISSING'));
 });

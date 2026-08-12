@@ -79,6 +79,32 @@ test('load preserves every managed and watched wallet row', async (t) => {
   assert.equal(wallets.filter((wallet) => wallet.source === 'watch-only').length, 29);
 });
 
+test('managed wallet synchronization loads and persists the graph once per batch', async (t) => {
+  const configDir = makeTempConfigDir(t);
+  const store = await importFreshStore(configDir);
+  const managed = Array.from({ length: 2_000 }, (_, index) => ({
+    publicKey: `managed-${index}`,
+    label: index === 0 ? 'Launch wallet' : `Trebuchet wallet ${index + 1}`,
+  }));
+
+  const startedAt = performance.now();
+  assert.equal(store.syncManagedWallets(managed).length, managed.length);
+  const firstSyncMs = performance.now() - startedAt;
+  assert.equal(store.listWallets().length, managed.length);
+  assert.ok(firstSyncMs < 2_000, `bulk synchronization took ${firstSyncMs.toFixed(0)}ms`);
+
+  const snapshot = store.saveSnapshot({
+    schema: 'trebuchet-personal-discovery/v1',
+    completedAt: '2026-08-09T10:00:00.000Z',
+    knownTokens: [],
+    candidates: [],
+    warnings: [],
+  });
+  assert.ok(snapshot);
+  store.syncManagedWallets(managed);
+  assert.ok(store.getSnapshot(), 'an unchanged managed-wallet batch must not invalidate the snapshot');
+});
+
 test('promoting a watched wallet to managed preserves unique tracking', async (t) => {
   const configDir = makeTempConfigDir(t);
   const store = await importFreshStore(configDir);

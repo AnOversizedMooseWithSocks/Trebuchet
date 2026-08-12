@@ -1,6 +1,7 @@
 import { PublicKey, SystemProgram } from '@solana/web3.js';
 import {
   AccountLayout,
+  MintLayout,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
@@ -10,7 +11,7 @@ export const PERSONAL_DISCOVERY_LIMITS = Object.freeze({
   maxKnownTokens: 100,
   maxSeeds: 5,
   maxHoldersPerSeed: 8,
-  maxPortfolioTokens: 25,
+  maxPortfolioTokens: 10,
   maxCandidates: 100,
   maxKnownTokenDetails: 25,
   maxCandidateDetails: 25,
@@ -36,9 +37,45 @@ function shortAddress(address) {
   return value.length > 12 ? `${value.slice(0, 5)}…${value.slice(-4)}` : value;
 }
 
-function holdingRankValue(holding) {
-  const amountUi = Math.max(0, finiteNumber(holding.amountUi) || 0);
-  return Math.log10(1 + amountUi);
+export function rankPortfolioHoldingsByOwnership(holdings = [], supplyByMint = new Map()) {
+  return (Array.isArray(holdings) ? holdings : [])
+    .map((holding) => {
+      const amountRaw = safeBigInt(holding?.amountRaw);
+      const supplyRaw = safeBigInt(supplyByMint.get(holding?.mint));
+      const ownershipShare = supplyRaw > 0n
+        ? Math.max(0, Math.min(1, Number(amountRaw) / Number(supplyRaw)))
+        : 0;
+      return { ...holding, ownershipShare };
+    })
+    .sort((a, b) => b.ownershipShare - a.ownershipShare
+      || String(a.mint || '').localeCompare(String(b.mint || '')));
+}
+
+async function loadMintSupplies(connection, holdings = [], supplyByMint = new Map()) {
+  if (typeof connection?.getMultipleAccountsInfo !== 'function') return supplyByMint;
+  const missing = [...new Set((Array.isArray(holdings) ? holdings : [])
+    .map((holding) => String(holding?.mint || '').trim())
+    .filter((mint) => mint && !supplyByMint.has(mint)))];
+  for (let offset = 0; offset < missing.length; offset += 100) {
+    const chunk = missing.slice(offset, offset + 100);
+    try {
+      const infos = await connection.getMultipleAccountsInfo(
+        chunk.map((mint) => new PublicKey(mint)),
+        'confirmed',
+      );
+      chunk.forEach((mint, index) => {
+        try {
+          const decoded = infos[index]?.data ? MintLayout.decode(infos[index].data) : null;
+          supplyByMint.set(mint, decoded ? safeBigInt(decoded.supply).toString() : null);
+        } catch {
+          supplyByMint.set(mint, null);
+        }
+      });
+    } catch {
+      chunk.forEach((mint) => supplyByMint.set(mint, null));
+    }
+  }
+  return supplyByMint;
 }
 
 export function normalizePortfolioResponses(responses = []) {
@@ -137,6 +174,7 @@ function addKnownHolding(known, wallet, holding) {
     walletCount: 0,
     wallets: [],
     aggregateUiAmount: 0,
+    aggregateRawAmount: '0',
   };
   if (!record.wallets.some((entry) => entry.publicKey === wallet.publicKey)) {
     record.walletCount += 1;
@@ -147,6 +185,7 @@ function addKnownHolding(known, wallet, holding) {
     });
   }
   record.aggregateUiAmount += Math.max(0, finiteNumber(holding.amountUi) || 0);
+  record.aggregateRawAmount = (safeBigInt(record.aggregateRawAmount) + safeBigInt(holding.amountRaw)).toString();
   known.set(holding.mint, record);
 }
 
@@ -255,6 +294,7 @@ export async function scanPersonalDiscovery({
     warnings.push(`Scanned ${activeWallets.length} of ${availableWallets.length} enabled wallets. Watch-only wallets are prioritized; pause wallets to change the scan set.`);
   }
   const known = new Map();
+  const mintSupplyCache = new Map();
   let walletCursor = 0;
   let completedWallets = 0;
   onProgress?.({ phase: 'known-wallets', current: 0, total: activeWallets.length });
@@ -291,8 +331,20 @@ export async function scanPersonalDiscovery({
   });
   await Promise.all(walletWorkers);
 
+  await loadMintSupplies(connection, [...known.values()], mintSupplyCache);
   let knownTokens = [...known.values()]
-    .sort((a, b) => b.walletCount - a.walletCount || b.aggregateUiAmount - a.aggregateUiAmount)
+    .map((token) => {
+      const supplyRaw = safeBigInt(mintSupplyCache.get(token.mint));
+      return {
+        ...token,
+        trackedSupplyShare: supplyRaw > 0n
+          ? Math.max(0, Math.min(1, Number(safeBigInt(token.aggregateRawAmount)) / Number(supplyRaw)))
+          : 0,
+      };
+    })
+    .sort((a, b) => b.walletCount - a.walletCount
+      || b.trackedSupplyShare - a.trackedSupplyShare
+      || String(a.mint).localeCompare(String(b.mint)))
     .slice(0, effective.maxKnownTokens);
   knownTokens = (await enrichRecords(
     knownTokens,
@@ -309,7 +361,8 @@ export async function scanPersonalDiscovery({
     }))
     .sort((a, b) => b.walletCount - a.walletCount
       || (b.estimatedValueUsd || 0) - (a.estimatedValueUsd || 0)
-      || b.aggregateUiAmount - a.aggregateUiAmount);
+      || b.trackedSupplyShare - a.trackedSupplyShare
+      || String(a.mint).localeCompare(String(b.mint)));
   const seeds = knownTokens.slice(0, effective.maxSeeds);
   // Exclude every token already held by a tracked wallet, not only the ten
   // records shown in the Known tokens summary.
@@ -340,9 +393,11 @@ export async function scanPersonalDiscovery({
         }
         successfulHolderSlots += 1;
         scannedHolders.add(owner.owner);
-        const ranked = portfolio.holdings
-          .filter((holding) => holding.mint !== seed.mint)
-          .sort((a, b) => holdingRankValue(b) - holdingRankValue(a))
+        await loadMintSupplies(connection, portfolio.holdings, mintSupplyCache);
+        const ranked = rankPortfolioHoldingsByOwnership(
+          portfolio.holdings.filter((holding) => holding.mint !== seed.mint),
+          mintSupplyCache,
+        )
           .slice(0, effective.maxPortfolioTokens);
         ranked.forEach((holding, rankIndex) => {
           if (knownMints.has(holding.mint)) return;
@@ -359,6 +414,7 @@ export async function scanPersonalDiscovery({
             holder: owner.owner,
             rank: rankIndex + 1,
             amountUi: holding.amountUi,
+            ownershipShare: holding.ownershipShare,
           });
           candidates.set(holding.mint, candidate);
         });
@@ -386,13 +442,24 @@ export async function scanPersonalDiscovery({
     .sort((a, b) => b.networkScore - a.networkScore || b.holderCount - a.holderCount)
     .slice(0, effective.maxCandidates);
 
-  candidateRows = await enrichRecords(
+  candidateRows = (await enrichRecords(
     candidateRows,
     enrichToken,
     onProgress,
     'candidate-details',
     effective.maxCandidateDetails,
-  );
+  ))
+    .map((token) => ({
+      ...token,
+      observedHolderValueUsd: finiteNumber(token.priceUsd) == null
+        ? null
+        : (token.paths || []).reduce((sum, path) => (
+          sum + Math.max(0, finiteNumber(path.amountUi) || 0) * Number(token.priceUsd)
+        ), 0),
+    }))
+    .sort((a, b) => b.networkScore - a.networkScore
+      || (b.observedHolderValueUsd || 0) - (a.observedHolderValueUsd || 0)
+      || String(a.mint).localeCompare(String(b.mint)));
 
   return {
     schema: 'trebuchet-personal-discovery/v1',

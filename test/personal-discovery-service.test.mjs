@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Keypair, PublicKey } from '@solana/web3.js';
-import { AccountLayout, TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { AccountLayout, MintLayout, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 import {
   normalizePortfolioResponses,
+  rankPortfolioHoldingsByOwnership,
   resolveLargestAccountOwners,
   scanPersonalDiscovery,
   selectPersonalDiscoveryWallets,
@@ -37,6 +38,20 @@ function tokenAccountInfo(owner) {
   return { data, executable: false, owner: TOKEN_PROGRAM_ID };
 }
 
+function mintAccountInfo(supply, decimals = 6) {
+  const data = Buffer.alloc(MintLayout.span);
+  MintLayout.encode({
+    mintAuthorityOption: 0,
+    mintAuthority: PublicKey.default,
+    supply: BigInt(supply),
+    decimals,
+    isInitialized: true,
+    freezeAuthorityOption: 0,
+    freezeAuthority: PublicKey.default,
+  }, data);
+  return { data, executable: false, owner: TOKEN_PROGRAM_ID };
+}
+
 test('personal Discovery aggregates fungible balances and removes NFT-like receipts', () => {
   const mint = Keypair.generate().publicKey.toBase58();
   const nft = Keypair.generate().publicKey.toBase58();
@@ -66,6 +81,22 @@ test('personal Discovery resolves token-account addresses to their owners', () =
     owner: owner.toBase58(),
     amountRaw: '420',
   }]);
+});
+
+test('personal Discovery ranks holdings by ownership share instead of incomparable display units', () => {
+  const common = Keypair.generate().publicKey.toBase58();
+  const meaningful = Keypair.generate().publicKey.toBase58();
+  const ranked = rankPortfolioHoldingsByOwnership([
+    { mint: common, amountRaw: '900000000000', amountUi: 900000 },
+    { mint: meaningful, amountRaw: '100', amountUi: 0.0001 },
+  ], new Map([
+    [common, '1000000000000000'],
+    [meaningful, '1000'],
+  ]));
+
+  assert.equal(ranked[0].mint, meaningful);
+  assert.equal(ranked[0].ownershipShare, 0.1);
+  assert.ok(ranked[0].ownershipShare > ranked[1].ownershipShare);
 });
 
 test('personal Discovery prioritizes watch-only wallets inside the scan budget', () => {
@@ -138,7 +169,8 @@ test('personal Discovery builds a bounded one-hop graph with explainable paths',
     ]],
     [secondHolder.toBase58(), []],
   ]);
-  let multipleAccountCall = 0;
+  const tokenAccounts = new Set([holderTokenAccount.toBase58(), secondHolderTokenAccount.toBase58()]);
+  const holderOwners = new Set([holder.toBase58(), secondHolder.toBase58()]);
   const connection = {
     getParsedTokenAccountsByOwner: async (owner, filter) => ({
       value: filter.programId.equals(TOKEN_PROGRAM_ID)
@@ -153,15 +185,20 @@ test('personal Discovery builds a bounded one-hop graph with explainable paths',
       ] };
     },
     getMultipleAccountsInfo: async (addresses) => {
-      multipleAccountCall += 1;
-      if (multipleAccountCall === 1) {
-        assert.equal(addresses[0].toBase58(), holderTokenAccount.toBase58());
-        assert.equal(addresses[1].toBase58(), secondHolderTokenAccount.toBase58());
-        return [tokenAccountInfo(holder), tokenAccountInfo(secondHolder)];
+      const values = addresses.map((address) => address.toBase58());
+      if (values.every((address) => tokenAccounts.has(address))) {
+        return values.map((address) => (
+          address === holderTokenAccount.toBase58() ? tokenAccountInfo(holder) : tokenAccountInfo(secondHolder)
+        ));
       }
-      assert.equal(addresses[0].toBase58(), holder.toBase58());
-      assert.equal(addresses[1].toBase58(), secondHolder.toBase58());
-      return [null, null];
+      if (values.every((address) => holderOwners.has(address))) return values.map(() => null);
+      return values.map((address) => {
+        if (address === seed.toBase58()) return mintAccountInfo(10_000_000);
+        if (address === knownOutsideSummary.toBase58()) return mintAccountInfo(1_000_000_000);
+        if (address === candidateA.toBase58()) return mintAccountInfo(1_000_000_000);
+        if (address === candidateB.toBase58()) return mintAccountInfo(1_000_000_000);
+        return null;
+      });
     },
   };
   const phases = [];

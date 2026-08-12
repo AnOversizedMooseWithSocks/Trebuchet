@@ -60,7 +60,11 @@ server.on('exit', (code, signal) => {
   serverExited = { code, signal };
 });
 
-async function waitForServer(timeoutMs = 20_000) {
+// The first server import loads the Solana/Raydium dependency graph. Cold CI
+// workers and busy developer machines can legitimately need more than 20s
+// before the loopback listener is ready, so keep the smoke deterministic
+// without weakening any of its readiness assertions.
+async function waitForServer(timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
   while (Date.now() < deadline) {

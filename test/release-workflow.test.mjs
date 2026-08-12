@@ -69,8 +69,14 @@ test('main merges automatically create patch, minor, or major release tags', () 
   assert.match(workflow, /actions:\s+write/);
   assert.match(workflow, /pull-requests:\s+read/);
   assert.match(workflow, /node scripts\/auto-version\.mjs/);
+  assert.match(workflow, /name:\s+Verify release gates before tagging/);
+  assert.match(workflow, /node scripts\/production-release-gate\.mjs "\$\{\{ steps\.next\.outputs\.tag \}\}"/);
   assert.match(workflow, /git tag -a "\$\{\{ steps\.next\.outputs\.tag \}\}"/);
   assert.match(workflow, /gh workflow run release\.yml --ref "\$\{\{ steps\.next\.outputs\.tag \}\}"/);
+  assert.ok(
+    workflow.indexOf('Verify release gates before tagging') < workflow.indexOf('git tag -a'),
+    'production release gate must run before the public tag is created',
+  );
 
   assert.equal(releaseTypeFromLabels([]), 'patch');
   assert.equal(releaseTypeFromLabels(['minor']), 'minor');

@@ -106,6 +106,7 @@
     "c/build/**/*"
   ],
   "dependencies": {
+    "@trebuchet/core": "file:packages/core",
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
     "@metaplex-foundation/umi": "^1.5.1",
     "@metaplex-foundation/umi-bundle-defaults": "^1.5.1",
@@ -126,6 +127,9 @@
     "multer": "^2.2.0",
     "qrcode": "^1.5.4"
   },
+  "bundleDependencies": [
+    "@trebuchet/core"
+  ],
   "devDependencies": {
     "@types/node": "^20.14.10",
     "electron": "^42.8.1",

@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   CliExitCode,
   runCli,
   TREBUCHET_CLI_RESULT_SCHEMA,
 } from '@trebuchet/cli';
-import { v2LaunchProofFingerprint } from '@trebuchet/core';
+import { v2LaunchProofFingerprint, v2TransferEvidenceHash } from '@trebuchet/core';
 
 function captureStream() {
   let output = '';
@@ -64,6 +65,47 @@ const launchIntent = {
     sweepDestination: '11111111111111111111111111111116',
   },
 };
+
+function completeProof() {
+  const proof = {
+    status: 'completed',
+    stage: 'transfer_completed',
+    journalId: 'journal-cli-1',
+    walletPublicKey: '11111111111111111111111111111115',
+    token: {
+      mint: '11111111111111111111111111111117',
+      mintAuthorityRenounced: true,
+      freezeAuthorityDisabled: true,
+      metadataUpdateAuthorityRevoked: true,
+      metadataImmutable: true,
+    },
+    liquidity: {
+      poolIds: ['11111111111111111111111111111118'],
+      results: [{
+        poolId: '11111111111111111111111111111118',
+        createPoolTx: 'create-pool-tx',
+        mainPositions: [{
+          positionNftMint: '11111111111111111111111111111119',
+          feeKeyNftMint: '1111111111111111111111111111111A',
+          locked: true,
+          openTx: 'open-position-tx',
+          lockTx: 'lock-position-tx',
+        }],
+      }],
+    },
+    airdrop: { plannedRecipientCount: 0, deliveredCount: 0, failedCount: 0 },
+    transfer: {
+      status: 'completed',
+      destinationWallet: '11111111111111111111111111111116',
+      walletEmpty: true,
+      solTxId: 'sweep-sol-tx',
+      tokenTransferErrors: [],
+      nftTransferErrors: [],
+    },
+  };
+  proof.terminalTransferEvidenceHash = v2TransferEvidenceHash(proof.transfer);
+  return proof;
+}
 
 test('doctor emits one versioned JSON envelope and advertises read-only capability', async () => {
   const result = await invoke(['doctor', '--json'], { nodeVersion: '22.12.0', platform: 'linux' });
@@ -128,12 +170,7 @@ test('tampered plans fail with the stable integrity exit code', async () => with
 }));
 
 test('proof verify independently accepts matching evidence and rejects stale fingerprints', async () => withTempDirectory(async (directory) => {
-  const proof = {
-    walletPublicKey: '11111111111111111111111111111115',
-    token: { mint: '11111111111111111111111111111117' },
-    liquidity: { poolIds: [], results: [] },
-    transfer: null,
-  };
+  const proof = completeProof();
   const payload = {
     schema: 'trebuchet-v2-proof',
     source: 'trebuchet-v2',
@@ -165,7 +202,7 @@ test('invalid commands fail without prompts and keep JSON errors on stdout', asy
   assert.match(JSON.parse(misplacedOption.stdout).error.message, /--config is not valid here/);
 });
 
-test('the published bin entry executes without Electron or the Local API', () => {
+test('the workspace bin entry executes without Electron or the Local API', () => {
   const result = spawnSync(
     process.execPath,
     ['packages/cli/bin/trebuchet.js', 'doctor', '--json'],
@@ -177,3 +214,42 @@ test('the published bin entry executes without Electron or the Local API', () =>
   assert.equal(payload.ok, true);
   assert.equal(payload.data.transactionExecution, false);
 });
+
+test('the packed root package bundles Core and runs the published CLI in isolation', async () => withTempDirectory(async (directory) => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const npmCache = process.env.TREBUCHET_NPM_PACK_CACHE
+    || path.join(tmpdir(), 'trebuchet-cli-pack-cache');
+  const packed = spawnSync(
+    npmCommand,
+    ['pack', '--json', '--pack-destination', directory],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, npm_config_cache: npmCache },
+    },
+  );
+  assert.equal(packed.status, 0, packed.stderr);
+  const [{ filename, bundled = [] }] = JSON.parse(packed.stdout);
+  assert.ok(bundled.includes('@trebuchet/core'), 'packed package must bundle @trebuchet/core');
+
+  const extractDirectory = path.join(directory, 'extract');
+  await mkdir(extractDirectory);
+  const extracted = spawnSync(
+    'tar',
+    ['-xf', path.join(directory, filename), '-C', extractDirectory],
+    { encoding: 'utf8' },
+  );
+  assert.equal(extracted.status, 0, extracted.stderr);
+
+  const result = spawnSync(
+    process.execPath,
+    ['packages/cli/bin/trebuchet.js', 'doctor', '--json'],
+    { cwd: path.join(extractDirectory, 'package'), encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.transactionExecution, false);
+}));

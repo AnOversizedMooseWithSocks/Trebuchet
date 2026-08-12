@@ -969,9 +969,15 @@ function syncManagedDiscoveryWallets() {
   const sourceWallets = isDemoMode()
     ? Array.from(demoManagedWallets.values())
     : pendingWallets.list();
-  sourceWallets.forEach((wallet, index) => {
-    rememberManagedDiscoveryWallet(wallet, index === 0 ? 'Launch wallet' : `Trebuchet wallet ${index + 1}`);
-  });
+  try {
+    discoveryStore.syncManagedWallets(sourceWallets.map((wallet, index) => ({
+      publicKey: wallet?.publicKey,
+      label: index === 0 ? 'Launch wallet' : `Trebuchet wallet ${index + 1}`,
+      enabled: true,
+    })));
+  } catch (error) {
+    console.warn('Personal Discovery could not synchronize managed wallets:', error.message);
+  }
 }
 
 function personalDiscoveryResponse() {
@@ -1019,7 +1025,7 @@ async function enrichPersonalDiscoveryToken(mint, rpcUrl) {
   const metadataResult = await Promise.resolve()
     .then(() => getTokenMetadata(mint, {
       rpcUrl,
-      includePrice: false,
+      includePrice: true,
       includeDisplayMeta: false,
     }))
     .then((value) => ({ status: 'fulfilled', value }))

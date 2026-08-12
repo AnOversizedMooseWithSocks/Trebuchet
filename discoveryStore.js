@@ -153,6 +153,44 @@ export function upsertWallet(publicKey, options = {}) {
   return { ...wallet };
 }
 
+export function syncManagedWallets(wallets = []) {
+  const store = load();
+  const now = new Date().toISOString();
+  const existingByPublicKey = new Map(store.wallets.map((wallet) => [wallet.publicKey, wallet]));
+  const requested = normalizeWallets((Array.isArray(wallets) ? wallets : []).map((wallet) => ({
+    publicKey: wallet?.publicKey,
+    label: wallet?.label,
+    source: 'managed',
+    enabled: wallet?.enabled,
+  })));
+  let changed = false;
+
+  requested.forEach((wallet) => {
+    const existing = existingByPublicKey.get(wallet.publicKey);
+    if (existing) {
+      if (existing.source !== 'managed') {
+        existing.source = 'managed';
+        existing.updatedAt = now;
+        changed = true;
+      }
+      return;
+    }
+    const added = { ...wallet, source: 'managed', createdAt: now, updatedAt: now };
+    store.wallets.push(added);
+    existingByPublicKey.set(added.publicKey, added);
+    changed = true;
+  });
+
+  if (changed) {
+    store.snapshot = null;
+    persist(store);
+  }
+  return requested
+    .map((wallet) => existingByPublicKey.get(wallet.publicKey))
+    .filter(Boolean)
+    .map((wallet) => ({ ...wallet }));
+}
+
 export function setWalletEnabled(publicKey, enabled) {
   const store = load();
   const wallet = store.wallets.find((entry) => entry.publicKey === publicKey);

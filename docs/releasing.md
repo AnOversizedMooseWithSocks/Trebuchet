@@ -1,6 +1,6 @@
 # Releasing Trebuchet
 
-Trebuchet releases are created from immutable `v*` tags. Merges to `main` run [Auto Release](../.github/workflows/auto-release.yml), which reads the merged pull request labels, computes the next semantic version, pushes the tag, and starts [Release](../.github/workflows/release.yml). The release workflow builds desktop artifacts from a clean checkout, publishes a GitHub Release, publishes the matching package to GitHub Packages, and deploys the static [`website/`](../website) directory.
+Trebuchet releases are created from immutable `v*` tags. Merges to `main` run [Auto Release](../.github/workflows/auto-release.yml), which reads the merged pull request labels, computes the next semantic version, verifies every production gate, and only then pushes the tag and starts [Release](../.github/workflows/release.yml). The release workflow re-verifies the gate, builds desktop artifacts from a clean checkout, publishes a GitHub Release, publishes the matching package to GitHub Packages, and deploys the static [`website/`](../website) directory.
 
 ## Release states
 
@@ -45,7 +45,7 @@ Pull requests run tests and Windows, Linux, and macOS arm64 package smoke builds
 
 ## V2 production gate
 
-Every `v2.0.0` or newer tag is blocked before desktop builds unless all production conditions pass:
+Every proposed `v2.0.0` or newer release is blocked before its public tag is created unless all production conditions pass. The tag-driven release workflow repeats the same verification before desktop builds:
 
 1. `release-evidence/v2/field-verification.json` is the unmodified full JSON produced by v2's **Download proof** action after an authorized, non-demo, journal-backed mainnet launch reaches its wallet-empty terminal sweep. It must include a passing report-parity audit, passing Classic-retirement gate, all replacement criteria, a sweep-bound local proof record, and a structured Classic artifact comparison for the same proof fingerprint.
 2. `release-evidence/v2/release-attestation.json` approves those exact evidence bytes and the retained raw Classic input by SHA-256. It names the exact field-run commit, which must be an ancestor of the release commit, and records different GitHub users as field operator and release reviewer. Evidence older than 30 days is rejected.
@@ -61,7 +61,7 @@ Run the same check locally with the production signing environment loaded:
 npm run release:gate -- v2.0.0
 ```
 
-A passing local command is necessary but does not create a release. The tag workflow runs the gate again from full Git history.
+A passing local command is necessary but does not create a release. Auto Release runs the gate before tagging, and the tag workflow runs it again from full Git history.
 
 V1 tags retain the prerelease trust policy and skip this additional gate. That exception is why the v2 version invariant above is mandatory.
 
