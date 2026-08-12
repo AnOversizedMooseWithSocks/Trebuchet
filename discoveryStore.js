@@ -7,6 +7,7 @@ const __dirname = path.dirname(__filename);
 
 const STORE_VERSION = 1;
 const MAX_LABEL_LENGTH = 48;
+const MAX_SNAPSHOT_TOKENS = 250;
 
 function configDir() {
   return process.env.TREBUCHET_CONFIG_DIR || __dirname;
@@ -66,8 +67,8 @@ function normalizeSnapshot(snapshot) {
   return {
     ...snapshot,
     completedAt: new Date(completedAt).toISOString(),
-    knownTokens: Array.isArray(snapshot.knownTokens) ? snapshot.knownTokens.slice(0, 100) : [],
-    candidates: Array.isArray(snapshot.candidates) ? snapshot.candidates.slice(0, 10) : [],
+    knownTokens: Array.isArray(snapshot.knownTokens) ? snapshot.knownTokens.slice(0, MAX_SNAPSHOT_TOKENS) : [],
+    candidates: Array.isArray(snapshot.candidates) ? snapshot.candidates.slice(0, MAX_SNAPSHOT_TOKENS) : [],
     warnings: Array.isArray(snapshot.warnings) ? snapshot.warnings.slice(0, 50).map(String) : [],
   };
 }

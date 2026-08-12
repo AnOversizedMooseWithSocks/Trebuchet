@@ -96,11 +96,32 @@ test('personal Discovery selects every enabled wallet when no scan cap is reques
   assert.equal(selected[0].source, 'watch-only');
 });
 
+test('personal Discovery can bound managed seeds without limiting watched wallets', () => {
+  const wallets = [
+    ...Array.from({ length: 1_200 }, (_, index) => ({
+      publicKey: `watch-${index}`,
+      source: 'watch-only',
+      enabled: true,
+    })),
+    ...Array.from({ length: 60 }, (_, index) => ({
+      publicKey: `managed-${index}`,
+      source: 'managed',
+      enabled: true,
+    })),
+  ];
+
+  const selected = selectPersonalDiscoveryWallets(wallets, Infinity, 5);
+  assert.equal(selected.filter((wallet) => wallet.source === 'watch-only').length, 1_200);
+  assert.equal(selected.filter((wallet) => wallet.source === 'managed').length, 5);
+});
+
 test('personal Discovery builds a bounded one-hop graph with explainable paths', async () => {
   const tracked = Keypair.generate().publicKey;
   const seed = Keypair.generate().publicKey;
   const holder = Keypair.generate().publicKey;
+  const secondHolder = Keypair.generate().publicKey;
   const holderTokenAccount = Keypair.generate().publicKey;
+  const secondHolderTokenAccount = Keypair.generate().publicKey;
   const candidateA = Keypair.generate().publicKey;
   const candidateB = Keypair.generate().publicKey;
   const knownOutsideSummary = Keypair.generate().publicKey;
@@ -115,6 +136,7 @@ test('personal Discovery builds a bounded one-hop graph with explainable paths',
       parsedTokenAccount(knownOutsideSummary.toBase58(), 800_000_000),
       parsedTokenAccount(seed.toBase58(), 10_000),
     ]],
+    [secondHolder.toBase58(), []],
   ]);
   let multipleAccountCall = 0;
   const connection = {
@@ -125,23 +147,28 @@ test('personal Discovery builds a bounded one-hop graph with explainable paths',
     }),
     getTokenLargestAccounts: async (mint) => {
       assert.equal(mint.toBase58(), seed.toBase58());
-      return { value: [{ address: holderTokenAccount, amount: '5000000' }] };
+      return { value: [
+        { address: holderTokenAccount, amount: '5000000' },
+        { address: secondHolderTokenAccount, amount: '4000000' },
+      ] };
     },
     getMultipleAccountsInfo: async (addresses) => {
       multipleAccountCall += 1;
       if (multipleAccountCall === 1) {
         assert.equal(addresses[0].toBase58(), holderTokenAccount.toBase58());
-        return [tokenAccountInfo(holder)];
+        assert.equal(addresses[1].toBase58(), secondHolderTokenAccount.toBase58());
+        return [tokenAccountInfo(holder), tokenAccountInfo(secondHolder)];
       }
       assert.equal(addresses[0].toBase58(), holder.toBase58());
-      return [null];
+      assert.equal(addresses[1].toBase58(), secondHolder.toBase58());
+      return [null, null];
     },
   };
   const phases = [];
   const snapshot = await scanPersonalDiscovery({
     connection,
     wallets: [{ publicKey: tracked.toBase58(), label: 'My wallet', enabled: true }],
-    limits: { maxKnownTokens: 1, maxSeeds: 1, maxHoldersPerSeed: 1, maxPortfolioTokens: 10 },
+    limits: { maxKnownTokens: 1, maxSeeds: 1, maxHoldersPerSeed: 2, maxPortfolioTokens: 10 },
     enrichToken: async (mint) => ({ symbol: mint === seed.toBase58() ? 'SEED' : 'FOUND' }),
     onProgress: (progress) => phases.push(progress.phase),
     now: () => new Date('2026-08-09T12:00:00.000Z'),
@@ -154,6 +181,7 @@ test('personal Discovery builds a bounded one-hop graph with explainable paths',
   assert.equal(snapshot.candidates.some((token) => token.mint === knownOutsideSummary.toBase58()), false);
   assert.equal(snapshot.candidates[0].mint, candidateA.toBase58());
   assert.equal(snapshot.candidates[0].holderCount, 1);
+  assert.equal(snapshot.coverage.holdersScanned, 2);
   assert.equal(snapshot.candidates[0].seedCount, 1);
   assert.equal(snapshot.candidates[0].paths[0].seedMint, seed.toBase58());
   assert.equal(snapshot.candidates[0].paths[0].holder, holder.toBase58());
@@ -162,6 +190,38 @@ test('personal Discovery builds a bounded one-hop graph with explainable paths',
   assert.ok(phases.includes('known-wallets'));
   assert.ok(phases.includes('holder-network'));
   assert.ok(phases.includes('candidate-details'));
+});
+
+test('personal Discovery keeps the full feed while bounding eager token details', async () => {
+  const tracked = Keypair.generate().publicKey;
+  const mints = Array.from({ length: 40 }, () => Keypair.generate().publicKey.toBase58());
+  const enriched = [];
+  const connection = {
+    getParsedTokenAccountsByOwner: async (_owner, filter) => ({
+      value: filter.programId.equals(TOKEN_PROGRAM_ID)
+        ? mints.map((mint) => parsedTokenAccount(mint, 1_000_000))
+        : [],
+    }),
+    getTokenLargestAccounts: async () => ({ value: [] }),
+  };
+
+  const snapshot = await scanPersonalDiscovery({
+    connection,
+    wallets: [{ publicKey: tracked.toBase58(), enabled: true }],
+    limits: {
+      maxKnownTokens: 40,
+      maxSeeds: 1,
+      maxKnownTokenDetails: 5,
+    },
+    enrichToken: async (mint) => {
+      enriched.push(mint);
+      return { symbol: 'DETAIL' };
+    },
+  });
+
+  assert.equal(snapshot.knownTokens.length, 40);
+  assert.equal(enriched.length, 5);
+  assert.equal(snapshot.knownTokens.filter((token) => token.symbol === 'DETAIL').length, 5);
 });
 
 test('personal Discovery skips executable program addresses used as wallet seeds', async () => {

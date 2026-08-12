@@ -1982,17 +1982,19 @@ test('v2 is the Electron default with an explicit tested Classic fallback', () =
 test('v2 Discovery combines a personal wallet graph with live evidence and no social mechanics', () => {
   const combined = `${html}\n${css}\n${js}`;
 
-  assert.match(combined, /Your wallets → on-chain network/);
-  assert.match(combined, /Personal discovery/);
+  assert.match(combined, /Wallets → on-chain/);
+  assert.match(combined, /Token discovery/);
   assert.match(combined, /Token Discovery/);
   assert.match(combined, /Wallet Tracking/);
   assert.match(combined, /Wallets you choose to follow/);
   assert.match(combined, /Watched wallets/);
   assert.match(combined, /no limit/i);
-  assert.match(combined, /Every enabled wallet is scanned/);
+  assert.match(combined, /Every watched wallet is scanned/);
+  assert.match(combined, /app-created wallets are limited/);
   assert.match(combined, /managed-discovery-wallets/);
-  assert.match(combined, /Scan network/);
-  assert.match(combined, /Network discoveries/);
+  assert.match(combined, /Refresh tokens/);
+  assert.match(combined, /personal-token-feed/);
+  assert.match(combined, /Preliminary order/);
   assert.match(combined, /networkScore/);
   assert.match(combined, /data-action="inspect-personal-token"/);
   assert.match(combined, /data-action="toggle-discovery-wallet"/);
@@ -2026,6 +2028,17 @@ test('v2 Discovery combines a personal wallet graph with live evidence and no so
   assert.doesNotMatch(combined, /\brenderRating\b/i);
   assert.doesNotMatch(combined, /\bbookmark/i);
   assert.doesNotMatch(combined, /\bsocial vote/i);
+});
+
+test('v2 makes custody risk visible across the entire interface', () => {
+  assert.match(html, /id="custodySignalLabel">PRACTICE \/ NO CUSTODY/);
+  assert.match(js, /function custodySignalState\(\)/);
+  assert.match(js, /function balanceContainsControlledFunds\(balance\)/);
+  assert.match(js, /document\.body\.dataset\.custodySignal = signal\.id/);
+  assert.match(js, /LIVE \/ AWAITING FUNDS/);
+  assert.match(js, /LIVE \/ FUNDS IN CUSTODY/);
+  assert.match(css, /body\[data-custody-signal="live"\][\s\S]*?--green: #f2c84b/);
+  assert.match(css, /body\[data-custody-signal="funded"\][\s\S]*?--green: #ff5d5d/);
 });
 
 test('v2 removes the staged NFT collection product surface', () => {
@@ -6468,11 +6481,11 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=72/);
+  assert.match(html, /styles\.css\?v=73/);
   assert.match(html, /runtime-state\.js\?v=1/);
   assert.match(html, /api-client\.js\?v=37/);
-  assert.match(html, /app\.js\?v=161/);
-  assert.doesNotMatch(html, /app\.js\?v=161" type="module"/);
+  assert.match(html, /app\.js\?v=163/);
+  assert.doesNotMatch(html, /app\.js\?v=163" type="module"/);
   assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
@@ -10415,7 +10428,8 @@ test('v2 API client bootstraps local session and read-only app state', async () 
         watchOnlyCount: 1,
         managedCount: 0,
         trackingUnlimited: true,
-        scanAllEnabledWallets: true,
+        scanAllWatchedWallets: true,
+        managedSeedLimit: 5,
         scanConcurrency: 4,
       },
       wallets: [{
@@ -10473,7 +10487,8 @@ test('v2 API client bootstraps local session and read-only app state', async () 
   assert.equal(boot.discovery.available, true);
   assert.equal(boot.discovery.wallets[0].label, 'Tracked wallet');
   assert.equal(boot.discovery.limits.trackingUnlimited, true);
-  assert.equal(boot.discovery.limits.scanAllEnabledWallets, true);
+  assert.equal(boot.discovery.limits.scanAllWatchedWallets, true);
+  assert.equal(boot.discovery.limits.managedSeedLimit, 5);
   assert.equal(boot.discovery.snapshot.candidates[0].networkScore, 72);
   assert.equal(boot.viewportSmoke.passed, true);
   assert.equal(boot.viewportSmoke.artifactVersion, 1);

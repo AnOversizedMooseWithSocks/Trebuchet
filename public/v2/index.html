@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TREBUCHET · makesometokens</title>
   <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="./styles.css?v=72">
+  <link rel="stylesheet" href="./styles.css?v=73">
 </head>
 <body>
   <div class="app-shell">
@@ -57,7 +57,7 @@
         <span><small>CHAIN</small><strong>SOLANA</strong></span>
         <span><small>ENV</small><strong id="environmentLabel">RPC</strong></span>
         <span><small>SIGNER</small><strong>LOCAL</strong></span>
-        <span class="terminal-tape-wide"><small>POLICY</small><strong>GUARDED EXECUTION</strong></span>
+        <span class="terminal-tape-wide"><small>CUSTODY SIGNAL</small><strong id="custodySignalLabel">PRACTICE / NO CUSTODY</strong></span>
         <span class="terminal-tape-end"><small>KEY CUSTODY</small><strong>ON DEVICE</strong></span>
       </section>
       <header class="topbar">
@@ -555,8 +555,8 @@
           <section class="surface surface-main">
             <div class="section-heading">
               <div>
-                <span class="eyebrow">Your wallets → on-chain network</span>
-                <h2>Personal discovery</h2>
+                <span class="eyebrow">Wallets → on-chain</span>
+                <h2>Token discovery</h2>
               </div>
               <span class="badge" id="discoveryRegistryCount">0 saved</span>
             </div>
@@ -574,15 +574,14 @@
             <section class="personal-discovery-panel token-discovery-panel" aria-labelledby="personalDiscoveryTitle">
               <div class="personal-discovery-head">
                 <span>
-                  <small>Your wallets → holder graph</small>
-                  <strong id="personalDiscoveryTitle">Discover tokens through people you know</strong>
+                  <small>Wallet graph</small>
+                  <strong id="personalDiscoveryTitle">Discovered tokens</strong>
                 </span>
                 <button class="primary-button compact" id="personalDiscoveryScanButton" type="button" data-action="scan-personal-discovery">
                   <i class="fa-solid fa-diagram-project"></i>
-                  <span>Scan network</span>
+                  <span>Refresh tokens</span>
                 </button>
               </div>
-              <p class="personal-discovery-explainer">Trebuchet scans every enabled wallet, follows qualifying holders one hop, and ranks their other meaningful holdings. The graph stays on this machine.</p>
               <div class="personal-discovery-status" id="personalDiscoveryStatus" aria-live="polite"></div>
               <div class="personal-token-network" id="personalTokenNetwork"></div>
             </section>
@@ -772,6 +771,6 @@
 
   <script src="./runtime-state.js?v=1"></script>
   <script src="./api-client.js?v=37"></script>
-  <script src="./app.js?v=161"></script>
+  <script src="./app.js?v=163"></script>
 </body>
 </html>

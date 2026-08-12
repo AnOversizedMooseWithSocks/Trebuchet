@@ -7,11 +7,13 @@ import {
 
 export const PERSONAL_DISCOVERY_LIMITS = Object.freeze({
   walletConcurrency: 4,
-  maxKnownTokens: 10,
-  maxSeeds: 3,
-  maxHoldersPerSeed: 5,
-  maxPortfolioTokens: 10,
-  maxCandidates: 10,
+  maxKnownTokens: 100,
+  maxSeeds: 5,
+  maxHoldersPerSeed: 8,
+  maxPortfolioTokens: 25,
+  maxCandidates: 100,
+  maxKnownTokenDetails: 25,
+  maxCandidateDetails: 25,
 });
 
 const TOKEN_PROGRAMS = Object.freeze([TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]);
@@ -173,24 +175,35 @@ function confidenceForCoverage(coverage) {
   return 'Low';
 }
 
-export function selectPersonalDiscoveryWallets(wallets = [], maxWallets = Infinity) {
+export function selectPersonalDiscoveryWallets(
+  wallets = [],
+  maxWallets = Infinity,
+  maxManagedWallets = Infinity,
+) {
   const active = wallets.filter((wallet) => wallet?.enabled !== false);
+  const requestedManaged = Number(maxManagedWallets);
+  const managed = active.filter((wallet) => wallet.source === 'managed');
+  const selectedManaged = Number.isFinite(requestedManaged)
+    ? managed.slice(0, Math.max(0, Math.floor(requestedManaged)))
+    : managed;
   const prioritized = [
     ...active.filter((wallet) => wallet.source !== 'managed'),
-    ...active.filter((wallet) => wallet.source === 'managed'),
+    ...selectedManaged,
   ];
   const requested = Number(maxWallets);
   if (!Number.isFinite(requested)) return prioritized;
   return prioritized.slice(0, Math.max(1, Math.floor(requested)));
 }
 
-async function enrichRecords(records, enrichToken, onProgress, phase) {
+async function enrichRecords(records, enrichToken, onProgress, phase, maxDetails = records.length) {
   if (typeof enrichToken !== 'function') return records;
-  const enriched = new Array(records.length);
+  const detailCount = Math.min(records.length, Math.max(0, Number(maxDetails) || 0));
+  if (!detailCount) return records;
+  const enriched = records.map((record) => ({ ...record }));
   let cursor = 0;
   let completed = 0;
-  const workers = Array.from({ length: Math.min(3, records.length) }, async () => {
-    while (cursor < records.length) {
+  const workers = Array.from({ length: Math.min(3, detailCount) }, async () => {
+    while (cursor < detailCount) {
       const index = cursor;
       cursor += 1;
       const record = records[index];
@@ -203,7 +216,7 @@ async function enrichRecords(records, enrichToken, onProgress, phase) {
         };
       }
       completed += 1;
-      onProgress?.({ phase, current: completed, total: records.length });
+      onProgress?.({ phase, current: completed, total: detailCount });
     }
   });
   await Promise.all(workers);
@@ -281,7 +294,13 @@ export async function scanPersonalDiscovery({
   let knownTokens = [...known.values()]
     .sort((a, b) => b.walletCount - a.walletCount || b.aggregateUiAmount - a.aggregateUiAmount)
     .slice(0, effective.maxKnownTokens);
-  knownTokens = (await enrichRecords(knownTokens, enrichToken, onProgress, 'known-details'))
+  knownTokens = (await enrichRecords(
+    knownTokens,
+    enrichToken,
+    onProgress,
+    'known-details',
+    effective.maxKnownTokenDetails,
+  ))
     .map((token) => ({
       ...token,
       estimatedValueUsd: finiteNumber(token.priceUsd) == null
@@ -353,9 +372,7 @@ export async function scanPersonalDiscovery({
     ? Math.min(1, successfulHolderSlots / (seeds.length * effective.maxHoldersPerSeed))
     : 0;
   const context = { holdersScanned: scannedHolders.size, seedsScanned: seeds.length };
-  const minimumHolderCount = scannedHolders.size >= 2 ? 2 : 1;
   let candidateRows = [...candidates.values()]
-    .filter((candidate) => candidate.holders.size >= minimumHolderCount)
     .map((candidate) => ({
       mint: candidate.mint,
       networkScore: candidateScore(candidate, context),
@@ -369,7 +386,13 @@ export async function scanPersonalDiscovery({
     .sort((a, b) => b.networkScore - a.networkScore || b.holderCount - a.holderCount)
     .slice(0, effective.maxCandidates);
 
-  candidateRows = await enrichRecords(candidateRows, enrichToken, onProgress, 'candidate-details');
+  candidateRows = await enrichRecords(
+    candidateRows,
+    enrichToken,
+    onProgress,
+    'candidate-details',
+    effective.maxCandidateDetails,
+  );
 
   return {
     schema: 'trebuchet-personal-discovery/v1',

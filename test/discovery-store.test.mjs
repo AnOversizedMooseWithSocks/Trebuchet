@@ -90,7 +90,7 @@ test('promoting a watched wallet to managed preserves unique tracking', async (t
   assert.equal(store.listWallets().filter((wallet) => wallet.source === 'managed').length, 1);
 });
 
-test('personal Discovery store pauses, removes, and restores a bounded snapshot', async (t) => {
+test('personal Discovery store pauses, removes, and restores an expanded snapshot', async (t) => {
   const configDir = makeTempConfigDir(t);
   const store = await importFreshStore(configDir);
   const address = 'So11111111111111111111111111111111111111112';
@@ -104,7 +104,7 @@ test('personal Discovery store pauses, removes, and restores a bounded snapshot'
     candidates: Array.from({ length: 12 }, (_, index) => ({ mint: `Candidate${index}` })),
     warnings: [],
   });
-  assert.equal(snapshot.candidates.length, 10);
+  assert.equal(snapshot.candidates.length, 12);
   assert.equal(store.getSnapshot().knownTokens[0].mint, 'Known111');
   assert.equal(store.removeWallet(address), true);
   assert.equal(store.getSnapshot(), null);

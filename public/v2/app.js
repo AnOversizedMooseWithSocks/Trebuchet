@@ -5180,6 +5180,7 @@ function restoreLaunchWorkspace() {
 }
 
 function renderGlobalStrip() {
+  renderCustodySignal();
   const { pending, signed, total } = signatureStats();
   const current = account();
   const apiLabel = state.apiStatus === 'connected'
@@ -5365,6 +5366,57 @@ function selectedWalletDetailedBalance() {
     fresh: snapshot.fresh,
     stale: snapshot.stale,
   };
+}
+
+function balanceContainsControlledFunds(balance) {
+  if (!balance || typeof balance !== 'object') return false;
+  if (Number(balance.sol) > 0.000001) return true;
+  const tokens = balance.tokens && typeof balance.tokens === 'object'
+    ? Object.values(balance.tokens)
+    : [];
+  return tokens.some((token) => {
+    if (Number(token?.amountUi) > 0) return true;
+    return (parseRawTokenAmount(token?.amountRaw) || 0n) > 0n;
+  });
+}
+
+function custodySignalState() {
+  const practice = state.experienceMode === 'guided'
+    || state.launchMode === 'dry-run'
+    || state.demoActive;
+  if (practice) {
+    return {
+      id: 'practice',
+      label: 'PRACTICE / NO CUSTODY',
+      detail: 'Practice mode does not place user funds under Trebuchet control.',
+    };
+  }
+  const detailedBalance = selectedWalletDetailedBalance();
+  const managedWallet = selectedManagedWallet();
+  const hasFunds = balanceContainsControlledFunds(detailedBalance?.balance)
+    || Number(managedWallet?.balanceSol) > 0.000001;
+  return hasFunds
+    ? {
+      id: 'funded',
+      label: 'LIVE / FUNDS IN CUSTODY',
+      detail: 'A Trebuchet-controlled wallet currently holds user assets.',
+    }
+    : {
+      id: 'live',
+      label: 'LIVE / AWAITING FUNDS',
+      detail: 'Live execution is selected, but no controlled funds are currently observed.',
+    };
+}
+
+function renderCustodySignal() {
+  const signal = custodySignalState();
+  document.body.dataset.custodySignal = signal.id;
+  const label = $('#custodySignalLabel');
+  if (label) {
+    label.textContent = signal.label;
+    label.title = signal.detail;
+  }
+  return signal;
 }
 
 function liquidityDepthRows(topology) {
@@ -15015,17 +15067,24 @@ function personalTokenDetail(token, type, knownByMint) {
 }
 
 function personalTokenCards(tokens, type, knownByMint) {
-  return tokens.map((token) => `
-    <button class="personal-token-card" type="button" data-action="inspect-personal-token" data-token="${escapeHtml(token.mint)}">
-      <span>
-        <strong>${escapeHtml(personalTokenName(token))} ${token.name && token.name !== token.symbol ? `<span class="muted">${escapeHtml(token.name)}</span>` : ''}</strong>
-        <small>${escapeHtml(personalTokenDetail(token, type, knownByMint))}</small>
-      </span>
-      ${type === 'candidate'
-        ? `<span class="network-score" title="Personal network score">${Math.max(0, Math.min(100, Number(token.networkScore) || 0))}</span>`
-        : `<span class="risk-badge">Known</span>`}
-    </button>
-  `).join('');
+  return tokens.map((token) => {
+    const label = personalTokenName(token);
+    return `
+      <button class="personal-token-card" type="button" data-action="inspect-personal-token" data-token="${escapeHtml(token.mint)}">
+        <span class="personal-token-mark">
+          ${token.imageUrl ? `<img src="${escapeHtml(token.imageUrl)}" alt="">` : escapeHtml(String(label || '?').slice(0, 2).toUpperCase())}
+        </span>
+        <span class="personal-token-copy">
+          <strong>${escapeHtml(label)} ${token.name && token.name !== token.symbol ? `<span class="muted">${escapeHtml(token.name)}</span>` : ''}</strong>
+          <small>${escapeHtml(personalTokenDetail(token, type, knownByMint))}</small>
+        </span>
+        <span class="personal-token-origin">${type === 'candidate' ? 'Network' : 'Wallet'}</span>
+        ${type === 'candidate'
+          ? `<span class="network-score" title="Preliminary personal-network relevance">${Math.max(0, Math.min(100, Number(token.networkScore) || 0))}</span>`
+          : '<span class="network-score is-known" title="Held by a tracked wallet"><i class="fa-solid fa-wallet"></i></span>'}
+      </button>
+    `;
+  }).join('');
 }
 
 function discoveryWalletChip(wallet) {
@@ -15052,7 +15111,10 @@ function renderPersonalDiscovery() {
   const watchOnlyWallets = wallets.filter((wallet) => wallet.source !== 'managed');
   const managedWallets = wallets.filter((wallet) => wallet.source === 'managed');
   const scanConcurrency = Number(state.discovery.limits?.scanConcurrency) || 4;
-  const enabledWalletCount = wallets.filter((wallet) => wallet.enabled !== false).length;
+  const enabledWatchOnlyCount = watchOnlyWallets.filter((wallet) => wallet.enabled !== false).length;
+  const enabledManagedCount = managedWallets.filter((wallet) => wallet.enabled !== false).length;
+  const managedSeedLimit = Math.max(0, Number(state.discovery.limits?.managedSeedLimit) || 5);
+  const managedSeedCount = Math.min(enabledManagedCount, managedSeedLimit);
   const walletRenderLimit = Math.max(100, Number(state.discovery.walletRenderLimit) || 100);
   const visibleWatchOnlyWallets = watchOnlyWallets.slice(-walletRenderLimit).reverse();
   const visibleManagedWallets = managedWallets.slice(0, walletRenderLimit);
@@ -15068,7 +15130,7 @@ function renderPersonalDiscovery() {
       || !wallets.some((wallet) => wallet.enabled !== false);
     scanButton.innerHTML = state.discovery.scanning
       ? '<i class="fa-solid fa-spinner fa-spin"></i><span>Scanning</span>'
-      : '<i class="fa-solid fa-diagram-project"></i><span>Scan network</span>';
+      : '<i class="fa-solid fa-rotate"></i><span>Refresh tokens</span>';
   }
   if (addButton) {
     addButton.disabled = !connected || state.discovery.walletBusy || state.discovery.scanning;
@@ -15109,7 +15171,7 @@ function renderPersonalDiscovery() {
         ` : ''}
       </details>
     ` : ''}
-    <p class="discovery-scan-budget">${enabledWalletCount} enabled wallet${enabledWalletCount === 1 ? '' : 's'} queued. Every enabled wallet is scanned with up to ${scanConcurrency} concurrent lookups.</p>
+    <p class="discovery-scan-budget">${enabledWatchOnlyCount} watched + ${managedSeedCount} Trebuchet seed${managedSeedCount === 1 ? '' : 's'} queued. Every watched wallet is scanned; app-created wallets are limited to ${managedSeedLimit} auxiliary seeds, with ${scanConcurrency} concurrent lookups.</p>
   `;
 
   const progressLabel = personalDiscoveryProgressLabel();
@@ -15119,16 +15181,17 @@ function renderPersonalDiscovery() {
     ...(legacyBoundedScan ? ['Previous result used the retired bounded scanner. Scan again to include every enabled wallet.'] : []),
     ...rawScanWarnings.filter((warning) => !/Scanned \d+ of \d+ enabled wallets/i.test(String(warning))),
   ];
+  const tokenCount = knownTokens.length + candidates.length;
   const scanSummary = snapshot
-    ? `${knownTokens.length} known token${knownTokens.length === 1 ? '' : 's'} · ${candidates.length} network discover${candidates.length === 1 ? 'y' : 'ies'} · scanned ${formatAge(snapshot.completedAt)}`
+    ? `${tokenCount} token${tokenCount === 1 ? '' : 's'} · ${candidates.length} from the holder network · updated ${formatAge(snapshot.completedAt)}`
     : null;
   const status = state.discovery.personalError
     || progressLabel
     || (snapshot
       ? scanWarnings.length
-        ? `${scanSummary} · ${scanWarnings[0]}${scanWarnings.length > 1 ? ` (+${scanWarnings.length - 1} more)` : ''}`
+        ? `${scanSummary} · ${scanWarnings.length} scan notice${scanWarnings.length === 1 ? '' : 's'}`
         : scanSummary
-      : wallets.length ? 'Ready to scan. Only enabled wallets are included.' : 'Wallet addresses and graph results are stored locally.');
+      : wallets.length ? 'No token scan yet.' : 'Track a wallet to begin.');
   const progress = state.discovery.job?.progress || {};
   const progressTotal = Math.max(0, Number(progress.total) || 0);
   const progressCurrent = Math.max(0, Math.min(progressTotal, Number(progress.current) || 0));
@@ -15138,6 +15201,7 @@ function renderPersonalDiscovery() {
     if (!statusNode) return;
     statusNode.classList.toggle('is-error', Boolean(state.discovery.personalError));
     statusNode.classList.toggle('is-warning', !state.discovery.personalError && scanWarnings.length > 0);
+    statusNode.title = scanWarnings.join('\n');
     statusNode.innerHTML = `
       <span><i class="fa-solid ${state.discovery.personalError || scanWarnings.length ? 'fa-triangle-exclamation' : state.discovery.scanning ? 'fa-spinner fa-spin' : 'fa-shield-halved'}"></i> ${escapeHtml(status)}</span>
       ${state.discovery.scanning && progressTotal > 0 ? `<span class="discovery-progress-meter" role="progressbar" aria-valuemin="0" aria-valuemax="${progressTotal}" aria-valuenow="${progressCurrent}"><i style="width:${progressPercent}%"></i></span>` : ''}
@@ -15145,28 +15209,23 @@ function renderPersonalDiscovery() {
   });
 
   if (!snapshot) {
-    $('#personalTokenNetwork').innerHTML = '';
+    $('#personalTokenNetwork').innerHTML = '<div class="discovery-feed-empty">Refresh to build the token feed.</div>';
     return;
   }
+  const feed = [
+    ...candidates.map((token) => ({ token, type: 'candidate' })),
+    ...knownTokens.map((token) => ({ token, type: 'known' })),
+  ];
   $('#personalTokenNetwork').innerHTML = `
-    <section class="personal-token-section">
-      <div class="personal-token-section-head">
-        <span><small>From your wallets</small><strong>Known tokens</strong></span>
-        <small>${knownTokens.length} found</small>
-      </div>
-      <div class="personal-token-grid">
-        ${knownTokens.length ? personalTokenCards(knownTokens.slice(0, 10), 'known', knownByMint) : '<span class="muted">No meaningful fungible-token balances were found.</span>'}
-      </div>
-    </section>
-    <section class="personal-token-section">
-      <div class="personal-token-section-head">
-        <span><small>One hop from qualifying holders</small><strong>Network discoveries</strong></span>
-        <small>${candidates.length} ranked</small>
-      </div>
-      <div class="personal-token-grid">
-        ${candidates.length ? personalTokenCards(candidates, 'candidate', knownByMint) : '<span class="muted">No qualifying adjacent tokens were found across the enabled wallet network.</span>'}
-      </div>
-    </section>
+    <div class="token-feed-summary">
+      <span><strong>${tokenCount} tokens</strong><small>${candidates.length} network · ${knownTokens.length} held</small></span>
+      <small>Preliminary order</small>
+    </div>
+    <div class="personal-token-feed" role="list" aria-label="Discovered tokens">
+      ${feed.length
+        ? feed.map(({ token, type }) => personalTokenCards([token], type, knownByMint)).join('')
+        : '<span class="discovery-feed-empty">No fungible tokens found in the enabled wallet network.</span>'}
+    </div>
   `;
 }
 
@@ -16457,6 +16516,7 @@ function renderHistoryPanes() {
 }
 
 function renderAll() {
+  renderCustodySignal();
   renderLaunchPreview();
   renderLaunchBudgetRecommendation();
   renderTokenLogoPreview();
@@ -16776,6 +16836,7 @@ async function refreshManualPrefundBalance({ quiet = false } = {}) {
     if (!quiet) notify(state.manualPrefund.error);
     return null;
   } finally {
+    renderCustodySignal();
     renderClassicBridge();
   }
 }
@@ -20370,10 +20431,8 @@ async function pollLiveOps() {
       limit: 25,
     }).then((logs) => ({ type: 'logs', value: logs })));
   }
-  const fundingEstimateStatus = classicFundingEstimateStatus(currentLaunchConfig());
   const shouldCheckWalletBalance = Boolean(
     walletPublicKey
-    && fundingEstimateStatus.matchesConfig
     && state.apiClient.checkDetailedBalance
   );
   if (!shouldCheckWalletBalance && (state.manualPrefund.balance || state.manualPrefund.error || state.manualPrefund.polling)) {

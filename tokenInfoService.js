@@ -819,7 +819,10 @@ async function _resolvePriceUsdUncached(mintAddress) {
  * Token-2022 not handled, etc.). A missing price/name/image is NOT a
  * hard failure — the caller surfaces it as "enter manually" in the UI.
  */
-export async function getTokenInfo(mintAddress, { rpcUrl = null } = {}) {
+export async function getTokenInfo(
+  mintAddress,
+  { rpcUrl = null, includePrice = true, includeDisplayMeta = true } = {},
+) {
   const configuredRpcUrl = getRpcUrl();
   const selectedRpcUrl = rpcUrl || configuredRpcUrl;
   const useConfiguredRpcCache = selectedRpcUrl === configuredRpcUrl;
@@ -865,7 +868,18 @@ export async function getTokenInfo(mintAddress, { rpcUrl = null } = {}) {
   const displaySymbol = symbol || `${mintAddress.slice(0, 4)}…${mintAddress.slice(-4)}`;
 
   // Price: separate cache & TTL.
-  const priceUsd = await resolvePriceUsd(mintAddress);
+  const priceUsd = includePrice ? await resolvePriceUsd(mintAddress) : null;
+
+  if (!includeDisplayMeta) {
+    return {
+      symbol: displaySymbol,
+      decimals,
+      priceUsd,
+      programId,
+      name: onChainName || null,
+      imageUrl: null,
+    };
+  }
 
   // Display meta (image + name) — composed from sources in descending
   // priority:

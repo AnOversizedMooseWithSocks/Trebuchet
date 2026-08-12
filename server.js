@@ -91,6 +91,7 @@ import {
 import {
   PERSONAL_DISCOVERY_LIMITS,
   scanPersonalDiscovery,
+  selectPersonalDiscoveryWallets,
 } from './personalDiscoveryService.js';
 import {
   redactSensitiveLogArgs,
@@ -936,6 +937,8 @@ let personalDiscoveryJob = {
   error: null,
 };
 
+const PERSONAL_DISCOVERY_MANAGED_SEED_LIMIT = 5;
+
 function publicPersonalDiscoveryJob() {
   return {
     id: personalDiscoveryJob.id,
@@ -985,7 +988,8 @@ function personalDiscoveryResponse() {
       watchOnlyCount,
       managedCount,
       trackingUnlimited: true,
-      scanAllEnabledWallets: true,
+      scanAllWatchedWallets: true,
+      managedSeedLimit: PERSONAL_DISCOVERY_MANAGED_SEED_LIMIT,
       scanConcurrency: PERSONAL_DISCOVERY_LIMITS.walletConcurrency,
     },
     snapshot: discoveryStore.getSnapshot(),
@@ -1015,7 +1019,11 @@ function rejectIfPersonalDiscoveryScanRunning(res) {
 
 async function enrichPersonalDiscoveryToken(mint, rpcUrl) {
   const metadataResult = await Promise.resolve()
-    .then(() => getTokenMetadata(mint, { rpcUrl }))
+    .then(() => getTokenMetadata(mint, {
+      rpcUrl,
+      includePrice: false,
+      includeDisplayMeta: false,
+    }))
     .then((value) => ({ status: 'fulfilled', value }))
     .catch((reason) => ({ status: 'rejected', reason }));
   const metadata = metadataResult.status === 'fulfilled' ? metadataResult.value : null;
@@ -1094,7 +1102,12 @@ app.post('/api/v2/discovery/scan', (req, res) => {
       });
     }
     syncManagedDiscoveryWallets();
-    const wallets = discoveryStore.listWallets().filter((wallet) => wallet.enabled !== false);
+    const trackedWallets = discoveryStore.listWallets().filter((wallet) => wallet.enabled !== false);
+    const wallets = selectPersonalDiscoveryWallets(
+      trackedWallets,
+      Infinity,
+      PERSONAL_DISCOVERY_MANAGED_SEED_LIMIT,
+    );
     if (!wallets.length) {
       return res.status(400).json({
         success: false,
@@ -1119,7 +1132,13 @@ app.post('/api/v2/discovery/scan', (req, res) => {
       error: null,
     };
 
-    const connection = new Connection(rpc.url, 'confirmed');
+    const connection = new Connection(rpc.url, {
+      commitment: 'confirmed',
+      // Discovery is exploratory and can preserve partial results. Let the
+      // scanner surface a rate-limit notice instead of allowing web3.js to
+      // hold the whole UI in an automatic retry loop for minutes.
+      disableRetryOnRateLimit: true,
+    });
     void scanPersonalDiscovery({
       connection,
       wallets,
@@ -1129,7 +1148,11 @@ app.post('/api/v2/discovery/scan', (req, res) => {
         if (personalDiscoveryJob.id === jobId) personalDiscoveryJob.progress = progress;
       },
     }).then((snapshot) => {
-      const currentWallets = discoveryStore.listWallets();
+      const currentWallets = selectPersonalDiscoveryWallets(
+        discoveryStore.listWallets(),
+        Infinity,
+        PERSONAL_DISCOVERY_MANAGED_SEED_LIMIT,
+      );
       if (personalDiscoveryWalletFingerprint(currentWallets) !== walletFingerprint) {
         const error = new Error('Tracked wallets changed while Discovery was scanning. Scan again for a current graph.');
         error.code = 'DISCOVERY_WALLETS_CHANGED';
