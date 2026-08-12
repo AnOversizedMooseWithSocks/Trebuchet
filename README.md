@@ -103,8 +103,9 @@ and current safety limits.
 Launch is organized around the six decisions and actions a user actually takes:
 
 - **Launch wallet** — select the temporary, locally controlled signer.
-- **Token & pools** — define the token, choose the simple liquidity recipe, and
-  expand optional distribution controls only when they are needed.
+- **Token & pools** — define the token, set a liquidity budget, and let
+  Trebuchet derive a minimal Minimum/1/10/100 SOL strategy before expanding
+  optional distribution controls.
 - **Fund wallet** — calculate the requirement, verify the wallet balance, and
   acquire or manually deposit any required quote tokens.
 - **Create token** — review the permanent token facts, create the mint and
@@ -134,11 +135,12 @@ as the Trebuchet launch signer.
 ### Discovery
 
 Discovery is a personal, local token network rather than a global promotional
-feed. Trebuchet-managed wallets are remembered as public-address seeds, and an
-operator can add up to 25 watch-only wallet addresses explicitly. Managed
-wallets do not consume those watch-only slots. A bounded scan reads
-the fungible tokens held by those wallets, follows qualifying top holders one
-hop, and ranks up to ten adjacent tokens with an explainable network score.
+feed. Token Discovery and Wallet Tracking are separate tabs. Trebuchet-managed
+wallets are remembered as public-address seeds, and an operator can add any
+number of watch-only wallet addresses explicitly. The scanner processes every
+enabled wallet through a bounded-concurrency queue with visible progress, then
+follows qualifying top holders one hop and ranks up to ten adjacent tokens with
+an explainable network score.
 Executable/non-wallet seeds, obvious program-controlled owners, and NFT-like
 receipts are excluded; repeated holder evidence is required when coverage
 permits, and the relationship graph is stored only in the local

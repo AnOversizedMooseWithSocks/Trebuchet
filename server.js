@@ -983,11 +983,10 @@ function personalDiscoveryResponse() {
     wallets,
     limits: {
       watchOnlyCount,
-      watchOnlyLimit: discoveryStore.PERSONAL_DISCOVERY_MAX_WATCH_ONLY_WALLETS,
-      watchOnlyRemaining: Math.max(0, discoveryStore.PERSONAL_DISCOVERY_MAX_WATCH_ONLY_WALLETS - watchOnlyCount),
       managedCount,
-      managedCountsTowardLimit: false,
-      scanMaxWallets: PERSONAL_DISCOVERY_LIMITS.maxWallets,
+      trackingUnlimited: true,
+      scanAllEnabledWallets: true,
+      scanConcurrency: PERSONAL_DISCOVERY_LIMITS.walletConcurrency,
     },
     snapshot: discoveryStore.getSnapshot(),
     job: publicPersonalDiscoveryJob(),
@@ -1115,7 +1114,7 @@ app.post('/api/v2/discovery/scan', (req, res) => {
       progress: {
         phase: 'starting',
         current: 0,
-        total: Math.min(wallets.length, PERSONAL_DISCOVERY_LIMITS.maxWallets),
+        total: wallets.length,
       },
       error: null,
     };

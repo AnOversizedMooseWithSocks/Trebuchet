@@ -42,30 +42,30 @@ test('personal Discovery store tracks public wallets without secret material', a
   assert.equal(JSON.stringify(disk).includes('secret'), false);
 });
 
-test('managed wallets never consume the 25 watch-only wallet slots', async (t) => {
+test('personal Discovery stores thousands of watched and managed wallets without an artificial cap', async (t) => {
   const configDir = makeTempConfigDir(t);
+  const rows = [
+    ...Array.from({ length: 1_250 }, (_, index) => ({
+      publicKey: `watch-${index}`,
+      source: 'watch-only',
+      label: `Watch ${index}`,
+    })),
+    ...Array.from({ length: 80 }, (_, index) => ({
+      publicKey: `managed-${index}`,
+      source: 'managed',
+      label: `Managed ${index}`,
+    })),
+  ];
+  writeFileSync(path.join(configDir, 'personalDiscovery.json'), JSON.stringify({ version: 1, wallets: rows, snapshot: null }));
   const store = await importFreshStore(configDir);
 
-  for (let index = 0; index < 25; index += 1) {
-    store.upsertWallet(`watch-${index}`, { label: `Watch ${index}` });
-  }
-  for (let index = 0; index < 30; index += 1) {
-    store.upsertWallet(`managed-${index}`, { source: 'managed', label: `Managed ${index}` });
-  }
-
   const wallets = store.listWallets();
-  assert.equal(wallets.filter((wallet) => wallet.source === 'watch-only').length, 25);
-  assert.equal(wallets.filter((wallet) => wallet.source === 'managed').length, 30);
-  assert.equal(store.PERSONAL_DISCOVERY_MAX_WATCH_ONLY_WALLETS, 25);
-  assert.throws(
-    () => store.upsertWallet('watch-over-limit'),
-    (error) => error.code === 'DISCOVERY_WALLET_LIMIT'
-      && /Trebuchet-managed wallets do not count/i.test(error.message),
-  );
-  assert.equal(store.upsertWallet('managed-after-limit', { source: 'managed' }).source, 'managed');
+  assert.equal(wallets.filter((wallet) => wallet.source === 'watch-only').length, 1_250);
+  assert.equal(wallets.filter((wallet) => wallet.source === 'managed').length, 80);
+  assert.equal(store.PERSONAL_DISCOVERY_MAX_WATCH_ONLY_WALLETS, null);
 });
 
-test('load keeps every managed wallet while bounding only watch-only rows', async (t) => {
+test('load preserves every managed and watched wallet row', async (t) => {
   const configDir = makeTempConfigDir(t);
   const rows = [
     ...Array.from({ length: 32 }, (_, index) => ({ publicKey: `managed-${index}`, source: 'managed' })),
@@ -76,10 +76,10 @@ test('load keeps every managed wallet while bounding only watch-only rows', asyn
   const wallets = store.listWallets();
 
   assert.equal(wallets.filter((wallet) => wallet.source === 'managed').length, 32);
-  assert.equal(wallets.filter((wallet) => wallet.source === 'watch-only').length, 25);
+  assert.equal(wallets.filter((wallet) => wallet.source === 'watch-only').length, 29);
 });
 
-test('promoting a watched wallet to managed frees a watch-only slot', async (t) => {
+test('promoting a watched wallet to managed preserves unique tracking', async (t) => {
   const configDir = makeTempConfigDir(t);
   const store = await importFreshStore(configDir);
   for (let index = 0; index < 25; index += 1) store.upsertWallet(`watch-${index}`);
@@ -87,6 +87,7 @@ test('promoting a watched wallet to managed frees a watch-only slot', async (t) 
   store.upsertWallet('watch-0', { source: 'managed' });
   assert.equal(store.upsertWallet('replacement-watch').source, 'watch-only');
   assert.equal(store.listWallets().filter((wallet) => wallet.source === 'watch-only').length, 25);
+  assert.equal(store.listWallets().filter((wallet) => wallet.source === 'managed').length, 1);
 });
 
 test('personal Discovery store pauses, removes, and restores a bounded snapshot', async (t) => {

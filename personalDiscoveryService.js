@@ -6,7 +6,7 @@ import {
 } from '@solana/spl-token';
 
 export const PERSONAL_DISCOVERY_LIMITS = Object.freeze({
-  maxWallets: 5,
+  walletConcurrency: 4,
   maxKnownTokens: 10,
   maxSeeds: 3,
   maxHoldersPerSeed: 5,
@@ -173,12 +173,15 @@ function confidenceForCoverage(coverage) {
   return 'Low';
 }
 
-export function selectPersonalDiscoveryWallets(wallets = [], maxWallets = PERSONAL_DISCOVERY_LIMITS.maxWallets) {
+export function selectPersonalDiscoveryWallets(wallets = [], maxWallets = Infinity) {
   const active = wallets.filter((wallet) => wallet?.enabled !== false);
-  return [
+  const prioritized = [
     ...active.filter((wallet) => wallet.source !== 'managed'),
     ...active.filter((wallet) => wallet.source === 'managed'),
-  ].slice(0, Math.max(1, Math.min(PERSONAL_DISCOVERY_LIMITS.maxWallets, Number(maxWallets) || 1)));
+  ];
+  const requested = Number(maxWallets);
+  if (!Number.isFinite(requested)) return prioritized;
+  return prioritized.slice(0, Math.max(1, Math.floor(requested)));
 }
 
 async function enrichRecords(records, enrichToken, onProgress, phase) {
@@ -225,7 +228,13 @@ export async function scanPersonalDiscovery({
     ));
   });
   const availableWallets = wallets.filter((wallet) => wallet?.enabled !== false);
-  const activeWallets = selectPersonalDiscoveryWallets(availableWallets, effective.maxWallets);
+  const requestedMaxWallets = Number(limits.maxWallets);
+  const activeWallets = selectPersonalDiscoveryWallets(
+    availableWallets,
+    Number.isFinite(requestedMaxWallets) && requestedMaxWallets > 0
+      ? requestedMaxWallets
+      : Infinity,
+  );
   if (!activeWallets.length) throw new Error('Add and enable at least one wallet before scanning.');
 
   const warnings = [];
@@ -233,16 +242,16 @@ export async function scanPersonalDiscovery({
     warnings.push(`Scanned ${activeWallets.length} of ${availableWallets.length} enabled wallets. Watch-only wallets are prioritized; pause wallets to change the scan set.`);
   }
   const known = new Map();
+  let walletCursor = 0;
+  let completedWallets = 0;
   onProgress?.({ phase: 'known-wallets', current: 0, total: activeWallets.length });
-  for (let index = 0; index < activeWallets.length; index += 1) {
-    const wallet = activeWallets[index];
-    onProgress?.({ phase: 'known-wallets', current: index + 1, total: activeWallets.length });
+  const scanWallet = async (wallet) => {
     try {
       if (typeof connection.getAccountInfo === 'function') {
         const account = await connection.getAccountInfo(new PublicKey(wallet.publicKey), 'confirmed');
         if (account && (account.executable || !account.owner?.equals?.(SystemProgram.programId))) {
           warnings.push(`${wallet.label || shortAddress(wallet.publicKey)} is not an ordinary wallet address and was skipped.`);
-          continue;
+          return;
         }
       }
       const portfolio = await readWalletPortfolio(connection, wallet.publicKey);
@@ -251,7 +260,23 @@ export async function scanPersonalDiscovery({
     } catch (error) {
       warnings.push(`${wallet.label || shortAddress(wallet.publicKey)}: ${error.message || 'portfolio lookup failed'}`);
     }
-  }
+  };
+  const walletWorkers = Array.from({
+    length: Math.min(effective.walletConcurrency, activeWallets.length),
+  }, async () => {
+    while (walletCursor < activeWallets.length) {
+      const index = walletCursor;
+      walletCursor += 1;
+      await scanWallet(activeWallets[index]);
+      completedWallets += 1;
+      onProgress?.({
+        phase: 'known-wallets',
+        current: completedWallets,
+        total: activeWallets.length,
+      });
+    }
+  });
+  await Promise.all(walletWorkers);
 
   let knownTokens = [...known.values()]
     .sort((a, b) => b.walletCount - a.walletCount || b.aggregateUiAmount - a.aggregateUiAmount)
@@ -349,7 +374,10 @@ export async function scanPersonalDiscovery({
   return {
     schema: 'trebuchet-personal-discovery/v1',
     completedAt: now().toISOString(),
-    limits: effective,
+    limits: {
+      ...effective,
+      maxWallets: null,
+    },
     coverage: {
       walletsAvailable: availableWallets.length,
       walletsRequested: activeWallets.length,

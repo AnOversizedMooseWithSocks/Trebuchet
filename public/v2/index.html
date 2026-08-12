@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TREBUCHET · makesometokens</title>
   <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="./styles.css?v=69">
+  <link rel="stylesheet" href="./styles.css?v=72">
 </head>
 <body>
   <div class="app-shell">
@@ -206,6 +206,17 @@
               </button>
             </nav>
 
+            <div class="experience-row launch-experience-switch" role="tablist" aria-label="Launch experience">
+              <button class="experience-button is-selected" type="button" role="tab" aria-selected="true" data-action="select-experience" data-experience="guided">
+                <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+                <span><strong>Guided practice</strong><small>Learn with zero spend</small></span>
+              </button>
+              <button class="experience-button" type="button" role="tab" aria-selected="false" data-action="select-experience" data-experience="advanced">
+                <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+                <span><strong>Full launch</strong><small>Six guided on-chain phases</small></span>
+              </button>
+            </div>
+
             <div class="launch-workspace-viewport" id="launchWorkspaceViewport" role="tabpanel" tabindex="0" aria-live="polite">
             <section class="setup-dock" data-launch-pane="configure" aria-label="Launch setup dock">
               <div class="setup-dock-head">
@@ -215,17 +226,6 @@
                 </span>
                 <span class="setup-help" id="setupHelp">Practice only · no SOL spent</span>
               </div>
-              <div class="experience-row" role="tablist" aria-label="Launch experience">
-                <button class="experience-button is-selected" type="button" role="tab" aria-selected="true" data-action="select-experience" data-experience="guided">
-                  <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
-                  <span><strong>Guided practice</strong><small>Learn with zero spend</small></span>
-                </button>
-                <button class="experience-button" type="button" role="tab" aria-selected="false" data-action="select-experience" data-experience="advanced">
-                  <i class="fa-solid fa-sliders" aria-hidden="true"></i>
-                  <span><strong>Full launch</strong><small>Six guided on-chain phases</small></span>
-                </button>
-              </div>
-
               <section class="guided-launch-flow" id="guidedLaunchFlow" aria-live="polite"></section>
 
               <div class="advanced-launch-controls" id="advancedLaunchControls">
@@ -282,11 +282,28 @@
                     <span>Target market cap</span>
                     <input id="targetMarketCapUsd" type="text" value="250,000" autocomplete="off">
                   </label>
-                  <label>
-                    <span>SOL to spend</span>
-                    <input id="launchSol" type="number" value="3.5" min="0" step="0.1">
-                  </label>
                 </form>
+                <section class="launch-budget-recommender" aria-labelledby="launchBudgetTitle">
+                  <input id="launchSol" type="hidden" value="1">
+                  <div class="launch-budget-head">
+                    <span>
+                      <span class="eyebrow">Trebuchet strategy</span>
+                      <h3 id="launchBudgetTitle">Choose a liquidity budget</h3>
+                      <p>Set the SOL intended for liquidity. Network fees and rent are estimated separately in the next phase.</p>
+                    </span>
+                    <label class="launch-budget-input" for="liquidityBudgetSol">
+                      <span>Liquidity budget</span>
+                      <span><input id="liquidityBudgetSol" type="number" value="1" min="0" step="0.1"><strong>SOL</strong></span>
+                    </label>
+                  </div>
+                  <div class="launch-budget-presets" role="group" aria-label="Liquidity budget presets">
+                    <button type="button" data-action="select-launch-budget" data-budget="0"><strong>Minimum</strong><small>0 SOL liquidity</small></button>
+                    <button class="is-selected" type="button" data-action="select-launch-budget" data-budget="1"><strong>1 SOL</strong><small>Lean</small></button>
+                    <button type="button" data-action="select-launch-budget" data-budget="10"><strong>10 SOL</strong><small>Balanced</small></button>
+                    <button type="button" data-action="select-launch-budget" data-budget="100"><strong>100 SOL</strong><small>Deep</small></button>
+                  </div>
+                  <div class="launch-budget-strategy" id="launchBudgetStrategy" aria-live="polite"></div>
+                </section>
                 <details class="vanity-panel vanity-details">
                   <summary>
                     <span>Contract address</span>
@@ -543,28 +560,29 @@
               </div>
               <span class="badge" id="discoveryRegistryCount">0 saved</span>
             </div>
-            <section class="personal-discovery-panel" aria-labelledby="personalDiscoveryTitle">
+            <nav class="discovery-pane-tabs" role="tablist" aria-label="Discovery workspace">
+              <button class="discovery-pane-tab is-selected" type="button" role="tab" aria-selected="true" data-discovery-pane="tokens">
+                <i class="fa-solid fa-chart-line" aria-hidden="true"></i>
+                <span><strong>Token Discovery</strong><small>Find and score assets</small></span>
+              </button>
+              <button class="discovery-pane-tab" type="button" role="tab" aria-selected="false" data-discovery-pane="wallets">
+                <i class="fa-solid fa-wallet" aria-hidden="true"></i>
+                <span><strong>Wallet Tracking</strong><small>Manage your seed network</small></span>
+              </button>
+            </nav>
+            <section class="discovery-pane is-active" data-discovery-pane-panel="tokens" role="tabpanel">
+            <section class="personal-discovery-panel token-discovery-panel" aria-labelledby="personalDiscoveryTitle">
               <div class="personal-discovery-head">
                 <span>
-                  <small>Private seed set</small>
-                  <strong id="personalDiscoveryTitle">Wallets you know</strong>
+                  <small>Your wallets → holder graph</small>
+                  <strong id="personalDiscoveryTitle">Discover tokens through people you know</strong>
                 </span>
                 <button class="primary-button compact" id="personalDiscoveryScanButton" type="button" data-action="scan-personal-discovery">
                   <i class="fa-solid fa-diagram-project"></i>
-                  <span>Scan holder network</span>
+                  <span>Scan network</span>
                 </button>
               </div>
-              <p class="personal-discovery-explainer">Trebuchet reads tokens held by wallets you add, follows qualifying holders one hop, and ranks their other meaningful holdings. The graph stays on this machine.</p>
-              <form class="discovery-wallet-form" id="discoveryWalletForm">
-                <label class="visually-hidden" for="discoveryWalletInput">Wallet address</label>
-                <input id="discoveryWalletInput" name="publicKey" type="text" placeholder="Add a wallet address" autocomplete="off" spellcheck="false">
-                <label class="visually-hidden" for="discoveryWalletLabelInput">Wallet label</label>
-                <input id="discoveryWalletLabelInput" name="label" type="text" maxlength="48" placeholder="Label (optional)" autocomplete="off">
-                <button class="secondary-button compact" id="discoveryWalletAddButton" type="submit">
-                  <i class="fa-solid fa-plus"></i><span>Track</span>
-                </button>
-              </form>
-              <div class="discovery-wallets" id="discoveryWallets"></div>
+              <p class="personal-discovery-explainer">Trebuchet scans every enabled wallet, follows qualifying holders one hop, and ranks their other meaningful holdings. The graph stays on this machine.</p>
               <div class="personal-discovery-status" id="personalDiscoveryStatus" aria-live="polite"></div>
               <div class="personal-token-network" id="personalTokenNetwork"></div>
             </section>
@@ -595,8 +613,32 @@
               </div>
             </div>
             <div class="discovery-table" id="discoveryTable"></div>
+            </section>
+            <section class="discovery-pane" data-discovery-pane-panel="wallets" role="tabpanel" hidden>
+            <section class="personal-discovery-panel wallet-tracking-panel" aria-labelledby="walletTrackingTitle">
+              <div class="personal-discovery-head">
+                <span>
+                  <small>Private seed network</small>
+                  <strong id="walletTrackingTitle">Wallets you choose to follow</strong>
+                </span>
+                <span class="risk-badge">No wallet limit</span>
+              </div>
+              <p class="personal-discovery-explainer">Add as many public wallet addresses as you need. Trebuchet processes the full enabled queue in small concurrent batches and keeps progress visible.</p>
+              <form class="discovery-wallet-form" id="discoveryWalletForm">
+                <label class="visually-hidden" for="discoveryWalletInput">Wallet address</label>
+                <input id="discoveryWalletInput" name="publicKey" type="text" placeholder="Add a wallet address" autocomplete="off" spellcheck="false">
+                <label class="visually-hidden" for="discoveryWalletLabelInput">Wallet label</label>
+                <input id="discoveryWalletLabelInput" name="label" type="text" maxlength="48" placeholder="Label (optional)" autocomplete="off">
+                <button class="secondary-button compact" id="discoveryWalletAddButton" type="submit">
+                  <i class="fa-solid fa-plus"></i><span>Track</span>
+                </button>
+              </form>
+              <div class="discovery-wallets" id="discoveryWallets"></div>
+              <div class="personal-discovery-status" id="discoveryWalletStatus" aria-live="polite"></div>
+            </section>
+            </section>
           </section>
-          <aside class="rail">
+          <aside class="rail" data-discovery-pane-panel="tokens">
             <section class="surface">
               <div class="evidence-panel" id="evidencePanel"></div>
             </section>
@@ -730,6 +772,6 @@
 
   <script src="./runtime-state.js?v=1"></script>
   <script src="./api-client.js?v=37"></script>
-  <script src="./app.js?v=158"></script>
+  <script src="./app.js?v=161"></script>
 </body>
 </html>

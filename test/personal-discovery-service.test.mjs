@@ -83,6 +83,19 @@ test('personal Discovery prioritizes watch-only wallets inside the scan budget',
   );
 });
 
+test('personal Discovery selects every enabled wallet when no scan cap is requested', () => {
+  const wallets = Array.from({ length: 1_200 }, (_, index) => ({
+    publicKey: `wallet-${index}`,
+    source: index % 3 === 0 ? 'managed' : 'watch-only',
+    enabled: index % 17 !== 0,
+  }));
+
+  const selected = selectPersonalDiscoveryWallets(wallets);
+  assert.equal(selected.length, wallets.filter((wallet) => wallet.enabled).length);
+  assert.equal(selected.some((wallet) => wallet.source === 'managed'), true);
+  assert.equal(selected[0].source, 'watch-only');
+});
+
 test('personal Discovery builds a bounded one-hop graph with explainable paths', async () => {
   const tracked = Keypair.generate().publicKey;
   const seed = Keypair.generate().publicKey;

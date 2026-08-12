@@ -1984,12 +1984,14 @@ test('v2 Discovery combines a personal wallet graph with live evidence and no so
 
   assert.match(combined, /Your wallets → on-chain network/);
   assert.match(combined, /Personal discovery/);
-  assert.match(combined, /Wallets you know/);
+  assert.match(combined, /Token Discovery/);
+  assert.match(combined, /Wallet Tracking/);
+  assert.match(combined, /Wallets you choose to follow/);
   assert.match(combined, /Watched wallets/);
-  assert.match(combined, /do not count toward the \$\{watchOnlyLimit\}-wallet limit/);
-  assert.match(combined, /Watched wallets are considered first/);
+  assert.match(combined, /no limit/i);
+  assert.match(combined, /Every enabled wallet is scanned/);
   assert.match(combined, /managed-discovery-wallets/);
-  assert.match(combined, /Scan holder network/);
+  assert.match(combined, /Scan network/);
   assert.match(combined, /Network discoveries/);
   assert.match(combined, /networkScore/);
   assert.match(combined, /data-action="inspect-personal-token"/);
@@ -2812,8 +2814,10 @@ test('v2 guided launch is a focused first-launch wizard over the guarded plan', 
   assert.match(js, /mainPoolPercent'\)\.value = '100'/);
   assert.match(js, /quotePoolPercent'\)\.value = '0'/);
   assert.match(js, /sliceShares'\)\.value = '100'/);
-  assert.match(js, /ladderBands'\)\.value = '0'/);
-  assert.match(js, /supportSol'\)\.value = '0'/);
+  assert.match(js, /ladderBands'\)\.value = String\(strategy\.ladderBands\)/);
+  assert.match(js, /supportSol'\)\.value = String\(strategy\.supportSol\)/);
+  assert.match(combined, /Minimum[\s\S]*1 SOL[\s\S]*10 SOL[\s\S]*100 SOL/);
+  assert.match(js, /function launchBudgetRecommendation/);
   assert.match(js, /feeKeyRecipient'\)\.value = destination/);
   assert.match(js, /sweepDestination'\)\.value = destination/);
   assert.match(js, /data-action="guided-practice"/);
@@ -6464,11 +6468,11 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=69/);
+  assert.match(html, /styles\.css\?v=72/);
   assert.match(html, /runtime-state\.js\?v=1/);
   assert.match(html, /api-client\.js\?v=37/);
-  assert.match(html, /app\.js\?v=158/);
-  assert.doesNotMatch(html, /app\.js\?v=158" type="module"/);
+  assert.match(html, /app\.js\?v=161/);
+  assert.doesNotMatch(html, /app\.js\?v=161" type="module"/);
   assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
@@ -10409,11 +10413,10 @@ test('v2 API client bootstraps local session and read-only app state', async () 
       success: true,
       limits: {
         watchOnlyCount: 1,
-        watchOnlyLimit: 25,
-        watchOnlyRemaining: 24,
         managedCount: 0,
-        managedCountsTowardLimit: false,
-        scanMaxWallets: 5,
+        trackingUnlimited: true,
+        scanAllEnabledWallets: true,
+        scanConcurrency: 4,
       },
       wallets: [{
         publicKey: 'Discover1111222233334444555566667777888',
@@ -10469,8 +10472,8 @@ test('v2 API client bootstraps local session and read-only app state', async () 
   assert.equal(boot.feeTiers.tiers[0].tickSpacing, 120);
   assert.equal(boot.discovery.available, true);
   assert.equal(boot.discovery.wallets[0].label, 'Tracked wallet');
-  assert.equal(boot.discovery.limits.watchOnlyLimit, 25);
-  assert.equal(boot.discovery.limits.managedCountsTowardLimit, false);
+  assert.equal(boot.discovery.limits.trackingUnlimited, true);
+  assert.equal(boot.discovery.limits.scanAllEnabledWallets, true);
   assert.equal(boot.discovery.snapshot.candidates[0].networkScore, 72);
   assert.equal(boot.viewportSmoke.passed, true);
   assert.equal(boot.viewportSmoke.artifactVersion, 1);

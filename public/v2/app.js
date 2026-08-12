@@ -283,6 +283,8 @@ const state = {
   accountId: null,
   selectedDiscoveryId: null,
   discovery: {
+    activePane: 'tokens',
+    walletRenderLimit: 100,
     records: [],
     wallets: [],
     limits: {},
@@ -303,6 +305,7 @@ const state = {
   guidedIntent: {
     destinationWallet: '',
     startingMarketCapUsd: 250000,
+    liquidityBudgetSol: 1,
   },
   guidedErrors: {},
   guidedRunError: null,
@@ -547,6 +550,7 @@ const GUIDED_ADVANCED_FIELD_IDS = Object.freeze([
   'tokenDescription',
   'targetMarketCapUsd',
   'launchSol',
+  'liquidityBudgetSol',
   'vanityStart',
   'vanityEnd',
   'mainPoolPercent',
@@ -581,6 +585,7 @@ function guidedDraftSnapshot() {
     intent: {
       destinationWallet: String(state.guidedIntent.destinationWallet || '').trim(),
       startingMarketCapUsd: Number(state.guidedIntent.startingMarketCapUsd || 0),
+      liquidityBudgetSol: Math.max(0, Number(state.guidedIntent.liquidityBudgetSol || 0)),
     },
   };
 }
@@ -605,12 +610,14 @@ function restoreGuidedDraft() {
     state.guidedStep = clampNumber(Math.floor(Number(saved.step || 0)), 0, guidedSteps.length - 1);
     state.guidedIntent.destinationWallet = String(saved.intent?.destinationWallet || '').trim();
     state.guidedIntent.startingMarketCapUsd = Math.max(0, Number(saved.intent?.startingMarketCapUsd || 250000));
+    state.guidedIntent.liquidityBudgetSol = Math.max(0, Number(saved.intent?.liquidityBudgetSol ?? 1));
     if ($('#tokenName') && saved.token?.name) $('#tokenName').value = String(saved.token.name).slice(0, 32);
     if ($('#tokenSymbol') && saved.token?.symbol) $('#tokenSymbol').value = String(saved.token.symbol).slice(0, 10).toUpperCase();
     if ($('#tokenDescription') && typeof saved.token?.description === 'string') {
       $('#tokenDescription').value = saved.token.description.slice(0, 200);
     }
     if ($('#targetMarketCapUsd')) $('#targetMarketCapUsd').value = String(state.guidedIntent.startingMarketCapUsd || 250000);
+    if ($('#liquidityBudgetSol')) $('#liquidityBudgetSol').value = String(state.guidedIntent.liquidityBudgetSol);
   } catch {
     // A malformed draft should never block the launch screen.
   }
@@ -661,6 +668,9 @@ function syncGuidedField(input) {
   if (field === 'startingMarketCapUsd') {
     state.guidedIntent.startingMarketCapUsd = Math.max(0, parseNumericInput(input.value, 0));
   }
+  if (field === 'liquidityBudgetSol') {
+    state.guidedIntent.liquidityBudgetSol = Math.max(0, parseNumericInput(input.value, 0));
+  }
   delete state.guidedErrors[field];
   persistGuidedDraft();
   return true;
@@ -669,17 +679,20 @@ function syncGuidedField(input) {
 function applyGuidedRecipe({ refresh = true } = {}) {
   const destination = String(state.guidedIntent.destinationWallet || '').trim();
   const marketCap = Math.max(1, Number(state.guidedIntent.startingMarketCapUsd || 250000));
+  const budgetSol = Math.max(0, Number(state.guidedIntent.liquidityBudgetSol || 0));
+  const strategy = launchBudgetRecommendation(budgetSol);
   $('#tokenSupply').value = '1,000,000,000';
   $('#targetMarketCapUsd').value = String(marketCap);
-  $('#launchSol').value = '3.5';
+  $('#launchSol').value = String(strategy.coreSol);
+  if ($('#liquidityBudgetSol')) $('#liquidityBudgetSol').value = String(budgetSol);
   $('#vanityStart').value = '';
   $('#vanityEnd').value = '';
   $('#mainPoolPercent').value = '100';
   $('#quotePoolPercent').value = '0';
   $('#preallocationSupplyPercent').value = '0';
   $('#sliceShares').value = '100';
-  $('#ladderBands').value = '0';
-  $('#supportSol').value = '0';
+  $('#ladderBands').value = String(strategy.ladderBands);
+  $('#supportSol').value = String(strategy.supportSol);
   $('#airdropWallets').value = '0';
   $('#airdropSupplyPercent').value = '0';
   $('#airdropAutoFit').checked = true;
@@ -788,19 +801,30 @@ function guidedDestinationStep() {
 
 function guidedValueStep() {
   const marketCap = Number(state.guidedIntent.startingMarketCapUsd || 0);
+  const liquidityBudgetSol = Math.max(0, Number(state.guidedIntent.liquidityBudgetSol || 0));
+  const strategy = launchBudgetRecommendation(liquidityBudgetSol);
   const tokenPrice = marketCap > 0 ? marketCap / 1_000_000_000 : 0;
   return `
     <div class="guided-step-layout">
       <div class="guided-step-copy">
         <span class="eyebrow">Step 3 of 4</span>
-        <h2>Choose the starting value</h2>
-        <p>This describes the intended starting valuation. Trebuchet turns it into the launch plan and calculates the funding separately.</p>
+        <h2>Choose value and liquidity</h2>
+        <p>Set the intended starting valuation and your liquidity budget. Trebuchet derives the simplest useful three-band strategy and estimates network costs separately.</p>
       </div>
       <div class="guided-form-card single-column">
         <div class="guided-presets" aria-label="Starting value presets">
           ${[25000, 100000, 250000].map((value) => `<button class="${marketCap === value ? 'is-selected' : ''}" type="button" data-action="guided-value-preset" data-value="${value}">$${value.toLocaleString('en-US')}</button>`).join('')}
         </div>
         <label><span>Starting market value</span><input data-guided-field="startingMarketCapUsd" value="${escapeHtml(marketCap ? marketCap.toLocaleString('en-US') : '')}" inputmode="decimal" autocomplete="off" aria-invalid="${state.guidedErrors.startingMarketCapUsd ? 'true' : 'false'}">${guidedError('startingMarketCapUsd')}</label>
+        <div class="guided-presets" aria-label="Liquidity budget presets">
+          ${[
+            [0, 'Minimum'],
+            [1, '1 SOL'],
+            [10, '10 SOL'],
+            [100, '100 SOL'],
+          ].map(([value, label]) => `<button class="${liquidityBudgetSol === value ? 'is-selected' : ''}" type="button" data-action="guided-budget-preset" data-value="${value}">${label}</button>`).join('')}
+        </div>
+        <label><span>Liquidity budget</span><input data-guided-field="liquidityBudgetSol" value="${escapeHtml(liquidityBudgetSol)}" inputmode="decimal" autocomplete="off"><small>${escapeHtml(strategy.label)} · ${escapeHtml(strategy.structure)} · network fees estimated next</small></label>
         <div class="guided-price-preview"><small>Approximate starting token price</small><strong>$${tokenPrice.toFixed(tokenPrice < 0.001 ? 8 : 4)}</strong><span>Funding is estimated after the recipe is built.</span></div>
       </div>
     </div>
@@ -811,6 +835,8 @@ function guidedReviewStep() {
   const token = guidedTokenDraft();
   const destination = String(state.guidedIntent.destinationWallet || '').trim();
   const marketCap = Number(state.guidedIntent.startingMarketCapUsd || 0);
+  const liquidityBudgetSol = Math.max(0, Number(state.guidedIntent.liquidityBudgetSol || 0));
+  const strategy = launchBudgetRecommendation(liquidityBudgetSol);
   const reportLabel = state.prefs.publishLaunchReport === false ? 'Download a local proof' : 'Create local and public proof';
   return `
     <div class="guided-review">
@@ -826,7 +852,7 @@ function guidedReviewStep() {
       <div class="guided-recipe-list">
         ${[
           ['fa-coins', 'Create a fixed token', 'One-billion supply with mint and freeze powers removed.'],
-          ['fa-water', 'Open one simple pool', 'One SOL pool, one position, locked liquidity, and no advanced allocations.'],
+          ['fa-water', `Open a ${strategy.label.toLowerCase()} pool`, `${liquidityBudgetSol} SOL liquidity budget · ${strategy.structure.toLowerCase()} · locked positions.`],
           ['fa-file-shield', 'Finish with proof', `Return assets to ${destination === GUIDED_PRACTICE_DESTINATION ? 'the practice destination' : shortAddress(destination)} and ${reportLabel.toLowerCase()}.`],
         ].map(([icon, title, detail]) => `<article><i class="fa-solid ${icon}"></i><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail)}</small></span><i class="fa-solid fa-check"></i></article>`).join('')}
       </div>
@@ -834,8 +860,8 @@ function guidedReviewStep() {
         <summary>Technical details <span>optional</span></summary>
         <div><span>Recipe</span><strong>${GUIDED_RECIPE_ID}</strong></div>
         <div><span>Mint address</span><strong>Random CA</strong></div>
-        <div><span>Liquidity</span><strong>Single SOL pool · 100% · one slice</strong></div>
-        <div><span>Extra positions</span><strong>None</strong></div>
+        <div><span>Liquidity</span><strong>${escapeHtml(`${liquidityBudgetSol} SOL · ${strategy.label} · ${strategy.structure}`)}</strong></div>
+        <div><span>Defensive support</span><strong>${strategy.supportSol > 0 ? escapeHtml(fmtSol(strategy.supportSol)) : 'Off'}</strong></div>
         <div><span>Execution</span><strong>Guarded local run with journal recovery</strong></div>
         <div><span>Destination</span><code>${escapeHtml(destination)}</code></div>
       </details>
@@ -1275,7 +1301,7 @@ function personalDiscoveryProgressLabel() {
   const progress = job.progress || {};
   const phaseLabels = {
     starting: 'Preparing wallet graph',
-    'known-wallets': 'Reading your known tokens',
+    'known-wallets': 'Scanning tracked wallets',
     'holder-network': 'Following qualifying holders',
     'known-details': 'Resolving known token details',
     'candidate-details': 'Scoring discoveries',
@@ -4687,6 +4713,93 @@ function selectedClassicQuoteVenue() {
   return CLASSIC_QUOTE_VENUES[key] || CLASSIC_QUOTE_VENUES.meme;
 }
 
+function launchBudgetRecommendation(value) {
+  const budgetSol = Math.max(0, Number(value) || 0);
+  if (budgetSol === 0) {
+    return {
+      id: 'minimum',
+      label: 'Minimum launch',
+      detail: 'Create the token and a minimal pool path without adding discretionary SOL liquidity.',
+      coreSol: 0,
+      supportSol: 0,
+      ladderBands: 0,
+      structure: '1 simple market',
+      riskPosture: 'Add liquidity later',
+    };
+  }
+  if (budgetSol <= 1) {
+    return {
+      id: 'lean',
+      label: 'Lean',
+      detail: 'Keep every available lamport in one understandable core market.',
+      coreSol: budgetSol,
+      supportSol: 0,
+      ladderBands: 0,
+      structure: '1 core band',
+      riskPosture: 'Maximum minimalism',
+    };
+  }
+  if (budgetSol < 50) {
+    const supportSol = Number((budgetSol * 0.1).toFixed(4));
+    return {
+      id: 'balanced',
+      label: 'Balanced',
+      detail: 'Use a core market, one reach band, and a small defensive support band.',
+      coreSol: Number((budgetSol - supportSol).toFixed(4)),
+      supportSol,
+      ladderBands: 1,
+      structure: '3 purposeful bands',
+      riskPosture: 'Trebuchet recommended',
+    };
+  }
+  const supportSol = Number((budgetSol * 0.15).toFixed(4));
+  return {
+    id: 'deep',
+    label: 'Deep',
+    detail: 'Use deeper core liquidity, measured price reach, and a larger defensive support band.',
+    coreSol: Number((budgetSol - supportSol).toFixed(4)),
+    supportSol,
+    ladderBands: 1,
+    structure: '3 deep bands',
+    riskPosture: 'Depth over complexity',
+  };
+}
+
+function renderLaunchBudgetRecommendation() {
+  const target = $('#launchBudgetStrategy');
+  const budgetInput = $('#liquidityBudgetSol');
+  if (!target || !budgetInput) return;
+  const budgetSol = Math.max(0, parseNumericInput(budgetInput.value, 0));
+  const strategy = launchBudgetRecommendation(budgetSol);
+  $$('.launch-budget-presets button').forEach((button) => {
+    button.classList.toggle('is-selected', Number(button.dataset.budget) === budgetSol);
+  });
+  target.innerHTML = `
+    <span class="recommended-band"><small>Recommended band</small><strong>${escapeHtml(strategy.label)}</strong></span>
+    <span><small>Core liquidity</small><strong>${fmtSol(strategy.coreSol)}</strong></span>
+    <span><small>Structure</small><strong>${escapeHtml(strategy.structure)}</strong></span>
+    <span><small>Defensive support</small><strong>${strategy.supportSol > 0 ? fmtSol(strategy.supportSol) : strategy.riskPosture}</strong></span>
+  `;
+  target.title = strategy.detail;
+}
+
+function applyLaunchBudgetRecommendation(value, { announce = true } = {}) {
+  const budgetSol = Math.max(0, Number(value) || 0);
+  const strategy = launchBudgetRecommendation(budgetSol);
+  if ($('#liquidityBudgetSol')) $('#liquidityBudgetSol').value = String(budgetSol);
+  if ($('#launchSol')) $('#launchSol').value = String(strategy.coreSol);
+  if ($('#mainPoolPercent')) $('#mainPoolPercent').value = '100';
+  if ($('#quotePoolPercent')) $('#quotePoolPercent').value = '0';
+  if ($('#sliceShares')) $('#sliceShares').value = '100';
+  if ($('#ladderBands')) $('#ladderBands').value = String(strategy.ladderBands);
+  if ($('#supportSol')) $('#supportSol').value = String(strategy.supportSol);
+  state.baseManualLadderText = '';
+  invalidateClassicOutputs();
+  refreshClassicPreview({ includePoolEditor: true });
+  renderLaunchBudgetRecommendation();
+  if (announce) notify(`${strategy.label} strategy applied to ${budgetSol.toFixed(budgetSol % 1 === 0 ? 0 : 1)} SOL`);
+}
+
 function currentClassicModel() {
   const mainPoolPercent = parsePercentInput($('#mainPoolPercent').value, 70);
   const quotePoolPercent = parsePercentInput($('#quotePoolPercent').value, 10);
@@ -5093,6 +5206,10 @@ function renderLaunchPreview() {
   const symbol = ($('#tokenSymbol').value.trim() || 'TOK').toUpperCase();
   const { signed, total, pending, percent } = signatureStats();
   const config = currentLaunchConfig();
+  const liquidityBudgetSol = Math.max(
+    0,
+    parseNumericInput($('#liquidityBudgetSol')?.value, config.launchSol),
+  );
   const logo = config.token.logo;
   $('#assetName').textContent = name;
   $('#assetSymbol').textContent = symbol;
@@ -5120,7 +5237,7 @@ function renderLaunchPreview() {
     <span><strong>${signed}/${total}</strong><small>Run</small></span>
     <span><strong>${pending}</strong><small>Queued</small></span>
     <span><strong>${percent}%</strong><small>Complete</small></span>
-    <span><strong>${config.launchSol.toFixed(2)} SOL</strong><small>Launch</small></span>
+    <span><strong>${liquidityBudgetSol.toFixed(2)} SOL</strong><small>Liquidity budget</small></span>
   `;
 }
 
@@ -14934,9 +15051,11 @@ function renderPersonalDiscovery() {
   const wallets = state.discovery.wallets || [];
   const watchOnlyWallets = wallets.filter((wallet) => wallet.source !== 'managed');
   const managedWallets = wallets.filter((wallet) => wallet.source === 'managed');
-  const watchOnlyLimit = Number(state.discovery.limits?.watchOnlyLimit) || 25;
-  const scanMaxWallets = Number(state.discovery.limits?.scanMaxWallets) || 5;
-  const watchOnlyAtLimit = watchOnlyWallets.length >= watchOnlyLimit;
+  const scanConcurrency = Number(state.discovery.limits?.scanConcurrency) || 4;
+  const enabledWalletCount = wallets.filter((wallet) => wallet.enabled !== false).length;
+  const walletRenderLimit = Math.max(100, Number(state.discovery.walletRenderLimit) || 100);
+  const visibleWatchOnlyWallets = watchOnlyWallets.slice(-walletRenderLimit).reverse();
+  const visibleManagedWallets = managedWallets.slice(0, walletRenderLimit);
   const snapshot = state.discovery.snapshot;
   const knownTokens = Array.isArray(snapshot?.knownTokens) ? snapshot.knownTokens : [];
   const candidates = Array.isArray(snapshot?.candidates) ? snapshot.candidates : [];
@@ -14949,13 +15068,11 @@ function renderPersonalDiscovery() {
       || !wallets.some((wallet) => wallet.enabled !== false);
     scanButton.innerHTML = state.discovery.scanning
       ? '<i class="fa-solid fa-spinner fa-spin"></i><span>Scanning</span>'
-      : '<i class="fa-solid fa-diagram-project"></i><span>Scan holder network</span>';
+      : '<i class="fa-solid fa-diagram-project"></i><span>Scan network</span>';
   }
   if (addButton) {
-    addButton.disabled = !connected || state.discovery.walletBusy || state.discovery.scanning || watchOnlyAtLimit;
-    addButton.title = watchOnlyAtLimit
-      ? `The ${watchOnlyLimit} watch-only wallet slots are full. Trebuchet wallets do not count toward this limit.`
-      : '';
+    addButton.disabled = !connected || state.discovery.walletBusy || state.discovery.scanning;
+    addButton.title = '';
   }
   ['discoveryWalletInput', 'discoveryWalletLabelInput'].forEach((id) => {
     if ($(`#${id}`)) $(`#${id}`).disabled = !connected || state.discovery.walletBusy || state.discovery.scanning;
@@ -14965,28 +15082,43 @@ function renderPersonalDiscovery() {
     <section class="discovery-wallet-group">
       <header>
         <span><i class="fa-solid fa-eye"></i> Watched wallets</span>
-        <small>${watchOnlyWallets.length} / ${watchOnlyLimit} used</small>
+        <small>${watchOnlyWallets.length} tracked · no limit</small>
       </header>
       <div class="discovery-wallet-chip-list">
         ${watchOnlyWallets.length
-          ? watchOnlyWallets.map(discoveryWalletChip).join('')
+          ? visibleWatchOnlyWallets.map(discoveryWalletChip).join('')
           : '<span class="muted">Add addresses you want Trebuchet to follow.</span>'}
       </div>
+      ${watchOnlyWallets.length > visibleWatchOnlyWallets.length ? `
+        <button class="pill-button discovery-wallet-show-more" type="button" data-action="show-more-discovery-wallets">
+          Show ${Math.min(100, watchOnlyWallets.length - visibleWatchOnlyWallets.length)} more watched wallets
+        </button>
+      ` : ''}
     </section>
     ${managedWallets.length ? `
       <details class="managed-discovery-wallets">
         <summary>
           <span><i class="fa-solid fa-key"></i> ${managedWallets.length} Trebuchet wallet${managedWallets.length === 1 ? '' : 's'}</span>
-          <small>Automatic · do not count toward the ${watchOnlyLimit}-wallet limit</small>
+          <small>Automatic · excluded from your watched-wallet list</small>
         </summary>
-        <div class="discovery-wallet-chip-list">${managedWallets.map(discoveryWalletChip).join('')}</div>
+        <div class="discovery-wallet-chip-list">${visibleManagedWallets.map(discoveryWalletChip).join('')}</div>
+        ${managedWallets.length > visibleManagedWallets.length ? `
+          <button class="pill-button discovery-wallet-show-more" type="button" data-action="show-more-discovery-wallets">
+            Show ${Math.min(100, managedWallets.length - visibleManagedWallets.length)} more Trebuchet wallets
+          </button>
+        ` : ''}
       </details>
     ` : ''}
-    <p class="discovery-scan-budget">Each scan uses up to ${scanMaxWallets} enabled wallets. Watched wallets are considered first.</p>
+    <p class="discovery-scan-budget">${enabledWalletCount} enabled wallet${enabledWalletCount === 1 ? '' : 's'} queued. Every enabled wallet is scanned with up to ${scanConcurrency} concurrent lookups.</p>
   `;
 
   const progressLabel = personalDiscoveryProgressLabel();
-  const scanWarnings = Array.isArray(snapshot?.warnings) ? snapshot.warnings : [];
+  const rawScanWarnings = Array.isArray(snapshot?.warnings) ? snapshot.warnings : [];
+  const legacyBoundedScan = rawScanWarnings.some((warning) => /Scanned \d+ of \d+ enabled wallets/i.test(String(warning)));
+  const scanWarnings = [
+    ...(legacyBoundedScan ? ['Previous result used the retired bounded scanner. Scan again to include every enabled wallet.'] : []),
+    ...rawScanWarnings.filter((warning) => !/Scanned \d+ of \d+ enabled wallets/i.test(String(warning))),
+  ];
   const scanSummary = snapshot
     ? `${knownTokens.length} known token${knownTokens.length === 1 ? '' : 's'} · ${candidates.length} network discover${candidates.length === 1 ? 'y' : 'ies'} · scanned ${formatAge(snapshot.completedAt)}`
     : null;
@@ -14997,10 +15129,20 @@ function renderPersonalDiscovery() {
         ? `${scanSummary} · ${scanWarnings[0]}${scanWarnings.length > 1 ? ` (+${scanWarnings.length - 1} more)` : ''}`
         : scanSummary
       : wallets.length ? 'Ready to scan. Only enabled wallets are included.' : 'Wallet addresses and graph results are stored locally.');
-  const statusNode = $('#personalDiscoveryStatus');
-  statusNode.classList.toggle('is-error', Boolean(state.discovery.personalError));
-  statusNode.classList.toggle('is-warning', !state.discovery.personalError && scanWarnings.length > 0);
-  statusNode.innerHTML = `<i class="fa-solid ${state.discovery.personalError || scanWarnings.length ? 'fa-triangle-exclamation' : state.discovery.scanning ? 'fa-spinner fa-spin' : 'fa-shield-halved'}"></i> ${escapeHtml(status)}`;
+  const progress = state.discovery.job?.progress || {};
+  const progressTotal = Math.max(0, Number(progress.total) || 0);
+  const progressCurrent = Math.max(0, Math.min(progressTotal, Number(progress.current) || 0));
+  const progressPercent = progressTotal > 0 ? Math.round((progressCurrent / progressTotal) * 100) : 0;
+  ['personalDiscoveryStatus', 'discoveryWalletStatus'].forEach((id) => {
+    const statusNode = $(`#${id}`);
+    if (!statusNode) return;
+    statusNode.classList.toggle('is-error', Boolean(state.discovery.personalError));
+    statusNode.classList.toggle('is-warning', !state.discovery.personalError && scanWarnings.length > 0);
+    statusNode.innerHTML = `
+      <span><i class="fa-solid ${state.discovery.personalError || scanWarnings.length ? 'fa-triangle-exclamation' : state.discovery.scanning ? 'fa-spinner fa-spin' : 'fa-shield-halved'}"></i> ${escapeHtml(status)}</span>
+      ${state.discovery.scanning && progressTotal > 0 ? `<span class="discovery-progress-meter" role="progressbar" aria-valuemin="0" aria-valuemax="${progressTotal}" aria-valuenow="${progressCurrent}"><i style="width:${progressPercent}%"></i></span>` : ''}
+    `;
+  });
 
   if (!snapshot) {
     $('#personalTokenNetwork').innerHTML = '';
@@ -15022,10 +15164,27 @@ function renderPersonalDiscovery() {
         <small>${candidates.length} ranked</small>
       </div>
       <div class="personal-token-grid">
-        ${candidates.length ? personalTokenCards(candidates, 'candidate', knownByMint) : '<span class="muted">No qualifying adjacent tokens were found in this bounded scan.</span>'}
+        ${candidates.length ? personalTokenCards(candidates, 'candidate', knownByMint) : '<span class="muted">No qualifying adjacent tokens were found across the enabled wallet network.</span>'}
       </div>
     </section>
   `;
+}
+
+function renderDiscoveryPanes() {
+  const pane = state.discovery.activePane === 'wallets' ? 'wallets' : 'tokens';
+  state.discovery.activePane = pane;
+  $$('.discovery-pane-tab').forEach((button) => {
+    const selected = button.dataset.discoveryPane === pane;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-selected', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  $$('[data-discovery-pane-panel]').forEach((panel) => {
+    const selected = panel.dataset.discoveryPanePanel === pane;
+    panel.hidden = !selected;
+    panel.classList.toggle('is-active', selected);
+  });
+  $('.discovery-grid')?.classList.toggle('is-wallet-tracking', pane === 'wallets');
 }
 
 function renderDiscovery() {
@@ -15037,6 +15196,7 @@ function renderDiscovery() {
   const inspectButton = $('#discoveryInspectButton');
 
   renderPersonalDiscovery();
+  renderDiscoveryPanes();
 
   $('#discoverySourceBanner').innerHTML = `
     <span class="risk-badge ${connected ? '' : 'warn'}">${connected ? 'Live' : 'Offline'}</span>
@@ -16298,6 +16458,7 @@ function renderHistoryPanes() {
 
 function renderAll() {
   renderLaunchPreview();
+  renderLaunchBudgetRecommendation();
   renderTokenLogoPreview();
   renderGuidedLaunchFlow();
   renderChartDeck();
@@ -16631,6 +16792,7 @@ function invalidateClassicOutputs() {
 
 function refreshClassicPreview({ includePoolEditor = false } = {}) {
   renderLaunchPreview();
+  renderLaunchBudgetRecommendation();
   renderTokenLogoPreview();
   renderChartDeck();
   renderVanityCandidates();
@@ -20517,10 +20679,26 @@ function handleClick(event) {
     return;
   }
 
+  const discoveryPane = event.target.closest('[data-discovery-pane]');
+  if (discoveryPane) {
+    state.discovery.activePane = discoveryPane.dataset.discoveryPane === 'wallets' ? 'wallets' : 'tokens';
+    renderDiscoveryPanes();
+    return;
+  }
+
   const actionTarget = event.target.closest('[data-action]');
   if (!actionTarget) return;
 
   const { action } = actionTarget.dataset;
+  if (action === 'select-launch-budget') {
+    applyLaunchBudgetRecommendation(actionTarget.dataset.budget);
+    return;
+  }
+  if (action === 'show-more-discovery-wallets') {
+    state.discovery.walletRenderLimit = Math.max(100, Number(state.discovery.walletRenderLimit) || 100) + 100;
+    renderPersonalDiscovery();
+    return;
+  }
   if (action === 'select-experience') {
     setExperienceMode(actionTarget.dataset.experience);
     return;
@@ -20560,6 +20738,12 @@ function handleClick(event) {
   if (action === 'guided-value-preset') {
     state.guidedIntent.startingMarketCapUsd = Math.max(1, Number(actionTarget.dataset.value || 0));
     delete state.guidedErrors.startingMarketCapUsd;
+    persistGuidedDraft();
+    renderGuidedLaunchFlow();
+    return;
+  }
+  if (action === 'guided-budget-preset') {
+    state.guidedIntent.liquidityBudgetSol = Math.max(0, Number(actionTarget.dataset.value || 0));
     persistGuidedDraft();
     renderGuidedLaunchFlow();
     return;
@@ -21363,6 +21547,9 @@ function bindEvents() {
   $('#tokenLogoFile').addEventListener('change', (event) => {
     selectTokenLogo(event.target.files?.[0] || null);
   });
+  $('#liquidityBudgetSol')?.addEventListener('input', (event) => {
+    applyLaunchBudgetRecommendation(event.target.value, { announce: false });
+  });
 
   $('#newVaultButton').addEventListener('click', () => {
     generateManagedWallet().catch((error) => notify(error.message || 'Wallet generation failed'));
@@ -21392,7 +21579,6 @@ function bindEvents() {
     'tokenSupply',
     'tokenDescription',
     'targetMarketCapUsd',
-    'launchSol',
     'vanityStart',
     'vanityEnd',
     'mainPoolPercent',

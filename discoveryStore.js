@@ -6,7 +6,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const STORE_VERSION = 1;
-const MAX_WATCH_ONLY_WALLETS = 25;
 const MAX_LABEL_LENGTH = 48;
 
 function configDir() {
@@ -57,12 +56,7 @@ function normalizeWallets(wallets = []) {
       byPublicKey.set(wallet.publicKey, wallet);
     }
   });
-  let watchOnlyCount = 0;
-  return [...byPublicKey.values()].filter((wallet) => {
-    if (wallet.source === 'managed') return true;
-    watchOnlyCount += 1;
-    return watchOnlyCount <= MAX_WATCH_ONLY_WALLETS;
-  });
+  return [...byPublicKey.values()];
 }
 
 function normalizeSnapshot(snapshot) {
@@ -144,13 +138,6 @@ export function upsertWallet(publicKey, options = {}) {
     return { ...existing };
   }
   const source = options.source === 'managed' ? 'managed' : 'watch-only';
-  const watchOnlyCount = store.wallets.filter((wallet) => wallet.source === 'watch-only').length;
-  if (source === 'watch-only' && watchOnlyCount >= MAX_WATCH_ONLY_WALLETS) {
-    const error = new Error(`Personal Discovery supports up to ${MAX_WATCH_ONLY_WALLETS} watch-only wallets. Trebuchet-managed wallets do not count toward this limit.`);
-    error.code = 'DISCOVERY_WALLET_LIMIT';
-    error.statusCode = 409;
-    throw error;
-  }
   const wallet = normalizeWallet({
     publicKey: address,
     label: options.label,
@@ -200,6 +187,7 @@ export function saveSnapshot(snapshot) {
 }
 
 export const PERSONAL_DISCOVERY_STORE_VERSION = STORE_VERSION;
-export const PERSONAL_DISCOVERY_MAX_WATCH_ONLY_WALLETS = MAX_WATCH_ONLY_WALLETS;
-// Compatibility alias for integrations that read the original exported cap.
-export const PERSONAL_DISCOVERY_MAX_WALLETS = MAX_WATCH_ONLY_WALLETS;
+// Compatibility exports remain present, but null now explicitly means that
+// Trebuchet does not impose a product-level wallet tracking limit.
+export const PERSONAL_DISCOVERY_MAX_WATCH_ONLY_WALLETS = null;
+export const PERSONAL_DISCOVERY_MAX_WALLETS = null;
