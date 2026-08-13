@@ -258,6 +258,7 @@ export function buildDiscoveryRecord({
   largestAccounts = null,
   market = null,
   journal = null,
+  brandAssessment = null,
   inspectedAt = new Date().toISOString(),
   rpcName = 'Configured RPC',
   warnings = [],
@@ -293,6 +294,10 @@ export function buildDiscoveryRecord({
     else if (topTenPercent <= 70) score += 2;
   }
   if (localJournal) score += 5;
+  if (brandAssessment?.official === true) score += 10;
+  if (Number.isFinite(Number(brandAssessment?.scoreCap))) {
+    score = Math.min(score, Number(brandAssessment.scoreCap));
+  }
   score = Math.max(0, Math.min(100, score));
 
   const verifiedSignals = [
@@ -304,7 +309,8 @@ export function buildDiscoveryRecord({
     topTenPercent != null,
   ].filter(Boolean).length;
   const confidence = verifiedSignals >= 5 ? 'High' : verifiedSignals >= 3 ? 'Medium' : 'Low';
-  const status = score >= 80 ? 'Ready' : score >= 60 ? 'Review' : 'Watch';
+  const evidenceStatus = score >= 80 ? 'Ready' : score >= 60 ? 'Review' : 'Watch';
+  const status = brandAssessment?.classification || evidenceStatus;
   const symbol = String(metadata?.symbol || `${address.slice(0, 4)}…${address.slice(-4)}`);
   const name = String(metadata?.name || symbol);
   const authoritySummary = mintAuthorityRenounced === true && freezeAuthorityDisabled === true
@@ -329,7 +335,9 @@ export function buildDiscoveryRecord({
     inspectedAt,
     source: rpcName,
     dataSource: 'Live RPC inspection',
-    summary: `${name}: ${authoritySummary}; ${concentrationSummary}.`,
+    summary: brandAssessment?.classification && brandAssessment.classification !== 'Unverified'
+      ? `${name}: ${brandAssessment.classification}; ${authoritySummary}; ${concentrationSummary}.`
+      : `${name}: ${authoritySummary}; ${concentrationSummary}.`,
     metrics: {
       supply: supply?.uiAmountString || null,
       largestAccounts: topRows.length,
@@ -355,8 +363,18 @@ export function buildDiscoveryRecord({
       freezeAuthorityDisabled: freezeAuthorityDisabled ?? null,
     } : null,
     journal: localJournal,
+    brand: brandAssessment || null,
     warnings: Array.isArray(warnings) ? warnings.filter(Boolean).map(String) : [],
     evidence: [
+      ...(brandAssessment ? [{
+        label: 'Identity provenance',
+        value: brandAssessment.classification,
+        state: brandAssessment.risk === 'critical'
+          ? 'danger'
+          : brandAssessment.risk === 'high' || brandAssessment.classification === 'Unverified'
+            ? 'warn'
+            : 'pass',
+      }] : []),
       authorityEvidence('Mint authority', mintAuthorityRenounced, 'Renounced', 'Still active'),
       authorityEvidence('Freeze authority', freezeAuthorityDisabled, 'Disabled', 'Still active'),
       {

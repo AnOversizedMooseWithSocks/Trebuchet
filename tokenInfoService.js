@@ -878,6 +878,7 @@ export async function getTokenInfo(
       programId,
       name: onChainName || null,
       imageUrl: null,
+      metadataUri: onChainUri || null,
     };
   }
 
@@ -953,6 +954,7 @@ export async function getTokenInfo(
     programId,
     name,
     imageUrl,
+    metadataUri: onChainUri || null,
   };
 }
 
@@ -980,6 +982,7 @@ export async function getTokenMetadata(mintAddress, options = {}) {
       priceUsd: info.priceUsd,
       name: info.name,
       imageUrl: info.imageUrl,
+      metadataUri: info.metadataUri,
     };
   } catch (e) {
     console.warn(`tokenInfoService: getTokenMetadata failed for ${mintAddress}:`, e.message);

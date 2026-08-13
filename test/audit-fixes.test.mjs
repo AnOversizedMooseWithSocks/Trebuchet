@@ -92,7 +92,8 @@ test('v2 removes cosmetic controls, native confirms, and false completion', () =
   assert.match(app, /RPC changes are made in authoritative settings/);
   assert.match(app, /new URLSearchParams\(\{ token, client: 'v2' \}\)/);
   assert.match(app, /Local run armed; execute only after readiness passes/);
-  assert.match(app, /Funding estimate<\/span><strong>\$\{currentEstimate\.available \? fmtSol\(currentEstimate\.value\) : 'Run estimator first'\}/);
+  assert.match(app, /recoverySpec \? 'New funding estimate' : 'Funding estimate'/);
+  assert.match(app, /recoverySpec \? 'Not required' : currentEstimate\.available \? fmtSol\(currentEstimate\.value\) : 'Run estimator first'/);
   assert.doesNotMatch(app, /Estimated envelope/);
   assert.doesNotMatch(app, /Static funding estimate staged/);
   assert.match(server, /client === 'v2' \? \{\} : \{/);

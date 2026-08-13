@@ -319,6 +319,9 @@
         job: personalDiscovery.job && typeof personalDiscovery.job === 'object'
           ? personalDiscovery.job
           : { status: 'idle' },
+        brandShield: personalDiscovery.brandShield && typeof personalDiscovery.brandShield === 'object'
+          ? personalDiscovery.brandShield
+          : null,
         available: endpoints.personalDiscovery?.ok === true,
         error: endpoints.personalDiscovery?.ok ? null : endpoints.personalDiscovery?.error || null,
       },
@@ -759,10 +762,10 @@
       return data.wallet;
     }
 
-    async function armRunEnvelope({ walletPublicKey, config, fundingEstimate }) {
+    async function armRunEnvelope({ walletPublicKey, config, fundingEstimate, recoveryEndpoint, localDossier }) {
       const data = await request(V2_RUN_ARM_PATH, {
         method: 'POST',
-        body: { walletPublicKey, config, fundingEstimate },
+        body: { walletPublicKey, config, fundingEstimate, recoveryEndpoint, localDossier },
       });
       if (!data?.envelope) {
         throw new V2ApiError('Run envelope response missing envelope.', { code: 'BAD_RUN_ENVELOPE' });
@@ -781,6 +784,10 @@
     } = {}) {
       const data = await request(V2_RUN_EXECUTE_NEXT_PATH, {
         method: 'POST',
+        // Live mint, metadata, and Raydium operations routinely take minutes.
+        // Keep the authenticated request attached so the renderer cannot time
+        // out, retry, and race the server-owned operation lock.
+        timeoutMs: 0,
         body: {
           walletPublicKey,
           config,

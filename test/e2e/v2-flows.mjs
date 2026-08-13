@@ -126,7 +126,7 @@ try {
 
   assert.equal(await page.getAttribute('body', 'data-experience-mode'), 'guided');
   assert.equal(await page.isVisible('.sidebar'), false, 'Guided Mode should start as a focused tutorial');
-  await page.click('[data-action="select-experience"][data-experience="advanced"]');
+  await page.click('.guided-advanced-shortcut');
   await page.waitForSelector('.sidebar', { state: 'visible' });
   await page.click('[data-view="wallet"]');
   await page.waitForSelector('#view-wallet.is-active');
@@ -134,6 +134,29 @@ try {
   await page.waitForSelector('#accountList .account-row', { timeout: 20_000 });
   const fundingAddress = (await page.textContent('#walletDetailPanel code'))?.trim() || '';
   assert.match(fundingAddress, /^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
+
+  await page.evaluate(() => {
+    const publicKey = selectedLaunchWalletPublicKey();
+    state.secretPin = { ...state.secretPin, configured: true, locked: true, unlocked: false };
+    state.managedWallets = state.managedWallets.map((wallet) => (
+      wallet.publicKey === publicKey ? { ...wallet, secretPinLocked: true } : wallet
+    ));
+    renderAll();
+  });
+  assert.match(await page.getAttribute('#walletButton', 'aria-label'), /Unlock .* Recovery PIN/i);
+  await page.click('#walletButton');
+  await page.waitForSelector('#recoveryPinGate:not([hidden])');
+  assert.match(await page.locator('#recoveryPinGate').innerText(), /Enter Recovery PIN/i);
+  await page.click('#recoveryPinCancel');
+  await page.waitForSelector('#recoveryPinGate', { state: 'hidden' });
+  await page.evaluate(() => {
+    const publicKey = selectedLaunchWalletPublicKey();
+    state.secretPin = { ...state.secretPin, configured: false, locked: false, unlocked: true };
+    state.managedWallets = state.managedWallets.map((wallet) => (
+      wallet.publicKey === publicKey ? { ...wallet, secretPinLocked: false } : wallet
+    ));
+    renderAll();
+  });
 
   await page.click('[data-action="import-wallet"]');
   await page.waitForSelector('#operatorPromptGate:not([hidden])');
@@ -145,11 +168,169 @@ try {
   assert.equal(await page.inputValue('#operatorPromptInput'), '');
   assert.doesNotMatch(await page.locator('body').innerText(), new RegExp(sentinelSecret));
 
+  await page.click('.nav-item[data-view="history"]');
+  await page.waitForSelector('#view-history.is-active');
+  await page.focus('#historyTabRecovery');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForSelector('#historyPanelWallets:not([hidden])');
+  assert.equal(await page.getAttribute('#historyTabWallets', 'aria-selected'), 'true');
+  assert.equal(await page.getAttribute('#historyTabRecovery', 'tabindex'), '-1');
+  await page.keyboard.press('End');
+  await page.waitForSelector('#historyPanelJournal:not([hidden])');
+  assert.equal(await page.getAttribute('#historyTabJournal', 'aria-selected'), 'true');
+
   await page.click('[data-view="launch"]');
+  await page.click('.launch-workspace-tab[data-launch-workspace="wallet"]');
+  await page.waitForFunction(() => document.body.dataset.launchWorkspace === 'wallet');
+  assert.deepEqual(await page.evaluate(() => (
+    [...document.querySelectorAll('[data-classic-workspace]')]
+      .filter((panel) => !panel.hidden)
+      .map((panel) => panel.dataset.classicWorkspace)
+  )), ['wallet'], 'Phase 1 was not isolated before wallet selection');
+
+  await page.click('.launch-wallet-choice');
+  await page.waitForFunction(() => document.body.dataset.launchWorkspace === 'configure');
+  assert.equal(await page.isVisible('#advancedLaunchControls .configure-step-guide'), true);
+  assert.match(await page.locator('#advancedLaunchControls .configure-step-guide').innerText(), /Phase 2 of 6/i);
+  assert.deepEqual(await page.evaluate(() => (
+    [...document.querySelectorAll('[data-classic-workspace]')]
+      .filter((panel) => !panel.hidden)
+      .map((panel) => panel.dataset.classicWorkspace)
+  )), [], 'Classic phases leaked into Phase 2');
+
+  await page.click('#advancedLaunchControls button[data-launch-workspace="fund"]');
+  await page.waitForFunction(() => document.body.dataset.launchWorkspace === 'fund');
+  await page.click('[data-action="estimate-funding"]');
+  await page.waitForSelector('.classic-workspace-fund .funding-task-address', { timeout: 30_000 });
+  await page.evaluate(() => renderClassicBridge());
+  assert.deepEqual(await page.evaluate(() => (
+    [...document.querySelectorAll('[data-classic-workspace]')]
+      .filter((panel) => !panel.hidden)
+      .map((panel) => panel.dataset.classicWorkspace)
+  )), ['fund'], 'An async funding refresh exposed multiple launch phases');
+  assert.match(await page.locator('.classic-workspace-fund').innerText(), /Phase 3 of 6/i);
+  assert.match(await page.locator('.classic-workspace-fund .funding-task').innerText(), /did not move funds/i);
+  assert.equal(await page.isDisabled('.classic-workspace-fund button[data-launch-workspace="mint"]'), true);
+  assert.match(await page.locator('.classic-workspace-fund .funding-wallet-hint').innerText(), /Return wallet not set/i);
+  assert.match(await page.locator('.classic-workspace-fund .funding-wallet-hint').innerText(), /Set return wallet/i);
+
+  await page.click('.classic-workspace-fund [data-action="edit-return-wallet"]');
+  await page.waitForFunction(() => (
+    document.body.dataset.launchWorkspace === 'configure'
+    && document.activeElement?.id === 'sweepDestination'
+  ));
+  assert.equal(await page.getAttribute('#sweepDestination', 'placeholder'), 'Wallet receiving remaining assets');
+  assert.equal(await page.getAttribute('#sweepDestination', 'aria-invalid'), null);
+  assert.equal(await page.locator('#sweepDestination').evaluate((input) => input.closest('details')?.open), true);
+
+  await page.fill('#sweepDestination', fundingAddress);
+  await page.dispatchEvent('#sweepDestination', 'change');
+  await page.evaluate(() => {
+    const config = currentLaunchConfig();
+    const walletPublicKey = selectedLaunchWalletPublicKey();
+    state.demoActive = false;
+    state.prefs.demoMode = false;
+    state.managedWallets = state.managedWallets.map((wallet) => (
+      wallet.publicKey === walletPublicKey
+        ? { ...wallet, hasSecretKey: true, decryptionFailed: false }
+        : wallet
+    ));
+    state.secretPin = { ...state.secretPin, configured: false, locked: false, unlocked: true };
+    state.classicFundingEstimate = stampClassicFundingEstimate({
+      totalSol: 0.46,
+      autoSwapPlan: [],
+      byQuote: {},
+      quoteBreakdown: [],
+    }, config);
+    state.manualPrefund = {
+      walletPublicKey,
+      balance: { sol: 1, tokens: {} },
+      polling: false,
+      error: null,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+    state.executionReadiness = {
+      status: 'ready',
+      nextAction: 'Create token',
+      nextEndpoint: '/api/create-token',
+      blockers: [],
+      warnings: [],
+      phases: [],
+    };
+    state.lastRunEnvelope = null;
+    applyLaunchPlan(fallbackLaunchPlan(), config, { openApproval: false });
+    state.launchWorkspace = 'mint';
+    renderAll();
+  });
+  await page.waitForFunction(() => document.body.dataset.launchWorkspace === 'mint');
+  const mintWorkspace = page.locator('[data-classic-workspace="mint"]');
+  assert.match(await mintWorkspace.innerText(), /Review and arm this launch/i);
+  assert.match(await mintWorkspace.innerText(), /Review & arm launch/i);
+  assert.doesNotMatch(await mintWorkspace.innerText(), /\/api\/create-token/i);
+
+  await mintWorkspace.locator('[data-action="review-and-arm-run"]').click();
+  await page.waitForSelector('#approvalFloating.is-open');
+  assert.match(await page.locator('#approvalFloating').innerText(), /Review before creating/i);
+  assert.match(await page.locator('#approvalFloating').innerText(), /Arming does not send a transaction/i);
+  assert.match(await page.locator('#approvalFloating').innerText(), /Arm & return to Create token/i);
+  await page.click('[data-action="close-approval"]');
+  await page.evaluate(() => {
+    state.lastRunEnvelope = { id: 'phase-4-e2e-envelope', status: 'armed' };
+    renderAll();
+  });
+  await page.waitForSelector('[data-classic-workspace="mint"] [data-action="execute-next-run"]');
+  assert.match(
+    await page.locator('[data-classic-workspace="mint"] [data-action="execute-next-run"]').innerText(),
+    /Create token/i,
+  );
+
+  await page.evaluate(() => {
+    state.lastRunEnvelope = null;
+    state.executionReadiness = {
+      ...state.executionReadiness,
+      nextAction: 'Finish interrupted token',
+      nextEndpoint: '/api/finish-token-creation',
+      completion: {
+        ...(state.executionReadiness?.completion || {}),
+        tokenCreated: false,
+        tokenNeedsFinish: true,
+      },
+      phases: (state.executionReadiness?.phases || []).map((phase) => (
+        phase.id === 'token'
+          ? { ...phase, title: 'Finish token', endpoint: '/api/finish-token-creation', state: 'ready' }
+          : phase
+      )),
+    };
+    renderAll();
+  });
+  assert.match(await mintWorkspace.innerText(), /Finish interrupted token/i);
+  assert.match(await mintWorkspace.innerText(), /Finish token safely/i);
+  assert.doesNotMatch(await mintWorkspace.innerText(), /Resume missing work/i);
+
+  await page.evaluate(() => {
+    state.lastRunEnvelope = null;
+    state.executionReadiness = null;
+    state.transactions = [];
+    state.demoActive = true;
+    state.prefs.demoMode = true;
+    state.launchWorkspace = 'configure';
+    renderAll();
+  });
+
   await page.click('[data-action="select-experience"][data-experience="guided"]');
   await page.click('[data-action="guided-next"]');
   await page.fill('[data-guided-field="name"]', 'First Launch');
   await page.fill('[data-guided-field="symbol"]', 'FIRST');
+  await page.setInputFiles(
+    '#tokenLogoFile',
+    path.join(root, 'public', 'release-assets', 'frames', 'f01.png'),
+  );
+  await page.waitForSelector('.guided-logo-button .guided-logo-mark img');
+  assert.match(
+    await page.locator('.guided-logo-button').innerText(),
+    /Logo attached/,
+    'Guided Mode did not show the uploaded logo until a later navigation refresh',
+  );
   await page.evaluate(() => {
     const symbol = document.querySelector('[data-guided-field="symbol"]');
     symbol.focus();
@@ -177,9 +358,9 @@ try {
 
   const guidedRunText = await page.locator('#guidedRunShell').innerText();
   const runText = await page.locator('#globalStrip').innerText();
-  assert.match(guidedRunText, /The complete launch recipe worked/);
-  assert.match(guidedRunText, /Prepare live launch/);
-  assert.match(guidedRunText, /Review local practice record/);
+  assert.match(guidedRunText, /The complete launch recipe worked/i);
+  assert.match(guidedRunText, /Prepare live launch/i);
+  assert.match(guidedRunText, /Review local practice record/i);
   assert.match(runText, /Run\s+\d+\/\d+ done \/ 0 queued/);
   assert.deepEqual(nativeDialogs, [], 'Trebuchet opened a native prompt/confirm dialog');
   assert.deepEqual(pageErrors, [], 'Trebuchet emitted page errors');

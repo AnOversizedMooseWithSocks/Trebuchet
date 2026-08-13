@@ -3,8 +3,8 @@
   "kind": "trebuchet-v2-viewport-smoke",
   "passed": true,
   "command": "npm run test:v2:viewport",
-  "generatedAt": "2026-08-12T07:42:38.503Z",
-  "durationMs": 9333,
+  "generatedAt": "2026-08-13T15:00:39.331Z",
+  "durationMs": 4507,
   "target": "file:///Users/ratimics/develop/trebuchet/public/v2/index.html",
   "requiredChecks": [
     "launchVisible",
@@ -13,13 +13,15 @@
     "liquidityChart",
     "fundingMeter",
     "parityPanel",
-    "firstViewportFit"
+    "firstViewportFit",
+    "terminalPanelFit",
+    "discoveryTokenViewport"
   ],
   "assetHashes": {
-    "index.html": "9958e4109190c04201d6ddc52755567f495c6a8cf9946b5c8d310c5e97a16259",
-    "styles.css": "547ece0e54732611adff190b79e93ff92a280ee2f4ea420491c3c1220a2c886c",
-    "api-client.js": "e90a68f4290fb7387a22018eaaec2c78525dd5b1231c60b6a57a2a191901cedf",
-    "app.js": "9d6344f6e33aa57b964250a54308b0b1876791ca915205f379e0ebbdd9e67046"
+    "index.html": "3230ef2f725ccc17ef4556ce2b6aa68344907ec4a2d4efc78141875dca330cc3",
+    "styles.css": "e69e916bca052fea50d1c30abd6a089185921a05152b92b0cdc082b0763cfc9f",
+    "api-client.js": "c8cd3f50bfee9d312d3b028eb337de514411345694c2e97c2d971c952ab67cc7",
+    "app.js": "49eccdaac3239ad70ca70f45c6af8284c85f15ac07fa65287bc04c16727c1b9f"
   },
   "viewports": [
     {
@@ -34,7 +36,9 @@
         "liquidityChart": true,
         "fundingMeter": true,
         "parityPanel": true,
-        "firstViewportFit": true
+        "firstViewportFit": true,
+        "terminalPanelFit": true,
+        "discoveryTokenViewport": true
       }
     },
     {
@@ -49,7 +53,9 @@
         "liquidityChart": true,
         "fundingMeter": true,
         "parityPanel": true,
-        "firstViewportFit": true
+        "firstViewportFit": true,
+        "terminalPanelFit": true,
+        "discoveryTokenViewport": true
       }
     }
   ]

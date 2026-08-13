@@ -1598,6 +1598,7 @@ function loadFieldRunbookHarness() {
     quoteManualPrefundItems: () => [],
     currentLaunchProof: () => sandbox.proof || ({ token: { mint: 'Mint111' }, canPublishReport: false }),
     proofHasReportPublishEvidence: () => sandbox.reportEvidence === true,
+    proofCanCreateLocalDossier: () => sandbox.reportEvidence === true,
     airdropCompletionStatus: () => sandbox.airdropStatus || ({ complete: true }),
   };
   sandbox.globalThis = sandbox;
@@ -1644,6 +1645,7 @@ function loadProofShareSummaryHarness() {
       + (pool.bootstrap ? 1 : 0)
     ), 0),
     proofEffectiveDestination: () => 'Dest111111111111111111111111111111111111111',
+    transferHasWalletEmptyFinalSweepEvidence: (transfer) => transfer?.walletEmpty === true,
     buildV2ReportParityAudit: () => ({ status: 'warn' }),
     buildClassicRetirementGate: () => ({ state: 'danger' }),
     buildV2FieldVerification: () => sandbox.mockFieldVerification || ({
@@ -1970,6 +1972,9 @@ test('v2 is the Electron default with an explicit tested Classic fallback', () =
   assert.match(electronMainJs, /requestedDesktopUi === 'classic'/);
   assert.match(electronMainJs, /requestedDesktopUi === 'v1'/);
   assert.match(electronMainJs, /const desktopUiPath = classicUiRequested \? '\/' : '\/v2\/'/);
+  assert.match(electronMainJs, /app\.requestSingleInstanceLock\(\)/);
+  assert.match(electronMainJs, /app\.on\('second-instance'/);
+  assert.match(electronMainJs, /BrowserWindow\.getAllWindows\(\)/);
   assert.match(electronMainJs, /win\.loadURL\(`http:\/\/127\.0\.0\.1:\$\{serverPort\}\$\{desktopUiPath\}`\)/);
   assert.match(v2BrowserE2eJs, /page\.goto\(`\$\{baseUrl\}\/v2\/`/);
   assert.match(v2BrowserE2eJs, /data-experience=\"guided\"/);
@@ -1985,8 +1990,9 @@ test('v2 Discovery combines a personal wallet graph with live evidence and no so
 
   assert.match(combined, /Wallets → on-chain/);
   assert.match(combined, /Token discovery/);
-  assert.match(combined, /Token Discovery/);
-  assert.match(combined, /Wallet Tracking/);
+  assert.match(combined, /data-discovery-pane="tokens"[\s\S]*?<strong>Tokens<\/strong>/);
+  assert.match(combined, /data-discovery-pane="wallets"[\s\S]*?<strong>Wallets<\/strong>/);
+  assert.doesNotMatch(combined, /Make this feed yours|discoveryPersonalizeBanner/);
   assert.match(combined, /Wallets you choose to follow/);
   assert.match(combined, /Watched wallets/);
   assert.match(combined, /no limit/i);
@@ -1996,6 +2002,8 @@ test('v2 Discovery combines a personal wallet graph with live evidence and no so
   assert.match(combined, /managed-discovery-wallets/);
   assert.match(combined, /Refresh tokens/);
   assert.match(combined, /personal-token-feed/);
+  assert.match(css, /\.discovery-pane-tabs\s*\{[\s\S]*?min-height: 34px/);
+  assert.match(css, /\.discovery-pane-tab\s*\{[\s\S]*?min-height: 34px/);
   assert.match(combined, /Sorted by \$\{sortLabel\}/);
   assert.match(combined, /Network relevance/);
   assert.match(combined, /networkScore/);
@@ -2136,15 +2144,17 @@ test('v2 launch page presents an agentic control panel instead of instruction wa
   assert.match(combined, /recoveryWizardModel/);
   assert.match(combined, /renderRecoveryWizard/);
   assert.match(combined, /currentRecoveryWizardModel/);
-  assert.match(combined, /Recovery wizard/);
+  assert.match(combined, /Recovery next action/);
   assert.match(combined, /Recovery needs local app/);
   assert.match(combined, /Find failed launch state/);
   assert.match(combined, /Unlock recovery material/);
   assert.match(combined, /Resume only missing work/);
   assert.match(combined, /Manual recovery required/);
-  assert.match(combined, /data-action="select-recovery-step"/);
-  assert.match(combined, /recovery-wizard-prev/);
-  assert.match(combined, /recovery-wizard-next/);
+  assert.match(combined, /Recovery details/);
+  assert.match(combined, /recovery-status-list/);
+  assert.doesNotMatch(combined, /data-action="select-recovery-step"/);
+  assert.doesNotMatch(combined, /recovery-wizard-prev/);
+  assert.doesNotMatch(combined, /recovery-wizard-next/);
   assert.match(combined, /Retry sweep/);
   assert.match(combined, /No recovery action needed/);
   assert.match(combined, /renderRecoveryWalletWorkspace/);
@@ -2205,6 +2215,15 @@ test('v2 launch page organizes the complete launch into six focused phases', () 
   assert.match(combined, /Phase 5 of 6/);
   assert.match(combined, /Phase 6 of 6/);
   assert.match(combined, /Choose a temporary launch wallet/);
+  assert.match(combined, /Fund the launch wallet/);
+  assert.match(combined, /Estimating never moves funds/);
+  assert.match(combined, /I funded it · check balance/);
+  assert.match(combined, /Verify funding to continue/);
+  assert.match(combined, /Estimating calculated the requirement but did not move funds/);
+  assert.match(css, /\.funding-task\s*\{/);
+  assert.match(css, /data-experience-mode="advanced"[^\n]*\.launch-choice-bar/);
+  assert.doesNotMatch(js, /Check prerequisites/);
+  assert.doesNotMatch(js, /Classic execution payloads ready/);
   assert.match(combined, /Create the token and renounce control/);
   assert.match(combined, /Create pools, open positions, and lock liquidity/);
   assert.match(combined, /Distribute, sweep, and save proof/);
@@ -3197,7 +3216,9 @@ test('v2 six-phase launch procedure preserves the complete v1 feature set withou
   assert.match(js, /Acquire map/);
   assert.match(js, /Auto acquire/);
   assert.match(js, /Manual prefund checklist/);
-  assert.match(js, /Funding wallet detection/);
+  assert.match(js, /Final asset return/);
+  assert.match(js, /Return wallet not set/);
+  assert.match(js, /edit-return-wallet/);
   assert.match(js, /detect-funding-wallet/);
   assert.match(js, /use-funding-wallet-sweep/);
   assert.match(js, /External funding wallet/);
@@ -3285,7 +3306,7 @@ test('v2 six-phase launch procedure preserves the complete v1 feature set withou
   assert.doesNotMatch(reportHtmlSource, /const data = launchData \|\| buildV2LaunchReportData/);
   assert.match(js, /Load proof/);
   assert.match(js, /Download dossier/);
-  assert.match(js, /Launch dossier downloaded/);
+  assert.match(js, /Local dossier attached/);
   assert.match(js, /Launch proof loaded/);
   assert.match(js, /Load artifact/);
   assert.match(js, /Classic artifact loaded/);
@@ -3923,7 +3944,7 @@ test('v2 launch runbook follows field verification blockers', () => {
   assert.match(css, /tx-state\.warn/);
 });
 
-test('v2 copied proof summary includes field parity next action', () => {
+test('v2 copied proof summary prioritizes the next launch operation before release parity', () => {
   const { buildProofShareSummary } = loadProofShareSummaryHarness();
   const summary = buildProofShareSummary({
     token: { mint: 'Mint111111111111111111111111111111111111111', symbol: 'MKT' },
@@ -3941,12 +3962,11 @@ test('v2 copied proof summary includes field parity next action', () => {
   });
 
   assert.match(summary, /Trebuchet launch proof: MKT/);
-  assert.match(summary, /Classic retirement: blocked/);
-  assert.match(summary, /Field parity: 2\/5 checks passing; 3 blockers/);
-  assert.match(summary, /Missing field proof: Classic artifact: Compare a completed Classic artifact/);
-  assert.match(summary, /Report: Publish or attach a proof-bound v2 launch report/);
+  assert.match(summary, /Liquidity: 0 recorded pools \/ 3 positions/);
+  assert.match(summary, /Next: Create and lock liquidity/);
   assert.match(summary, /Airdrop: needs proof: recipient rows, transaction signatures/);
-  assert.match(summary, /Next action: compare-classic-artifact - Compare a completed Classic artifact/);
+  assert.doesNotMatch(summary, /Classic retirement:/);
+  assert.doesNotMatch(summary, /Field parity:/);
   assert.match(js, /const airdropSummary = airdropStatus\.configured/);
   assert.match(js, /needs proof: \$\{\(airdropStatus\.missing \|\| \[\]\)\.join\(', '\)/);
   assert.match(js, /const fieldVerification = buildV2FieldVerification\(\{/);
@@ -3979,7 +3999,8 @@ test('v2 copied proof summary counts replacement-criteria blockers', () => {
   };
   const summary = harness.buildProofShareSummary({
     token: { mint: 'Mint111111111111111111111111111111111111111', symbol: 'MKT' },
-    liquidity: { poolCount: 1, results: [] },
+    liquidity: { poolCount: 1, results: [{ poolId: 'Pool111', mainPositions: [{}] }] },
+    transfer: { walletEmpty: true },
   }, {
     token: { symbol: 'MKT' },
     poolTopology: {},
@@ -6427,6 +6448,57 @@ test('v2 launch mechanism stages one Trebuchet-managed local wallet run', () => 
   assert.doesNotMatch(js.slice(js.indexOf('async function runLaunchEnvelope'), js.indexOf('async function checkForUpdates')), /status:\s*'completed'|tx\.status\s*=\s*'signed'/);
 });
 
+test('v2 Phase 4 exposes the missing arm step before Create token', () => {
+  const bridgeStart = js.indexOf('function renderClassicBridge()');
+  const bridgeEnd = js.indexOf('\nfunction activityLogEntries', bridgeStart);
+  const bridgeSource = js.slice(bridgeStart, bridgeEnd);
+  const reviewStart = js.indexOf('async function reviewAndArmRun()');
+  const reviewEnd = js.indexOf('\nasync function stageTransactions', reviewStart);
+  const reviewSource = js.slice(reviewStart, reviewEnd);
+
+  assert.ok(bridgeStart >= 0 && bridgeEnd > bridgeStart, 'Classic bridge should be extractable');
+  assert.ok(reviewStart >= 0 && reviewEnd > reviewStart, 'run-envelope review helper should be extractable');
+  assert.match(bridgeSource, /needsRunEnvelope/);
+  assert.match(bridgeSource, /Review and arm this launch/);
+  assert.match(bridgeSource, /data-action="review-and-arm-run"/);
+  assert.match(bridgeSource, /then Create token becomes available here/);
+  assert.match(bridgeSource, /data-action="execute-next-run"[\s\S]*?runLabel/);
+  assert.doesNotMatch(bridgeSource, /\|\| readiness\?\.nextEndpoint\s*\|\|/);
+  assert.match(reviewSource, /stageTransactions\(\{ openApproval: true, announce: false \}\)/);
+  assert.match(js, /action === 'review-and-arm-run'[\s\S]*?reviewAndArmRun\(\)/);
+  assert.match(js, /Local run armed; execute only after readiness passes\. Next: \$\{nextOperation\}\./);
+});
+
+test('v2 terminal recovery collapses into the completed proof panel', () => {
+  const bridgeStart = js.indexOf('function renderClassicBridge()');
+  const bridgeEnd = js.indexOf('\nfunction activityLogEntries', bridgeStart);
+  const bridgeSource = js.slice(bridgeStart, bridgeEnd);
+
+  assert.ok(bridgeStart >= 0 && bridgeEnd > bridgeStart, 'Classic bridge should be extractable');
+  assert.match(bridgeSource, /state\.restoredLaunchJournalId && !finalSweepComplete/);
+  assert.match(bridgeSource, /classicBridge\.classList\.toggle\('has-recovery-notice'/);
+  assert.match(bridgeSource, /classicBridge\.classList\.toggle\('is-terminal-launch', finalSweepComplete\)/);
+  assert.match(bridgeSource, /Assets swept and proof recorded/);
+  assert.match(bridgeSource, /!finalSweepComplete \? `<details class="drawer launch-recovery-details"/);
+  assert.match(css, /#classicBridge\.is-terminal-launch \.classic-workspace-verify\s*\{[\s\S]*?grid-template-rows: auto minmax\(0, 1fr\)/);
+  assert.match(css, /\.recovered-plan-notice\s*\{[\s\S]*?max-height: 44px/);
+  assert.doesNotMatch(css, /body\[data-experience-mode="advanced"\]\[data-active-view="launch"\][\s\S]{0,180}?height: auto/);
+});
+
+test('v2 interrupted mints finish safely before liquidity resumes', () => {
+  assert.match(serverJs, /const tokenNeedsFinish = Boolean\(tokenMint && !tokenCreationComplete\)/);
+  assert.match(serverJs, /tokenNeedsFinish,/);
+  assert.match(serverJs, /endpoint === '\/api\/finish-token-creation'/);
+  assert.match(serverJs, /finishTokenCreationHandler/);
+  assert.match(js, /Finish interrupted token/);
+  assert.match(js, /Finish token safely/);
+  assert.match(js, /'\/api\/finish-token-creation': 'Finishing interrupted token'/);
+  assert.match(apiClientJs, /V2_RUN_EXECUTE_NEXT_PATH[\s\S]*?timeoutMs: 0/);
+  assert.match(serverJs, /async function rejectIfTokenIncompleteForLiquidity/);
+  assert.equal((serverJs.match(/rejectIfTokenIncompleteForLiquidity\(res/g) || []).length, 4);
+  assert.match(serverJs, /code: 'TOKEN_CREATION_INCOMPLETE'/);
+});
+
 test('v2 Vanity CA candidates use a compact terminal list and Signal grade colors', () => {
   const renderStart = js.indexOf('function renderVanityCandidates()');
   const renderEnd = js.indexOf('function poolLadderCount', renderStart);
@@ -6471,6 +6543,18 @@ test('v2 active wallet identity uses its rarity color without replacing status c
   assert.match(css, /\.risk-badge\.danger[\s\S]*?color: var\(--red\)/);
 });
 
+test('v2 locked launch wallet opens the Recovery PIN gate directly', () => {
+  const walletClickStart = js.indexOf("$('#walletButton').addEventListener('click'");
+  const walletClickEnd = js.indexOf("$('#stageButton').addEventListener", walletClickStart);
+  const walletClickSource = js.slice(walletClickStart, walletClickEnd);
+
+  assert.ok(walletClickStart >= 0 && walletClickEnd > walletClickStart);
+  assert.match(walletClickSource, /!walletIsUnlocked\(\) \|\| state\.secretPin\.locked \|\| selected\?\.secretPinLocked === true/);
+  assert.match(walletClickSource, /unlockSecretPin\(\{ reason: 'wallet' \}\)/);
+  assert.match(js, /title: 'Enter Recovery PIN'[\s\S]*?Unlock the selected launch wallet on this Mac/);
+  assert.match(js, /walletButton\.setAttribute\('aria-label', walletButtonLabel\)/);
+});
+
 test('v2 primary views share framed terminal workspaces and tabbed History panes', () => {
   for (const pane of ['recovery', 'wallets', 'audit', 'journal']) {
     assert.match(html, new RegExp(`data-history-pane="${pane}"`));
@@ -6481,6 +6565,11 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
   assert.match(js, /function renderHistoryPanes/);
   assert.match(js, /action === 'select-history-pane'/);
   assert.match(js, /panel\.hidden = !selected/);
+  assert.match(js, /button\.tabIndex = selected \? 0 : -1/);
+  assert.match(js, /activeTab = event\.target\.closest\?\.\('\[role="tab"\]'\)/);
+  assert.match(html, /id="historyTabRecovery"[\s\S]*?aria-controls="historyPanelRecovery"/);
+  assert.match(html, /id="historyPanelRecovery"[\s\S]*?aria-labelledby="historyTabRecovery"/);
+  assert.doesNotMatch(html, /<small>01<\/small><strong>Recovery<\/strong><span>Safe resume<\/span>/);
   assert.match(css, /\.history-pane-tabs\s*\{[\s\S]*?display: flex;/);
   assert.match(css, /\.history-pane-stage\s*\{[\s\S]*?overflow: hidden;/);
   assert.match(css, /#view-history \.surface-main\s*\{[\s\S]*?grid-template-rows: auto auto minmax\(0, 1fr\)/);
@@ -6491,11 +6580,11 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=77/);
+  assert.match(html, /styles\.css\?v=80/);
   assert.match(html, /runtime-state\.js\?v=1/);
   assert.match(html, /api-client\.js\?v=37/);
-  assert.match(html, /app\.js\?v=168/);
-  assert.doesNotMatch(html, /app\.js\?v=168" type="module"/);
+  assert.match(html, /app\.js\?v=171/);
+  assert.doesNotMatch(html, /app\.js\?v=171" type="module"/);
   assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
@@ -6664,7 +6753,8 @@ test('v2 retirement gate requires terminal final sweep evidence', () => {
   assert.match(js, /const reportPublishEvidence = proofHasReportPublishEvidence\(proof, proofConfig\)/);
   assert.match(js, /const reportReady = Boolean\(\s*airdropStatus\.complete\s*&& \(\(proof\?\.canPublishReport && reportPublishEvidence\) \|\| \(reportLocalOnly && reportPublishEvidence\)\)\s*\)/);
   assert.match(js, /const reportProofReady = proofHasReportPublishEvidence\(proof, config\) && airdropStatus\.complete/);
-  assert.match(js, /const canDownloadDossier = canDownload && \(!proof\?\.token\?\.mint \|\| reportProofReady \|\| reportNeedsFinalArtifact\)/);
+  assert.match(js, /const localDossierReady = proofCanCreateLocalDossier\(proof, config\) && airdropStatus\.complete/);
+  assert.match(js, /const canDownloadDossier = canDownload && \(!proof\?\.token\?\.mint \|\| localDossierReady \|\| reportNeedsFinalArtifact\)/);
   assert.match(js, /const airdropIssue = airdropCompletionIssue\(\s*airdropCompletionStatus\(proof, config\.poolTopology\),\s*'downloading the launch dossier',\s*\)/);
   assert.match(js, /function airdropCompletionStatus\(proof = currentLaunchProof\(\), topology = currentClassicModel\(\)\)/);
   assert.match(js, /const evidence = comparisonAirdropDeliveryEvidenceState\(\{/);
@@ -6682,7 +6772,7 @@ test('v2 retirement gate requires terminal final sweep evidence', () => {
   assert.match(js, /txEvidence\.openTxCount >= recordedPositionCount/);
   assert.match(js, /txEvidence\.lockTxCount >= recordedPositionCount/);
   assert.match(js, /txEvidence\.feeKeyRecipientTransferred >= feeKeyRecipientTarget/);
-  assert.match(js, /if \(!proof\?\.token\?\.mint \|\| !proofHasReportPublishEvidence\(proof, config\)\) return null/);
+  assert.match(js, /if \(!proofCanCreateLocalDossier\(proof, config\)\) return null/);
   assert.match(js, /if \(!proofHasReportPublishEvidence\(proof, config\)\) \{/);
   assert.match(js, /Complete liquidity proof before publishing a report/);
   assert.match(js, /poolIds: recordedPoolIds/);
@@ -10607,6 +10697,37 @@ test('v2 API client preserves structured error responses', async () => {
   );
 });
 
+test('v2 execute-next keeps the request attached for long on-chain operations', async () => {
+  const api = loadApiClient();
+  const client = api.createV2ApiClient({
+    locationLike: { protocol: 'http:' },
+    timeoutMs: 5,
+    fetchImpl: async (url, init = {}) => {
+      if (url === '/api/session') return jsonResponse({ success: true, token: 'long-run-token' });
+      assert.equal(url, '/api/v2/run-envelope/execute-next');
+      return new Promise((resolve, reject) => {
+        init.signal?.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+        setTimeout(() => resolve(jsonResponse({
+          success: true,
+          executed: { endpoint: '/api/finish-token-creation', result: { mint: 'Mint111' } },
+        })), 20);
+      });
+    },
+  });
+
+  const result = await client.executeNextRunOperation({
+    walletPublicKey: 'Generated111',
+    config: {},
+    confirmNextEndpoint: '/api/finish-token-creation',
+    runEnvelopeId: 'envelope-1',
+  });
+  assert.equal(result.executed.endpoint, '/api/finish-token-creation');
+});
+
 test('v2 execution errors replace stale cached readiness', () => {
   const helperSource = js.match(/function applyExecutionErrorReadiness\([\s\S]*?\n\}/)?.[0] || '';
   const nextRunSource = js.match(/async function executeNextRunOperation\([\s\S]*?\n\}\n\nfunction executeNextTransferFinalizationIssue/)?.[0] || '';
@@ -11010,6 +11131,43 @@ test('v2 API client manages Trebuchet local wallets and run envelopes', async ()
   assert.equal(executed.readiness.nextEndpoint, '/api/create-lp');
   assert.equal(executed.proof.liquidity.poolIds[0], 'Pool111');
   assert.equal(calls.filter((call) => call.url === '/api/session').length, 1);
+});
+
+test('startup routes an interrupted launch to recovery before the tutorial', () => {
+  assert.match(js, /function journalNeedsStartupRecovery\(journal\)/);
+  assert.match(js, /function journalNeedsTokenFinish\(journal\)/);
+  assert.match(js, /const recoveryFirst = routeStartupRecoveryFirst\(\);/);
+  assert.match(js, /const restored = restoreLaunchConfigFromJournal\(journal\)/);
+  assert.match(js, /const workspace = recoveryWorkspaceForJournal\(journal\)/);
+  assert.match(js, /view: 'launch'/);
+  assert.match(js, /workspace,/);
+  assert.match(js, /if \(journalNeedsTokenFinish\(journal\)\) return false/);
+  assert.match(js, /action === 'open-token-recovery'[\s\S]*?openTokenRecovery/);
+  assert.match(js, /restoreLaunchConfigFromJournal\(journal\)/);
+  assert.match(js, /state\.experienceMode = 'advanced'/);
+});
+
+test('completed liquidity recovery opens Finish without replaying resume or funding', () => {
+  assert.match(js, /function canContinueJournalToFinish\(journal\)/);
+  assert.match(js, /completedLpJournal\(journal\)/);
+  assert.match(js, /label: 'Continue to Finish'/);
+  assert.match(js, /action: 'continue-journal-finish'/);
+  assert.match(js, /function openJournalFinish\(journalId\)/);
+  assert.match(js, /state\.launchWorkspace = 'finish'/);
+  assert.match(js, /function recoveryAuthorizationEndpoint\(\)/);
+  assert.match(js, /function stageRecoveryAuthorization/);
+  assert.match(js, /const fundingEstimate = recoveryEndpoint \? null/);
+  assert.match(js, /New funding estimate/);
+  assert.match(js, /Not required/);
+  assert.match(js, /Authorize final sweep/);
+});
+
+test('local dossier is an explicit final-sweep proof alternative', () => {
+  assert.match(js, /function proofCanCreateLocalDossier/);
+  assert.match(js, /localDossierReady/);
+  assert.match(js, /Use local dossier/);
+  assert.match(js, /Either choice unlocks final sweep/);
+  assert.match(js, /final sweep can continue without publishing/);
 });
 
 test('v2 API client bridges classic vanity, funding, and diagnostics APIs', async () => {

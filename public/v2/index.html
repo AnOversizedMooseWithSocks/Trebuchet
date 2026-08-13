@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TREBUCHET · makesometokens</title>
   <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="./styles.css?v=77">
+  <link rel="stylesheet" href="./styles.css?v=80">
 </head>
 <body data-experience-mode="guided" data-execution-environment="loading" data-custody-signal="loading">
   <div class="app-shell">
@@ -246,7 +246,10 @@
                   <span class="eyebrow">Trebuchet first launch</span>
                   <strong id="setupSummary">Your first launch</strong>
                 </span>
-                <span class="setup-help" id="setupHelp">Practice only · no SOL spent</span>
+                <span class="setup-head-actions">
+                  <span class="setup-help" id="setupHelp">Practice only · no SOL spent</span>
+                  <button class="text-button guided-advanced-shortcut" type="button" data-action="select-experience" data-experience="advanced">Advanced</button>
+                </span>
               </div>
               <section class="guided-launch-flow" id="guidedLaunchFlow" aria-live="polite"></section>
 
@@ -290,6 +293,13 @@
                     </label>
                   </div>
                   <div class="token-logo-preview" id="tokenLogoPreview"></div>
+                  <label class="sealed-launch-control" for="sealedLaunch">
+                    <input id="sealedLaunch" type="checkbox" checked>
+                    <span>
+                      <strong>Sealed launch</strong>
+                      <small>Commit identity now; reveal it only after liquidity is locked.</small>
+                    </span>
+                  </label>
                   <label>
                     <span>Target market cap</span>
                     <input id="targetMarketCapUsd" type="text" value="250,000" autocomplete="off">
@@ -408,8 +418,8 @@
                     <input id="airdropWallets" type="number" value="0" min="0" step="1">
                   </label>
                   <label>
-                    <span>Sweep destination</span>
-                    <input id="sweepDestination" type="text" value="" placeholder="Final owner wallet" autocomplete="off">
+                    <span>Return wallet</span>
+                    <input id="sweepDestination" type="text" value="" placeholder="Wallet receiving remaining assets" autocomplete="off">
                   </label>
                 </form>
                 <div class="operator-toolbar" aria-label="Pool configuration actions">
@@ -573,17 +583,16 @@
               <span class="badge" id="discoveryRegistryCount">0 saved</span>
             </div>
             <nav class="discovery-pane-tabs" role="tablist" aria-label="Discovery workspace">
-              <button class="discovery-pane-tab is-selected" type="button" role="tab" aria-selected="true" data-discovery-pane="tokens">
+              <button class="discovery-pane-tab is-selected" id="discoveryTabTokens" type="button" role="tab" aria-selected="true" aria-controls="discoveryPanelTokens" data-discovery-pane="tokens">
                 <i class="fa-solid fa-chart-line" aria-hidden="true"></i>
-                <span><strong>Token Discovery</strong><small>Find and score assets</small></span>
+                <span><strong>Tokens</strong></span>
               </button>
-              <button class="discovery-pane-tab" type="button" role="tab" aria-selected="false" data-discovery-pane="wallets">
+              <button class="discovery-pane-tab" id="discoveryTabWallets" type="button" role="tab" aria-selected="false" aria-controls="discoveryPanelWallets" data-discovery-pane="wallets">
                 <i class="fa-solid fa-wallet" aria-hidden="true"></i>
-                <span><strong>Wallet Tracking</strong><small>Manage your seed network</small></span>
+                <span><strong>Wallets</strong></span>
               </button>
             </nav>
-            <section class="discovery-pane is-active" data-discovery-pane-panel="tokens" role="tabpanel">
-            <section class="discovery-personalize-banner" id="discoveryPersonalizeBanner" aria-live="polite"></section>
+            <section class="discovery-pane is-active" id="discoveryPanelTokens" data-discovery-pane-panel="tokens" role="tabpanel" aria-labelledby="discoveryTabTokens">
             <section class="personal-discovery-panel token-discovery-panel" aria-labelledby="personalDiscoveryTitle">
               <div class="personal-discovery-head">
                 <span>
@@ -603,7 +612,6 @@
                   <option value="connections">Wallet connections</option>
                   <option value="name">Name</option>
                 </select>
-                <button class="pill-button" type="button" data-action="open-wallet-tracking"><i class="fa-solid fa-wallet"></i> Wallet tracking</button>
               </div>
               <div class="personal-token-network" id="personalTokenNetwork"></div>
             </section>
@@ -628,14 +636,14 @@
               </label>
               <div class="filter-row" aria-label="Evidence status filter">
                 <button class="pill-button is-active" type="button" data-discovery-filter="all">All</button>
-                <button class="pill-button" type="button" data-discovery-filter="ready">Ready</button>
+                <button class="pill-button" type="button" data-discovery-filter="official">Official</button>
                 <button class="pill-button" type="button" data-discovery-filter="review">Review</button>
-                <button class="pill-button" type="button" data-discovery-filter="watch">Watch</button>
+                <button class="pill-button" type="button" data-discovery-filter="risk">Risk</button>
               </div>
             </div>
             <div class="discovery-table" id="discoveryTable"></div>
             </section>
-            <section class="discovery-pane" data-discovery-pane-panel="wallets" role="tabpanel" hidden>
+            <section class="discovery-pane" id="discoveryPanelWallets" data-discovery-pane-panel="wallets" role="tabpanel" aria-labelledby="discoveryTabWallets" hidden>
             <section class="personal-discovery-panel wallet-tracking-panel" aria-labelledby="walletTrackingTitle">
               <div class="personal-discovery-head">
                 <span>
@@ -676,16 +684,16 @@
             </div>
           </div>
           <div class="history-pane-tabs" id="historyPaneTabs" role="tablist" aria-label="History workspace">
-            <button class="history-pane-tab is-selected" type="button" role="tab" aria-selected="true" data-action="select-history-pane" data-history-pane="recovery"><small>01</small><strong>Recovery</strong><span>Safe resume</span></button>
-            <button class="history-pane-tab" type="button" role="tab" aria-selected="false" data-action="select-history-pane" data-history-pane="wallets"><small>02</small><strong>Wallets</strong><span>Local custody</span></button>
-            <button class="history-pane-tab" type="button" role="tab" aria-selected="false" data-action="select-history-pane" data-history-pane="audit"><small>03</small><strong>Audit</strong><span>Guarded ops</span></button>
-            <button class="history-pane-tab" type="button" role="tab" aria-selected="false" data-action="select-history-pane" data-history-pane="journal"><small>04</small><strong>Journal</strong><span>Checkpoints</span></button>
+            <button class="history-pane-tab is-selected" id="historyTabRecovery" type="button" role="tab" aria-selected="true" aria-controls="historyPanelRecovery" data-action="select-history-pane" data-history-pane="recovery"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i><strong>Recovery</strong></button>
+            <button class="history-pane-tab" id="historyTabWallets" type="button" role="tab" aria-selected="false" aria-controls="historyPanelWallets" data-action="select-history-pane" data-history-pane="wallets"><i class="fa-solid fa-wallet" aria-hidden="true"></i><strong>Wallets</strong></button>
+            <button class="history-pane-tab" id="historyTabAudit" type="button" role="tab" aria-selected="false" aria-controls="historyPanelAudit" data-action="select-history-pane" data-history-pane="audit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i><strong>Activity</strong></button>
+            <button class="history-pane-tab" id="historyTabJournal" type="button" role="tab" aria-selected="false" aria-controls="historyPanelJournal" data-action="select-history-pane" data-history-pane="journal"><i class="fa-solid fa-list" aria-hidden="true"></i><strong>Journal</strong></button>
           </div>
           <div class="history-pane-stage">
-            <section class="history-pane is-active" data-history-pane-panel="recovery" role="tabpanel"><div class="recovery-wizard" id="recoveryWizard"></div></section>
-            <section class="history-pane" data-history-pane-panel="wallets" role="tabpanel" hidden><div class="recovery-wallet-workspace" id="recoveryWalletWorkspace"></div></section>
-            <section class="history-pane" data-history-pane-panel="audit" role="tabpanel" hidden><div class="history-execution-audit" id="historyExecutionAudit"></div></section>
-            <section class="history-pane" data-history-pane-panel="journal" role="tabpanel" hidden><div class="timeline" id="timeline"></div></section>
+            <section class="history-pane is-active" id="historyPanelRecovery" data-history-pane-panel="recovery" role="tabpanel" aria-labelledby="historyTabRecovery"><div class="recovery-wizard" id="recoveryWizard"></div></section>
+            <section class="history-pane" id="historyPanelWallets" data-history-pane-panel="wallets" role="tabpanel" aria-labelledby="historyTabWallets" hidden><div class="recovery-wallet-workspace" id="recoveryWalletWorkspace"></div></section>
+            <section class="history-pane" id="historyPanelAudit" data-history-pane-panel="audit" role="tabpanel" aria-labelledby="historyTabAudit" hidden><div class="history-execution-audit" id="historyExecutionAudit"></div></section>
+            <section class="history-pane" id="historyPanelJournal" data-history-pane-panel="journal" role="tabpanel" aria-labelledby="historyTabJournal" hidden><div class="timeline" id="timeline"></div></section>
           </div>
         </section>
       </section>
@@ -793,6 +801,6 @@
 
   <script src="./runtime-state.js?v=1"></script>
   <script src="./api-client.js?v=37"></script>
-  <script src="./app.js?v=168"></script>
+  <script src="./app.js?v=171"></script>
 </body>
 </html>

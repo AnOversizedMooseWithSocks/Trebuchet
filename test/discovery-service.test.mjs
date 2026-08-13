@@ -117,6 +117,34 @@ test('buildDiscoveryRecord labels unavailable evidence instead of inventing metr
   assert.equal(record.evidence.find((row) => row.label === 'Top 10 token accounts').value, 'Unavailable');
 });
 
+test('Brand Shield classifications override generic evidence status and cap the score', () => {
+  const record = buildDiscoveryRecord({
+    mint: MINT,
+    metadata: { name: 'Copied Token', symbol: 'COPY', decimals: 9, priceUsd: '1' },
+    compatibility: {
+      compatible: true,
+      mintAuthorityRenounced: true,
+      freezeAuthorityDisabled: true,
+    },
+    supply: { amount: '1000000000', decimals: 9, uiAmountString: '1' },
+    largestAccounts: [{ amount: '100000000' }],
+    brandAssessment: {
+      classification: 'Counterfeit',
+      risk: 'critical',
+      official: false,
+      scoreCap: 15,
+      matchedMint: 'OfficialMint111',
+      evidence: [{ id: 'metadata-uri-reuse', severity: 'critical', detail: 'Exact URI reused.' }],
+    },
+  });
+
+  assert.equal(record.status, 'Counterfeit');
+  assert.equal(record.score, 15);
+  assert.equal(record.brand.matchedMint, 'OfficialMint111');
+  assert.equal(record.evidence[0].label, 'Identity provenance');
+  assert.equal(record.evidence[0].state, 'danger');
+});
+
 test('parseDiscoveryMarketPool selects the requested token side and exposes useful pool metrics', () => {
   const market = parseDiscoveryMarketPool(MINT, {
     data: [{

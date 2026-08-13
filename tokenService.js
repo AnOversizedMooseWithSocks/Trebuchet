@@ -20,8 +20,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID
 } from '@solana/spl-token';
 import { 
-  createV1,
-  TokenStandard,
+  createMetadataAccountV3,
   updateV1
 } from '@metaplex-foundation/mpl-token-metadata';
 import { 
@@ -37,10 +36,14 @@ import { getRpcUrl } from './rpcConfig.js';
 import { generateVanityKeypair } from './vanityKeygen.js';
 import {
   createTokenMetadataUmi,
+  SEALED_TOKEN_NAME,
+  SEALED_TOKEN_SYMBOL,
+  uploadSealedPlaceholderMetadata,
   uploadTokenMetadata,
 } from './metadataUploadService.js';
 import { landTxWithRetry } from './chainRetry.js';
 import { redactUrl } from './logRedaction.js';
+import { parseMetaplexUri } from './tokenMetadataLayout.js';
 
 // The RPC URL is sourced from rpcConfig.js, which seeds itself with a
 // public-mainnet default on first run and persists user-selected RPCs to
@@ -75,6 +78,32 @@ async function withRpcRetry(fn, { maxRetries = 5, baseDelayMs = 1000 } = {}) {
     }
   }
   throw lastError;
+}
+
+function isFreshTokenAccountPropagationError(error) {
+  const message = [
+    error?.message,
+    error?.transactionMessage,
+    ...(Array.isArray(error?.logs) ? error.logs : []),
+  ].filter(Boolean).join(' ');
+  return /InvalidAccountData|invalid account data for instruction/i.test(message);
+}
+
+async function verifyMintSupplyAccounts({ mint, destination, authority, totalTokens }) {
+  const [mintInfo, tokenAccount] = await Promise.all([
+    getMint(connection, mint, 'finalized', TOKEN_PROGRAM_ID),
+    getAccount(connection, destination, 'finalized', TOKEN_PROGRAM_ID),
+  ]);
+  if (!tokenAccount.mint.equals(mint)) {
+    throw new Error('finish-token: the destination token account belongs to a different mint');
+  }
+  if (!tokenAccount.owner.equals(authority)) {
+    throw new Error('finish-token: the destination token account belongs to a different wallet');
+  }
+  if (mintInfo.supply < totalTokens && !mintInfo.mintAuthority?.equals(authority)) {
+    throw new Error('finish-token: the launch wallet is no longer the mint authority');
+  }
+  return { mintInfo, tokenAccount };
 }
 
 
@@ -253,6 +282,37 @@ async function grindVanityKeypair({ vanityPrefix, vanitySuffix }) {
   return result.keypair;
 }
 
+function createMetadataForExistingMint(umi, {
+  mint,
+  name,
+  symbol,
+  uri,
+}) {
+  return createMetadataAccountV3(umi, {
+    mint,
+    mintAuthority: umi.identity,
+    updateAuthority: umi.identity,
+    data: {
+      name,
+      symbol,
+      uri,
+      sellerFeeBasisPoints: 0,
+      creators: some([{
+        address: umi.identity.publicKey,
+        verified: true,
+        share: 100,
+      }]),
+      collection: none(),
+      uses: none(),
+    },
+    isMutable: true,
+    collectionDetails: none(),
+  }).sendAndConfirm(umi, {
+    send: { commitment: 'finalized' },
+    confirm: { commitment: 'finalized' },
+  });
+}
+
 // Create token with Metaplex
 export async function createTokenWithMetaplex({
   tempWalletSecretKey,
@@ -265,6 +325,7 @@ export async function createTokenWithMetaplex({
   vanityPrefix,
   vanitySuffix,
   vanityCAKeypair,
+  sealedLaunch = false,
 }) {
   try {
     const progress = (event) => {
@@ -286,7 +347,7 @@ export async function createTokenWithMetaplex({
     console.log('Uploading logo to Arweave...');
     console.log('Uploading metadata to Arweave...');
 
-    const { metadataUri, imageUri } = await _uploadMetadata({
+    const { metadataUri, imageUri, metadataHash } = await _uploadMetadata({
       umi,
       logoBase64,
       name,
@@ -294,6 +355,19 @@ export async function createTokenWithMetaplex({
       description,
       onProgress: progress,
     });
+    let onChainMetadataUri = metadataUri;
+    let onChainMetadataName = name;
+    let onChainMetadataSymbol = symbol;
+    if (sealedLaunch) {
+      const placeholder = await uploadSealedPlaceholderMetadata({
+        umi,
+        commitmentHash: metadataHash,
+        onProgress: progress,
+      });
+      onChainMetadataUri = placeholder.metadataUri;
+      onChainMetadataName = SEALED_TOKEN_NAME;
+      onChainMetadataSymbol = SEALED_TOKEN_SYMBOL;
+    }
     
     // Select the mint keypair.
     //
@@ -337,19 +411,24 @@ export async function createTokenWithMetaplex({
     const mintPubkey = umiPublicKey(mint.toString());
     
     // Create metadata for the existing token
-    await createV1(umi, {
+    await createMetadataForExistingMint(umi, {
       mint: mintPubkey,
-      authority: umi.identity,
-      name,
-      symbol,
-      uri: metadataUri,
-      sellerFeeBasisPoints: percentAmount(0), // 0% royalty for fungible tokens
-      decimals: 9,
-      tokenStandard: TokenStandard.Fungible,
-    }).sendAndConfirm(umi);
+      name: onChainMetadataName,
+      symbol: onChainMetadataSymbol,
+      uri: onChainMetadataUri,
+    });
     
     console.log('Metadata account created successfully');
-    progress({ stage: 'metadata_account_created', tokenMint: mint.toString(), metadataUri, imageUri });
+    progress({
+      stage: 'metadata_account_created',
+      tokenMint: mint.toString(),
+      metadataUri,
+      imageUri,
+      metadataHash,
+      onChainMetadataUri,
+      sealedLaunch: sealedLaunch === true,
+      sealedMetadataPending: sealedLaunch === true,
+    });
     
     // Small delay to ensure metadata account is fully propagated
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -430,7 +509,19 @@ export async function createTokenWithMetaplex({
     
     let metadataUpdateSuccess = false;
     let metadataImmutableSuccess = false;
-    
+
+    if (sealedLaunch) {
+      console.log('Sealed launch: retaining metadata update authority until liquidity is locked.');
+      progress({
+        stage: 'metadata_reveal_pending',
+        tokenMint: mint.toString(),
+        metadataUri,
+        metadataHash,
+        onChainMetadataUri,
+        sealedLaunch: true,
+        sealedMetadataPending: true,
+      });
+    } else {
     try {
       // Create the System Program public key in Umi format
       // This is the address 11111111111111111111111111111111
@@ -496,7 +587,11 @@ export async function createTokenWithMetaplex({
             symbol,
             uri: metadataUri,
             sellerFeeBasisPoints: percentAmount(0),
-            creators: none(),
+            creators: some([{
+              address: umi.identity.publicKey,
+              verified: true,
+              share: 100,
+            }]),
             collection: none(),
             uses: none()
           }),
@@ -553,6 +648,7 @@ export async function createTokenWithMetaplex({
         }
       }
     }
+    }
     
     // Verify all authorities are properly renounced
     console.log('Verifying token safety...');
@@ -564,7 +660,9 @@ export async function createTokenWithMetaplex({
     }
     
     console.log('Token has been made safe! No new tokens can be minted, accounts cannot be frozen.');
-    if (metadataUpdateSuccess) {
+    if (sealedLaunch) {
+      console.log('Metadata identity remains sealed; reveal is required after liquidity lock.');
+    } else if (metadataUpdateSuccess) {
       console.log('Metadata update authority has been revoked (set to System Program).');
     } else {
       console.warn('WARNING: Metadata update authority could not be revoked during token creation.');
@@ -578,6 +676,8 @@ export async function createTokenWithMetaplex({
       freezeAuthorityDisabled: true,
       metadataUpdateAuthorityRevoked: metadataUpdateSuccess,
       metadataImmutable: metadataImmutableSuccess,
+      sealedLaunch: sealedLaunch === true,
+      sealedMetadataPending: sealedLaunch === true,
     });
     
     // Verify the balance
@@ -609,18 +709,24 @@ export async function createTokenWithMetaplex({
     return {
       tokenMint: mint.toString(),
       metadataUri,
+      metadataHash,
+      onChainMetadataUri,
       // Arweave URI of the uploaded logo image (null when no logo). The
       // launch report references this remotely instead of embedding the
       // raw image, keeping the published report under the free-upload cap.
       imageUri: imageUri || null,
       totalSupply: totalSupply,
-      isSafe: metadataUpdateSuccess,
+      isSafe: sealedLaunch ? true : metadataUpdateSuccess,
       mintAndFreezeAuthoritiesSafe: true,
       mintAuthorityRenounced: true,
       freezeAuthorityDisabled: true,
       metadataUpdateAuthorityRevoked: metadataUpdateSuccess,
       metadataImmutable: metadataImmutableSuccess,
-      warning: metadataUpdateSuccess ? null : 'Metadata update authority could not be revoked. Please verify token safety on Solscan.'
+      sealedLaunch: sealedLaunch === true,
+      sealedMetadataPending: sealedLaunch === true,
+      warning: sealedLaunch
+        ? 'Token supply is fixed. Final identity remains sealed until liquidity is locked.'
+        : metadataUpdateSuccess ? null : 'Metadata update authority could not be revoked. Please verify token safety on Solscan.'
     };
   } catch (error) {
     console.error('Error in createTokenWithMetaplex:', error);
@@ -645,6 +751,33 @@ function deriveMetadataPda(mint) {
     [Buffer.from('metadata'), TOKEN_METADATA_PROGRAM_ID.toBuffer(), mint.toBuffer()],
     TOKEN_METADATA_PROGRAM_ID,
   )[0];
+}
+
+// Read-only gate used before any liquidity operation. A mint address alone is
+// not evidence that token creation finished: the mint may exist with zero
+// supply after an interrupted metadata step. Liquidity must wait until the
+// exact planned supply exists and the token's mint/freeze controls are gone.
+export async function inspectTokenCreationStatus({ tokenMint, totalSupply, decimals = 9 }) {
+  const mint = new PublicKey(tokenMint);
+  const expectedSupply = BigInt(totalSupply) * (10n ** BigInt(decimals));
+  const mintInfo = await getMint(connection, mint, 'finalized', TOKEN_PROGRAM_ID);
+  const metadataAccount = await connection.getAccountInfo(deriveMetadataPda(mint), 'finalized');
+  const status = {
+    tokenMint: mint.toBase58(),
+    expectedSupply: expectedSupply.toString(),
+    actualSupply: mintInfo.supply.toString(),
+    supplyMatches: mintInfo.supply === expectedSupply,
+    mintAuthorityRenounced: mintInfo.mintAuthority === null,
+    freezeAuthorityDisabled: mintInfo.freezeAuthority === null,
+    metadataExists: Boolean(metadataAccount?.data?.length),
+  };
+  return {
+    ...status,
+    complete: status.supplyMatches
+      && status.mintAuthorityRenounced
+      && status.freezeAuthorityDisabled
+      && status.metadataExists,
+  };
 }
 
 // Resume a token creation that was interrupted AFTER the mint already existed.
@@ -673,6 +806,7 @@ export async function finishTokenCreation({
   metadataUri,
   onProgress,
   journalEvents,
+  sealedLaunch = false,
 }) {
   const progress = (event) => {
     if (!onProgress) return;
@@ -748,16 +882,12 @@ export async function finishTokenCreation({
         const a = await connection.getAccountInfo(metadataPda, 'finalized');
         return !!(a && a.data && a.data.length > 0);
       },
-      send: () => createV1(umi, {
+      send: () => createMetadataForExistingMint(umi, {
         mint: mintPubkey,
-        authority: umi.identity,
         name,
         symbol,
         uri: metadataUri,
-        sellerFeeBasisPoints: percentAmount(0),
-        decimals: 9,
-        tokenStandard: TokenStandard.Fungible,
-      }).sendAndConfirm(umi),
+      }),
     });
     status.metadataExists = true;
     status.steps.push('created metadata account');
@@ -777,6 +907,18 @@ export async function finishTokenCreation({
       TOKEN_PROGRAM_ID,
       ASSOCIATED_TOKEN_PROGRAM_ID,
     ));
+    // A freshly-created ATA can be returned by one RPC node before the node
+    // chosen for transaction simulation has observed the same finalized
+    // account state. Prove both accounts decode correctly first; only then is
+    // Token Program InvalidAccountData safe to treat as a short propagation
+    // race. The supply guard below is re-read before every retry, so a landed
+    // mint can never be submitted twice.
+    await verifyMintSupplyAccounts({
+      mint,
+      destination: tokenAccount.address,
+      authority: tempWallet.publicKey,
+      totalTokens,
+    });
     const r = await landTxWithRetry({
       label: 'finish: mint supply',
       alreadyDone: async () => {
@@ -794,6 +936,8 @@ export async function finishTokenCreation({
         { commitment: 'finalized' },
         TOKEN_PROGRAM_ID,
       ),
+      retryIf: (error) => isFreshTokenAccountPropagationError(error),
+      settleMs: 2500,
     });
     status.supplyMinted = true;
     status.steps.push(r.skipped ? 'supply already minted (adopted)' : 'minted supply');
@@ -828,7 +972,7 @@ export async function finishTokenCreation({
   // --- 4. Revoke metadata update authority (best-effort, mirrors creation) ---
   // Non-fatal: the decisive safety property is the mint-authority renounce
   // above. If this can't complete we surface it but still return a status.
-  if (!status.updateAuthorityRevoked) {
+  if (!status.updateAuthorityRevoked && !sealedLaunch) {
     try {
       const systemProgramAddress = umiPublicKey(SYSTEM_PROGRAM_ADDRESS);
       await landTxWithRetry({
@@ -852,9 +996,99 @@ export async function finishTokenCreation({
     }
   }
 
-  status.isSafe = status.mintAuthorityRenounced && status.updateAuthorityRevoked;
+  status.sealedLaunch = sealedLaunch === true;
+  status.sealedMetadataPending = sealedLaunch === true && !status.updateAuthorityRevoked;
+  status.isSafe = status.mintAuthorityRenounced
+    && (status.updateAuthorityRevoked || status.sealedMetadataPending);
   progress({ stage: 'token_finish_done', tokenMint, isSafe: status.isSafe });
   return status;
+}
+
+export async function revealSealedTokenMetadata({
+  tempWalletSecretKey,
+  tokenMint,
+  name,
+  symbol,
+  metadataUri,
+  onProgress,
+}) {
+  const progress = (event) => {
+    if (!onProgress) return;
+    try { onProgress(event); } catch (_) { /* progress is best-effort */ }
+  };
+  if (!tokenMint || !metadataUri) {
+    throw new Error('Sealed metadata reveal requires a mint and final metadata URI.');
+  }
+  const tempWallet = Keypair.fromSecretKey(Uint8Array.from(tempWalletSecretKey));
+  const umi = _umiFactory(tempWallet);
+  const mint = new PublicKey(tokenMint);
+  const mintPubkey = umiPublicKey(tokenMint);
+  const metadataPda = deriveMetadataPda(mint);
+  const systemProgramAddress = umiPublicKey(SYSTEM_PROGRAM_ADDRESS);
+
+  const inspect = async () => {
+    const account = await connection.getAccountInfo(metadataPda, 'finalized');
+    if (!account?.data || account.data.length < 33) {
+      throw new Error('Sealed metadata account is not available on-chain.');
+    }
+    return {
+      uri: parseMetaplexUri(account.data),
+      updateAuthority: new PublicKey(account.data.subarray(1, 33)).toBase58(),
+    };
+  };
+
+  const before = await inspect();
+  if (before.uri === metadataUri && before.updateAuthority === SYSTEM_PROGRAM_ADDRESS) {
+    return {
+      tokenMint,
+      metadataUri,
+      metadataUpdateAuthorityRevoked: true,
+      metadataImmutable: true,
+      sealedMetadataPending: false,
+      skipped: true,
+    };
+  }
+  if (before.updateAuthority === SYSTEM_PROGRAM_ADDRESS) {
+    throw new Error('Metadata authority is already retired but the final identity was not revealed.');
+  }
+
+  progress({ stage: 'metadata_reveal_started', tokenMint, metadataUri });
+  await updateV1(umi, {
+    mint: mintPubkey,
+    authority: umi.identity,
+    data: some({
+      name,
+      symbol,
+      uri: metadataUri,
+      sellerFeeBasisPoints: 0,
+      creators: some([{
+        address: umi.identity.publicKey,
+        verified: true,
+        share: 100,
+      }]),
+    }),
+    newUpdateAuthority: some(systemProgramAddress),
+    primarySaleHappened: none(),
+    isMutable: some(false),
+  }).sendAndConfirm(umi, {
+    send: { commitment: 'finalized' },
+    confirm: { commitment: 'finalized' },
+  });
+
+  const after = await inspect();
+  if (after.uri !== metadataUri || after.updateAuthority !== SYSTEM_PROGRAM_ADDRESS) {
+    throw new Error('Final metadata reveal landed without the expected immutable authority posture.');
+  }
+  const result = {
+    tokenMint,
+    metadataUri,
+    metadataUpdateAuthorityRevoked: true,
+    metadataImmutable: true,
+    sealedMetadataPending: false,
+    skipped: false,
+  };
+  progress({ stage: 'metadata_revealed', ...result });
+  return result;
 }
 
 // Transfer tokens and remaining SOL

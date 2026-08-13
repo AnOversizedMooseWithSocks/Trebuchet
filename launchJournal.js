@@ -131,6 +131,7 @@ function normalizeJournal(raw) {
     updatedAt,
     completedAt: raw.completedAt || null,
     archivedAt: raw.archivedAt || null,
+    launchConfig: raw.launchConfig && typeof raw.launchConfig === 'object' ? raw.launchConfig : null,
     token: raw.token && typeof raw.token === 'object' ? raw.token : null,
     poolPlan: raw.poolPlan && typeof raw.poolPlan === 'object' ? raw.poolPlan : null,
     lp: raw.lp && typeof raw.lp === 'object' ? raw.lp : null,
@@ -184,7 +185,12 @@ function mergeKnownFields(journal, patch) {
   const sanitized = sanitizeForJournal(patch) || {};
   for (const [key, value] of Object.entries(sanitized)) {
     if (key === 'id' || key === 'walletPublicKey' || key === 'createdAt') continue;
-    if (['token', 'poolPlan', 'lp', 'transfer'].includes(key)) {
+    if (key === 'launchConfig') {
+      // A launch recipe is an immutable configuration snapshot, not a
+      // collection of incremental execution facts. Replace it atomically so
+      // stale nested pool rows cannot survive a newly armed plan.
+      journal[key] = value && typeof value === 'object' ? value : null;
+    } else if (['token', 'poolPlan', 'lp', 'transfer'].includes(key)) {
       journal[key] = {
         ...(journal[key] && typeof journal[key] === 'object' ? journal[key] : {}),
         ...(value && typeof value === 'object' ? value : {}),
@@ -211,6 +217,7 @@ export function start({ walletPublicKey }) {
     updatedAt: ts,
     completedAt: null,
     archivedAt: null,
+    launchConfig: null,
     token: null,
     poolPlan: null,
     lp: null,
@@ -268,6 +275,7 @@ export function upsertForWallet(walletPublicKey, patch = {}, event = null) {
       updatedAt: ts,
       completedAt: null,
       archivedAt: null,
+      launchConfig: null,
       token: null,
       poolPlan: null,
       lp: null,

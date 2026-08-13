@@ -3,10 +3,13 @@ import { mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
 import { createGenericFile, keypairIdentity } from '@metaplex-foundation/umi';
 import { irysUploader } from '@metaplex-foundation/umi-uploader-irys';
 import { getRpcUrl } from './rpcConfig.js';
+import { metadataDocumentHash } from './brandShieldService.js';
 
 export const DEFAULT_IRYS_ADDRESS = 'https://node1.irys.xyz';
 export const DEFAULT_IRYS_TIMEOUT_MS = 60000;
 export const PLACEHOLDER_TOKEN_IMAGE_URI = 'https://arweave.net/placeholder-token-image';
+export const SEALED_TOKEN_NAME = 'Trebuchet Sealed Launch';
+export const SEALED_TOKEN_SYMBOL = 'SEALED';
 
 export function tokenMetadataJson({ name, symbol, description, imageUri }) {
   return {
@@ -83,8 +86,36 @@ export async function uploadTokenMetadata({
 
   const metadata = tokenMetadataJson({ name, symbol, description, imageUri });
   const metadataUri = await umi.uploader.uploadJson(metadata);
+  const metadataHash = metadataDocumentHash(metadata);
   logger.log?.('Metadata uploaded:', metadataUri);
-  onProgress?.({ stage: 'metadata_uploaded', metadataUri, imageUri });
+  onProgress?.({ stage: 'metadata_uploaded', metadataUri, imageUri, metadataHash });
 
-  return { metadataUri, imageUri, metadata };
+  return { metadataUri, imageUri, metadata, metadataHash };
+}
+
+export async function uploadSealedPlaceholderMetadata({
+  umi,
+  commitmentHash,
+  onProgress,
+  logger = console,
+  placeholderImageUri = PLACEHOLDER_TOKEN_IMAGE_URI,
+}) {
+  const shortCommitment = String(commitmentHash || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(shortCommitment)) {
+    throw new Error('Sealed metadata requires a SHA-256 commitment.');
+  }
+  const metadata = tokenMetadataJson({
+    name: SEALED_TOKEN_NAME,
+    symbol: SEALED_TOKEN_SYMBOL,
+    description: `Identity committed by Trebuchet: sha256:${shortCommitment}`,
+    imageUri: placeholderImageUri,
+  });
+  const metadataUri = await umi.uploader.uploadJson(metadata);
+  logger.log?.('Sealed placeholder metadata uploaded:', metadataUri);
+  onProgress?.({
+    stage: 'sealed_metadata_prepared',
+    onChainMetadataUri: metadataUri,
+    metadataCommitment: shortCommitment,
+  });
+  return { metadataUri, metadata };
 }

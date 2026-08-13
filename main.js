@@ -39,6 +39,25 @@ const classicUiRequested = process.argv.includes('--classic')
   || requestedDesktopUi === 'v1';
 const desktopUiPath = classicUiRequested ? '/' : '/v2/';
 
+// One desktop process owns the local API, recovery journal, and launch-wallet
+// operation mutex. Starting a second Electron process would otherwise create a
+// second in-memory mutex against the same on-disk wallet and journal, allowing
+// two resume requests to race and duplicate liquidity positions. Keep the
+// original process authoritative and focus its window when Trebuchet is opened
+// again from Finder, the Dock, or another development command.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const [win] = BrowserWindow.getAllWindows();
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Right-click context menu.
 //
@@ -856,6 +875,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
   setAppMenu();
 
   // Hand Electron's safeStorage API to our secret-store module so any

@@ -52,10 +52,12 @@ const KNOWN_CLASSIC_QUOTE_MINTS = new Set([
 ]);
 const CLASSIC_ENDPOINTS = {
   createToken: '/api/create-token',
+  finishToken: '/api/finish-token-creation',
   estimateFunding: '/api/estimate-lp-funding',
   preflightCreateLp: '/api/preflight-create-lp',
   createLp: '/api/create-lp',
   resumeLaunch: '/api/resume-launch',
+  revealMetadata: '/api/reveal-sealed-metadata',
   transferAssets: '/api/transfer-assets',
 };
 const REQUIRED_OPERATION_IDS = Object.freeze([
@@ -269,6 +271,7 @@ export function launchPlanConfigFingerprint(input = {}) {
       description: token.description || null,
       decimals: token.decimals ?? TOKEN_DECIMALS,
       logo: launchPlanLogoFingerprint(token.logo),
+      ...(token.sealedLaunch === true ? { sealedLaunch: true } : {}),
     },
     launchSol: Number.isFinite(Number(input?.launchSol)) ? Number(input.launchSol) : null,
     mode: input?.mode || null,
@@ -1217,6 +1220,7 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
   const symbol = normalizeTokenSymbol(tokenInput.symbol ?? input.tokenSymbol ?? 'TOK').toUpperCase();
   const supply = normalizeV2TokenSupply(tokenInput.supply ?? input.tokenSupply ?? '1000000000');
   const description = normalizeTokenDescription(tokenInput.description ?? input.tokenDescription ?? '');
+  const sealedLaunch = tokenInput.sealedLaunch === true;
   const logo = normalizeTokenLogo(tokenInput.logo || input.logo || null);
   const launchSol = normalizeLaunchSol(input.launchSol ?? input.funding?.launchSol ?? 0);
   const mode = normalizeMode(input.mode);
@@ -1320,7 +1324,9 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
       effects: [
         'Revokes mint authority',
         'Revokes freeze authority',
-        'Locks or discloses metadata authority posture',
+        sealedLaunch
+          ? 'Retains only metadata reveal authority until liquidity is locked'
+          : 'Locks or discloses metadata authority posture',
       ],
       checks: ['mint-authority', 'freeze-authority', 'metadata-authority'],
       requires: ['v2-mint-metadata'],
@@ -1353,6 +1359,20 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
       checks: ['price-band', 'burn-and-earn', 'fee-key-records'],
       requires: ['v2-create-liquidity-pools'],
     }),
+    ...(sealedLaunch ? [operation({
+      id: 'v2-reveal-metadata',
+      stage: 'liquidity',
+      label: 'Reveal and lock token identity',
+      risk: 'Low',
+      costSol: COST_TX_BUFFER_SOL,
+      effects: [
+        'Reveals the committed final name, symbol, URI, and image',
+        'Verifies the launch-wallet creator signature',
+        'Makes metadata immutable and retires update authority',
+      ],
+      checks: ['metadata-commitment', 'verified-creator', 'metadata-authority'],
+      requires: ['v2-lock-liquidity'],
+    })] : []),
     operation({
       id: 'v2-report-sweep',
       stage: 'sweep',
@@ -1367,7 +1387,7 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
         poolTopology.sweepDestination ? 'Queues final sweep to configured destination' : 'Requires destination verification before final sweep',
       ],
       checks: ['airdrop-plan', 'report-envelope', 'fee-key-records', 'sweep-destination'],
-      requires: ['v2-lock-liquidity'],
+      requires: [sealedLaunch ? 'v2-reveal-metadata' : 'v2-lock-liquidity'],
     }),
   ];
 
@@ -1398,6 +1418,7 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
       decimals: TOKEN_DECIMALS,
       description,
       logo,
+      ...(sealedLaunch ? { sealedLaunch: true } : {}),
     },
     vanity,
     poolTopology,
@@ -1609,7 +1630,9 @@ export function buildV2ExecutionReadiness(input = {}, context = {}) {
       || context.createdTokenInfo?.tokenMint
       || '',
   ).trim();
-  const tokenCreated = Boolean(tokenMint || context.tokenCreated === true);
+  const tokenNeedsFinish = Boolean(tokenMint && context.tokenNeedsFinish === true);
+  const tokenCreated = !tokenNeedsFinish && Boolean(tokenMint || context.tokenCreated === true);
+  const metadataRevealPending = Boolean(context.metadataRevealPending === true);
   const priorResults = Array.isArray(context.priorResults) ? context.priorResults : [];
   const shouldResume = context.resume === true || context.failedLaunch === true || priorResults.length > 0;
   const liquidityComplete = context.liquidityComplete === true || context.lpComplete === true;
@@ -1933,7 +1956,10 @@ export function buildV2ExecutionReadiness(input = {}, context = {}) {
   let nextEndpoint = null;
   let nextAction = 'Resolve blockers';
 
-  if (!hardBlocked && !tokenCreated) {
+  if (!hardBlocked && tokenNeedsFinish) {
+    nextEndpoint = CLASSIC_ENDPOINTS.finishToken;
+    nextAction = 'Finish interrupted token';
+  } else if (!hardBlocked && !tokenCreated) {
     nextEndpoint = CLASSIC_ENDPOINTS.createToken;
     nextAction = 'Create token';
   } else if (!hardBlocked && tokenCreated && !liquidityComplete && shouldResume) {
@@ -1942,6 +1968,9 @@ export function buildV2ExecutionReadiness(input = {}, context = {}) {
   } else if (!hardBlocked && tokenCreated && !liquidityComplete) {
     nextEndpoint = CLASSIC_ENDPOINTS.createLp;
     nextAction = 'Create liquidity';
+  } else if (!hardBlocked && tokenCreated && liquidityComplete && metadataRevealPending) {
+    nextEndpoint = CLASSIC_ENDPOINTS.revealMetadata;
+    nextAction = 'Reveal sealed identity';
   } else if (!hardBlocked && tokenCreated && liquidityComplete && transferComplete) {
     nextAction = 'Launch complete';
   } else if (!hardBlocked && tokenCreated && liquidityComplete && plan.poolTopology.sweepDestination) {
@@ -1979,6 +2008,8 @@ export function buildV2ExecutionReadiness(input = {}, context = {}) {
     completion: {
       status: completionStatus,
       tokenCreated,
+      tokenNeedsFinish,
+      metadataRevealPending,
       liquidityComplete,
       transferComplete,
       terminalSweepEvidence,
@@ -2003,12 +2034,16 @@ export function buildV2ExecutionReadiness(input = {}, context = {}) {
       }),
       readinessPhase({
         id: 'token',
-        title: 'Create token',
-        endpoint: CLASSIC_ENDPOINTS.createToken,
+        title: tokenNeedsFinish ? 'Finish token' : 'Create token',
+        endpoint: tokenNeedsFinish ? CLASSIC_ENDPOINTS.finishToken : CLASSIC_ENDPOINTS.createToken,
         state: tokenBlockerIds.length || walletBlockerIds.length
           ? 'blocked'
           : tokenCreated ? 'complete' : 'ready',
-        detail: tokenCreated ? 'Token mint is already available.' : 'Classic token creation payload is ready.',
+        detail: tokenCreated
+          ? 'Token mint, supply, metadata, and authority posture are complete.'
+          : tokenNeedsFinish
+            ? 'An on-chain mint exists, but token creation must be finished before liquidity.'
+            : 'Classic token creation payload is ready.',
         blockerIds: [...walletBlockerIds, ...tokenBlockerIds],
       }),
       readinessPhase({
@@ -2077,9 +2112,13 @@ export function buildV2ExecutionReadiness(input = {}, context = {}) {
         description: plan.token.description,
         totalSupply: plan.token.supply,
         logo: plan.token.logo,
+        ...(plan.token.sealedLaunch === true ? { sealedLaunch: true } : {}),
         vanityCAPublicKey: plan.vanity.selectedPublicKey || null,
         vanityPrefix: plan.vanity.selectedPublicKey ? null : plan.vanity.prefix || null,
         vanitySuffix: plan.vanity.selectedPublicKey ? null : plan.vanity.suffix || null,
+      },
+      finishToken: {
+        walletPublicKey,
       },
       estimateFunding: {
         allocations,
@@ -2097,6 +2136,9 @@ export function buildV2ExecutionReadiness(input = {}, context = {}) {
       resumeLaunch: {
         ...createLpPayload,
         priorResults,
+      },
+      revealMetadata: {
+        walletPublicKey,
       },
       transferAssets: {
         walletPublicKey,

@@ -10,6 +10,8 @@ import { derivePath } from 'ed25519-hd-key';
 import {
   createTokenWithMetaplex,
   finishTokenCreation,
+  revealSealedTokenMetadata,
+  inspectTokenCreationStatus,
   generateTemporaryWallet,
   getWalletQRCode,
   checkWalletBalance,
@@ -56,6 +58,7 @@ import { createLaunchReportUmi, publishLaunchReport } from './launchReportServic
 import * as launchJournal from './launchJournal.js';
 import * as userPrefs from './userPrefs.js';
 import * as discoveryStore from './discoveryStore.js';
+import * as brandShieldStore from './brandShieldStore.js';
 import * as updateCheckBridge from './updateCheckBridge.js';
 import * as demoChainService from './demoChainService.js';
 import {
@@ -88,6 +91,13 @@ import {
   fetchDiscoveryMarketData,
   isMissingMintRpcError,
 } from './discoveryService.js';
+import {
+  assessBrandRisk,
+  buildBrandFingerprint,
+  fetchMetadataFingerprint,
+  findDexScreenerBrandCandidates,
+  signLaunchAttestation,
+} from './brandShieldService.js';
 import {
   PERSONAL_DISCOVERY_LIMITS,
   scanPersonalDiscovery,
@@ -168,6 +178,65 @@ const launchOpsInFlight = new Map(); // walletPublicKey -> { op, startedAt }
 // state alone must never be enough to execute a real launch operation.
 const V2_RUN_ENVELOPE_TTL_MS = 4 * 60 * 60 * 1000;
 const v2RunEnvelopes = new Map(); // envelope id -> authorization record
+const V2_RECOVERY_ENDPOINTS = new Set([
+  '/api/finish-token-creation',
+  '/api/resume-launch',
+  '/api/reveal-sealed-metadata',
+  '/api/transfer-assets',
+]);
+
+function v2RecoveryAuthorizationOperation(endpoint, readiness = {}) {
+  const operation = {
+    '/api/finish-token-creation': {
+      id: 'v2-recovery-finish-token',
+      label: 'Finish the existing token',
+      stage: 'mint',
+      effects: ['Reuse the recorded mint and execute only missing token-safety steps.'],
+    },
+    '/api/resume-launch': {
+      id: 'v2-recovery-resume-liquidity',
+      label: 'Resume missing liquidity work',
+      stage: 'liquidity',
+      effects: ['Reuse recorded pools and positions; execute only missing durable checkpoints.'],
+    },
+    '/api/reveal-sealed-metadata': {
+      id: 'v2-recovery-reveal-metadata',
+      label: 'Reveal the committed token identity',
+      stage: 'liquidity',
+      effects: ['Publish the committed identity after liquidity is locked, then make metadata immutable.'],
+    },
+    '/api/transfer-assets': {
+      id: 'v2-recovery-final-sweep',
+      label: 'Run final distribution and sweep',
+      stage: 'sweep',
+      effects: ['Distribute configured assets, sweep the launch wallet, and record terminal proof.'],
+    },
+  }[endpoint];
+  return {
+    ...operation,
+    endpoint,
+    risk: 'High',
+    costSol: null,
+    source: 'recovery-journal',
+    signer: 'trebuchet-managed-launch-wallet',
+    authorization: { type: 'recovery-envelope', requiredUserAction: 'unlock-and-arm' },
+    simulation: readiness?.nextAction || operation?.label || 'Recovery operation',
+    checks: ['Journal checkpoint verified', 'Endpoint revalidated immediately before execution'],
+  };
+}
+
+function v2RecoveryAuthorizationPlan(plan, endpoint, readiness) {
+  return {
+    ...plan,
+    source: 'recovery-journal',
+    authorizationKind: 'recovery',
+    recovery: {
+      ...(plan?.recovery && typeof plan.recovery === 'object' ? plan.recovery : {}),
+      nextEndpoint: endpoint,
+    },
+    operations: [v2RecoveryAuthorizationOperation(endpoint, readiness)],
+  };
+}
 
 function stableJsonValue(value) {
   if (Array.isArray(value)) return value.map(stableJsonValue);
@@ -203,6 +272,8 @@ function publicV2RunEnvelope(envelope) {
     executedOperationCount: envelope.executedOperationCount,
     estimatedSolCost: envelope.estimatedSolCost,
     maxSpendSol: envelope.maxSpendSol,
+    authorizationKind: envelope.authorizationKind || 'launch',
+    nextEndpoint: envelope.nextEndpoint || null,
     requiresUserAction: envelope.status === 'complete'
       ? 'review-terminal-proof'
       : 'check-readiness-and-execute',
@@ -619,6 +690,35 @@ function sendErrorResponse(res, error, fallbackStatus = 500) {
   res.status(status).json(body);
 }
 
+async function rejectIfTokenIncompleteForLiquidity(res, {
+  tokenMint,
+  tokenTotalSupply,
+  tokenDecimals = 9,
+} = {}) {
+  if (!tokenMint || tokenTotalSupply == null) {
+    res.status(400).json({
+      success: false,
+      code: 'TOKEN_PLAN_INCOMPLETE',
+      error: 'Token mint and total supply are required before liquidity can run.',
+    });
+    return true;
+  }
+  const tokenStatus = await inspectTokenCreationStatus({
+    tokenMint,
+    totalSupply: tokenTotalSupply,
+    decimals: tokenDecimals,
+  });
+  if (tokenStatus.complete) return false;
+  res.status(409).json({
+    success: false,
+    code: 'TOKEN_CREATION_INCOMPLETE',
+    nextEndpoint: '/api/finish-token-creation',
+    tokenStatus,
+    error: 'The existing token is not finished yet. Complete its supply and authority-safety steps before creating or resuming liquidity.',
+  });
+  return true;
+}
+
 function launchFailureDetails(error, context = {}) {
   return launchJournal.errorDetails(error, context);
 }
@@ -937,6 +1037,178 @@ let personalDiscoveryJob = {
   error: null,
 };
 
+let brandShieldJob = {
+  status: 'idle',
+  startedAt: null,
+  completedAt: null,
+  checked: 0,
+  error: null,
+};
+
+function syncBrandShieldRegistryFromJournals() {
+  const journals = launchJournal.list({ includeCompleted: true, includeArchived: true });
+  for (const journal of journals) {
+    const token = journal?.token;
+    if (!token?.mint) continue;
+    try {
+      const fingerprint = buildBrandFingerprint({
+        mint: token.mint,
+        name: token.name,
+        symbol: token.symbol,
+        metadataUri: token.metadataUri,
+        metadataHash: token.metadataHash,
+        imageUri: token.imageUri,
+        supply: token.totalSupply,
+        decimals: token.decimals,
+        launchWallet: journal.walletPublicKey,
+        journalId: journal.id,
+        createdAt: journal.createdAt,
+        sealedLaunch: token.sealedLaunch === true,
+      });
+      const existing = brandShieldStore.getLaunch(token.mint);
+      if (existing?.fingerprint?.fingerprintHash === fingerprint.fingerprintHash) continue;
+      brandShieldStore.registerLaunch({
+        fingerprint,
+        attestation: existing?.attestation || null,
+        source: 'launch-journal',
+      });
+    } catch (error) {
+      console.warn('Brand Shield could not import launch journal:', error.message);
+    }
+  }
+}
+
+function registerOfficialBrandLaunch({ journal, token, secretKey = null }) {
+  const fingerprint = buildBrandFingerprint({
+    mint: token.mint,
+    name: token.name,
+    symbol: token.symbol,
+    metadataUri: token.metadataUri,
+    metadataHash: token.metadataHash,
+    imageUri: token.imageUri,
+    supply: token.totalSupply,
+    decimals: token.decimals,
+    launchWallet: journal?.walletPublicKey,
+    journalId: journal?.id,
+    createdAt: journal?.createdAt,
+    sealedLaunch: token.sealedLaunch === true,
+  });
+  let attestation = null;
+  if (Array.isArray(secretKey) && secretKey.length >= 64) {
+    try { attestation = signLaunchAttestation(fingerprint, secretKey); }
+    catch (error) { console.warn('Brand Shield attestation failed:', error.message); }
+  }
+  return brandShieldStore.registerLaunch({ fingerprint, attestation, source: 'local-launch' });
+}
+
+async function brandAssessmentForMetadata(mint, metadata, market = null, { resolveContent = false } = {}) {
+  const enriched = { ...(metadata || {}) };
+  if (resolveContent && enriched.metadataUri && !enriched.metadataHash) {
+    const remote = await fetchMetadataFingerprint(enriched.metadataUri);
+    if (remote) Object.assign(enriched, remote);
+  }
+  const liquidity = market
+    ? brandShieldStore.recordObservation(mint, market)
+    : brandShieldStore.liquidityState(mint);
+  const assessment = assessBrandRisk({
+    mint,
+    metadata: enriched,
+    launches: brandShieldStore.listLaunches(),
+    liquidity,
+  });
+  brandShieldStore.recordAlert({ mint, assessment });
+  return assessment;
+}
+
+async function brandShieldTopHolderOwners(connection, mint, limit = 20) {
+  try {
+    const largest = await connection.getTokenLargestAccounts(new PublicKey(mint), 'confirmed');
+    const accounts = (Array.isArray(largest?.value) ? largest.value : [])
+      .filter((row) => BigInt(String(row?.amount || '0')) > 0n)
+      .slice(0, limit);
+    if (!accounts.length) return [];
+    const infos = await connection.getMultipleAccountsInfo(
+      accounts.map((row) => new PublicKey(row.address)),
+      'confirmed',
+    );
+    const byOwner = new Map();
+    infos.forEach((info, index) => {
+      const data = Buffer.isBuffer(info?.data) ? info.data : Buffer.from(info?.data || []);
+      if (data.length < 64) return;
+      const ownerKey = new PublicKey(data.subarray(32, 64));
+      if (!PublicKey.isOnCurve(ownerKey.toBytes())) return;
+      const owner = ownerKey.toBase58();
+      const amount = BigInt(String(accounts[index]?.amount || '0'));
+      byOwner.set(owner, (byOwner.get(owner) || 0n) + amount);
+    });
+    return [...byOwner.entries()]
+      .sort((a, b) => (a[1] === b[1] ? a[0].localeCompare(b[0]) : a[1] > b[1] ? -1 : 1))
+      .map(([owner, amount]) => ({ owner, amount: amount.toString() }));
+  } catch (error) {
+    console.warn(`Brand Shield holder snapshot failed for ${mint}:`, error.message);
+    return [];
+  }
+}
+
+async function runBrandShieldScan() {
+  if (brandShieldJob.status === 'running') return brandShieldStore.publicState();
+  syncBrandShieldRegistryFromJournals();
+  const launches = brandShieldStore.listLaunches();
+  if (!launches.length) return brandShieldStore.publicState();
+  brandShieldJob = {
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    checked: 0,
+    error: null,
+  };
+  try {
+    const candidates = await findDexScreenerBrandCandidates(launches);
+    const rpc = discoveryRpcCandidates(getRpcConfig())[0];
+    const connection = rpc?.url ? new Connection(rpc.url, 'confirmed') : null;
+    for (const candidate of candidates) {
+      const metadata = await getTokenMetadata(candidate.mint, {
+        rpcUrl: rpc?.url,
+        includePrice: false,
+        includeDisplayMeta: true,
+      }).catch(() => null);
+      if (!metadata) continue;
+      const topPool = [...(candidate.pools || [])]
+        .sort((a, b) => Number(b.liquidityUsd || 0) - Number(a.liquidityUsd || 0))[0] || null;
+      const market = topPool ? {
+        liquidityUsd: topPool.liquidityUsd,
+        pool: { address: topPool.address, dex: topPool.dex },
+        volume5mUsd: topPool.volume5mUsd,
+        volume1hUsd: topPool.volume1hUsd,
+        buys5m: topPool.buys5m,
+        sells5m: topPool.sells5m,
+        buys1h: topPool.buys1h,
+        sells1h: topPool.sells1h,
+        pairCreatedAt: topPool.pairCreatedAt,
+        topHolders: candidate.officialMint && connection
+          ? await brandShieldTopHolderOwners(connection, candidate.mint)
+          : [],
+      } : null;
+      await brandAssessmentForMetadata(candidate.mint, metadata, market, { resolveContent: true });
+      brandShieldJob.checked += 1;
+    }
+    brandShieldJob.status = 'complete';
+    brandShieldJob.completedAt = new Date().toISOString();
+  } catch (error) {
+    brandShieldJob.status = 'failed';
+    brandShieldJob.completedAt = new Date().toISOString();
+    brandShieldJob.error = error.message || 'Brand Shield scan failed.';
+  }
+  return brandShieldStore.publicState();
+}
+
+const brandShieldMonitor = setInterval(() => {
+  if (brandShieldJob.status !== 'running' && brandShieldStore.listLaunches().length > 0) {
+    void runBrandShieldScan();
+  }
+}, 3 * 60 * 1000);
+brandShieldMonitor.unref?.();
+
 function publicPersonalDiscoveryJob() {
   return {
     id: personalDiscoveryJob.id,
@@ -981,6 +1253,7 @@ function syncManagedDiscoveryWallets() {
 }
 
 function personalDiscoveryResponse() {
+  syncBrandShieldRegistryFromJournals();
   syncManagedDiscoveryWallets();
   const wallets = discoveryStore.listWallets();
   const watchOnlyCount = wallets.filter((wallet) => wallet.source === 'watch-only').length;
@@ -998,6 +1271,10 @@ function personalDiscoveryResponse() {
     },
     snapshot: discoveryStore.getSnapshot(),
     job: publicPersonalDiscoveryJob(),
+    brandShield: {
+      ...brandShieldStore.publicState(),
+      job: { ...brandShieldJob },
+    },
   };
 }
 
@@ -1039,10 +1316,32 @@ async function enrichPersonalDiscoveryToken(mint, rpcUrl) {
     imageUrl: metadata?.imageUrl || null,
     decimals: Number.isFinite(Number(metadata?.decimals)) ? Number(metadata.decimals) : null,
     priceUsd: metadata?.priceUsd ?? null,
+    metadataUri: metadata?.metadataUri || null,
     market: null,
     warnings,
+    brand: metadata
+      ? await brandAssessmentForMetadata(mint, metadata, null, { resolveContent: false })
+      : null,
   };
 }
+
+app.get('/api/v2/brand-shield', (_req, res) => {
+  try {
+    syncBrandShieldRegistryFromJournals();
+    res.json({ success: true, ...brandShieldStore.publicState(), job: { ...brandShieldJob } });
+  } catch (error) {
+    sendErrorResponse(res, error);
+  }
+});
+
+app.post('/api/v2/brand-shield/scan', (_req, res) => {
+  if (brandShieldJob.status !== 'running') void runBrandShieldScan();
+  res.status(202).json({
+    success: true,
+    ...brandShieldStore.publicState(),
+    job: { ...brandShieldJob },
+  });
+});
 
 app.get('/api/v2/discovery/personal', (_req, res) => {
   try {
@@ -1159,6 +1458,7 @@ app.post('/api/v2/discovery/scan', (req, res) => {
         throw error;
       }
       discoveryStore.saveSnapshot({ ...snapshot, rpcName: rpc.name });
+      void runBrandShieldScan();
       if (personalDiscoveryJob.id === jobId) {
         personalDiscoveryJob.status = 'complete';
         personalDiscoveryJob.completedAt = snapshot.completedAt;
@@ -1253,14 +1553,31 @@ app.post('/api/v2/discovery/inspect', async (req, res) => {
       .filter((journal) => String(journal?.token?.mint || '') === mint)
       .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0))[0] || null;
 
+    syncBrandShieldRegistryFromJournals();
+    const metadataValue = metadataResult.status === 'fulfilled' ? metadataResult.value : null;
+    const marketValue = marketResult.status === 'fulfilled' ? marketResult.value : null;
+    const remoteFingerprint = metadataValue?.metadataUri
+      ? await fetchMetadataFingerprint(metadataValue.metadataUri)
+      : null;
+    const brandMetadata = remoteFingerprint
+      ? { ...metadataValue, ...remoteFingerprint }
+      : metadataValue;
+    const brandAssessment = await brandAssessmentForMetadata(
+      mint,
+      brandMetadata,
+      marketValue,
+      { resolveContent: false },
+    );
+
     const record = buildDiscoveryRecord({
       mint,
-      metadata: metadataResult.status === 'fulfilled' ? metadataResult.value : null,
+      metadata: brandMetadata,
       compatibility: compatibilityResult.status === 'fulfilled' ? compatibilityResult.value : null,
       supply,
       largestAccounts: largestResult.status === 'fulfilled' ? largestResult.value?.value : null,
-      market: marketResult.status === 'fulfilled' ? marketResult.value : null,
+      market: marketValue,
       journal: matchingJournal,
+      brandAssessment,
       rpcName: inspectionRpc.name,
       warnings,
     });
@@ -2406,9 +2723,20 @@ function v2ExecutionContextFromJournal(walletPublicKey, body = {}) {
   const lpResults = Array.isArray(journal?.lp?.results) ? journal.lp.results : [];
   const lpComplete = lpResults.length > 0 && !journal?.lp?.failedPhase;
   const terminalTransfer = journal?.transfer || body.transfer || null;
+  const tokenMint = journal?.token?.mint || body.tokenMint || null;
+  const tokenEvents = Array.isArray(journal?.events) ? journal.events : [];
+  const tokenCreationComplete = Boolean(
+    tokenMint
+    && journal?.token?.mintAuthorityRenounced === true
+    && tokenEvents.some((event) => event?.stage === 'metadata_account_created')
+    && tokenEvents.some((event) => event?.stage === 'supply_minted')
+  );
+  const tokenNeedsFinish = Boolean(tokenMint && !tokenCreationComplete);
   return {
-    tokenMint: journal?.token?.mint || body.tokenMint,
-    tokenCreated: Boolean(journal?.token?.mint || body.tokenCreated),
+    tokenMint,
+    tokenCreated: tokenCreationComplete || (!journal && body.tokenCreated === true),
+    tokenNeedsFinish,
+    metadataRevealPending: journal?.token?.sealedMetadataPending === true,
     createdTokenInfo: journal?.token || body.createdTokenInfo,
     priorResults: priorResults.length ? priorResults : body.priorResults,
     resume: body.resume === true || journal?.status === 'failed' || Boolean(journal?.lp?.failedPhase),
@@ -2473,6 +2801,7 @@ function v2LaunchConfigSnapshotFromPlan(plan = {}, journal = null) {
       description: tokenSource.description || null,
       decimals: tokenSource.decimals ?? journalPoolPlan?.tokenDecimals ?? 9,
       logo,
+      sealedLaunch: tokenSource.sealedLaunch === true,
     },
     launchSol: Number.isFinite(Number(plan?.funding?.launchSol)) ? Number(plan.funding.launchSol) : null,
     mode: plan?.mode || null,
@@ -4016,6 +4345,9 @@ async function executeV2NextClassicOperation(readiness) {
   if (endpoint === '/api/create-token') {
     return invokeJsonHandler(createTokenHandler, readiness.classicPayloads.createToken);
   }
+  if (endpoint === '/api/finish-token-creation') {
+    return invokeJsonHandler(finishTokenCreationHandler, readiness.classicPayloads.finishToken);
+  }
   if (endpoint === '/api/create-lp') {
     const preflight = await runV2ClassicLpPreflight(readiness.classicPayloads.preflightCreateLp);
     const result = await invokeJsonHandler(createLpHandler, readiness.classicPayloads.createLp);
@@ -4026,6 +4358,9 @@ async function executeV2NextClassicOperation(readiness) {
   }
   if (endpoint === '/api/resume-launch') {
     return invokeJsonHandler(resumeLaunchHandler, readiness.classicPayloads.resumeLaunch);
+  }
+  if (endpoint === '/api/reveal-sealed-metadata') {
+    return invokeJsonHandler(revealSealedMetadataHandler, readiness.classicPayloads.revealMetadata);
   }
   if (endpoint === '/api/transfer-assets') {
     return invokeJsonHandler(transferAssetsHandler, readiness.classicPayloads.transferAssets);
@@ -4278,12 +4613,13 @@ app.post('/api/v2/wallets/import', async (req, res) => {
   }
 });
 
-app.post('/api/v2/run-envelope/arm', (req, res) => {
+app.post('/api/v2/run-envelope/arm', async (req, res) => {
   try {
     const demoMode = isDemoMode();
     const walletPublicKey = String(req.body?.walletPublicKey || '').trim();
     const config = req.body?.config || {};
     const fundingEstimate = req.body?.fundingEstimate || null;
+    const recoveryEndpoint = String(req.body?.recoveryEndpoint || '').trim();
     if (!walletPublicKey) {
       return res.status(400).json({ success: false, error: 'walletPublicKey required' });
     }
@@ -4297,7 +4633,39 @@ app.post('/api/v2/run-envelope/arm', (req, res) => {
         error: 'Trebuchet-managed wallet secret is unavailable',
       });
     }
-    if (!demoMode) {
+    if (recoveryEndpoint && !V2_RECOVERY_ENDPOINTS.has(recoveryEndpoint)) {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_RECOVERY_ENDPOINT',
+        error: 'The requested recovery operation is not eligible for a recovery envelope.',
+      });
+    }
+
+    let recoveryReadiness = null;
+    if (!demoMode && recoveryEndpoint) {
+      const recoveryContext = await v2ReadinessForManagedWallet({
+        walletPublicKey,
+        config,
+        body: req.body || {},
+        requireFundingBalance: true,
+      });
+      recoveryReadiness = recoveryContext.readiness;
+      const finalizationIssue = v2TransferFinalizationIssue(recoveryReadiness, {
+        localDossier: req.body?.localDossier,
+      });
+      if (recoveryReadiness.nextEndpoint !== recoveryEndpoint
+          || recoveryReadiness.blockers.length > 0
+          || finalizationIssue) {
+        return res.status(409).json({
+          success: false,
+          code: 'RECOVERY_ARM_BLOCKED',
+          error: finalizationIssue
+            || recoveryReadiness.blockers[0]?.detail
+            || 'Recovery state changed. Refresh the Finish phase and review the remaining action.',
+          readiness: recoveryReadiness,
+        });
+      }
+    } else if (!demoMode) {
       const expectedFundingFingerprint = v2FundingEstimateFingerprint(config);
       const actualFundingFingerprint = String(fundingEstimate?.v2FundingFingerprint || '').trim();
       if (!(Number(fundingEstimate?.totalSol) > 0) || actualFundingFingerprint !== expectedFundingFingerprint) {
@@ -4308,12 +4676,15 @@ app.post('/api/v2/run-envelope/arm', (req, res) => {
         });
       }
     }
-    const plan = buildV2LaunchPlan({
+    const fullPlan = buildV2LaunchPlan({
       ...config,
       walletPublicKey,
     }, {
       demoMode,
     });
+    const plan = recoveryEndpoint
+      ? v2RecoveryAuthorizationPlan(fullPlan, recoveryEndpoint, recoveryReadiness)
+      : fullPlan;
     pruneV2RunEnvelopes();
     for (const [id, existing] of v2RunEnvelopes.entries()) {
       if (existing.walletPublicKey === walletPublicKey) v2RunEnvelopes.delete(id);
@@ -4327,11 +4698,13 @@ app.post('/api/v2/run-envelope/arm', (req, res) => {
       status: 'armed',
       operationCount: plan.operations.length,
       executedOperationCount: 0,
-      estimatedSolCost: plan.funding.estimatedSolCost,
-      maxSpendSol: Math.max(plan.funding.estimatedSolCost, fundingTotalSol),
-      configFingerprint: plan.v2LaunchConfigFingerprint,
-      walletFingerprint: plan.v2LaunchWalletFingerprint,
-      fundingEstimateHash: demoMode ? null : v2RunEnvelopeFundingHash(fundingEstimate),
+      estimatedSolCost: recoveryEndpoint ? null : plan.funding.estimatedSolCost,
+      maxSpendSol: recoveryEndpoint ? null : Math.max(plan.funding.estimatedSolCost, fundingTotalSol),
+      authorizationKind: recoveryEndpoint ? 'recovery' : 'launch',
+      nextEndpoint: recoveryEndpoint || null,
+      configFingerprint: fullPlan.v2LaunchConfigFingerprint,
+      walletFingerprint: fullPlan.v2LaunchWalletFingerprint,
+      fundingEstimateHash: demoMode || recoveryEndpoint ? null : v2RunEnvelopeFundingHash(fundingEstimate),
       armedAt: new Date(armedAtMs).toISOString(),
       expiresAt: new Date(armedAtMs + V2_RUN_ENVELOPE_TTL_MS).toISOString(),
       expiresAtMs: armedAtMs + V2_RUN_ENVELOPE_TTL_MS,
@@ -4339,6 +4712,23 @@ app.post('/api/v2/run-envelope/arm', (req, res) => {
       plan,
     };
     v2RunEnvelopes.set(envelope.id, envelope);
+    launchJournal.upsertForWallet(
+      walletPublicKey,
+      {
+        status: 'active',
+        stage: 'launch_plan_armed',
+        launchConfig: v2LaunchConfigSnapshotFromPlan(fullPlan),
+        error: null,
+        errorDetails: null,
+      },
+      {
+        stage: 'launch_plan_armed',
+        configFingerprint: fullPlan.v2LaunchConfigFingerprint,
+        operationCount: plan.operations.length,
+        authorizationKind: recoveryEndpoint ? 'recovery' : 'launch',
+        nextEndpoint: recoveryEndpoint || null,
+      },
+    );
 
     res.json({
       success: true,
@@ -4378,7 +4768,9 @@ app.post('/api/v2/run-envelope/execute-next', async (req, res) => {
     const walletMatchesEnvelope = runEnvelope.walletFingerprint === readiness.plan?.v2LaunchWalletFingerprint;
     const fundingMatchesEnvelope = !runEnvelope.fundingEstimateHash
       || runEnvelope.fundingEstimateHash === v2RunEnvelopeFundingHash(req.body?.fundingEstimate);
-    if (!configMatchesEnvelope || !walletMatchesEnvelope || !fundingMatchesEnvelope) {
+    const endpointMatchesEnvelope = !runEnvelope.nextEndpoint
+      || runEnvelope.nextEndpoint === readiness.nextEndpoint;
+    if (!configMatchesEnvelope || !walletMatchesEnvelope || !fundingMatchesEnvelope || !endpointMatchesEnvelope) {
       throw v2RunEnvelopeError(
         'RUN_ENVELOPE_MISMATCH',
         'Launch configuration, wallet, or funding changed after arming. Review and arm the run again.',
@@ -4440,7 +4832,7 @@ app.post('/api/v2/run-envelope/execute-next', async (req, res) => {
       config,
       body: {
         ...req.body,
-        tokenMint: result?.tokenMint || req.body?.tokenMint,
+        tokenMint: result?.tokenMint || result?.mint || req.body?.tokenMint,
         liquidityComplete: Array.isArray(result?.results) && result.results.length > 0,
       },
       requireFundingBalance: true,
@@ -4450,10 +4842,13 @@ app.post('/api/v2/run-envelope/execute-next', async (req, res) => {
     const terminalSweepComplete = readiness.nextEndpoint === '/api/transfer-assets'
       && result?.walletEmpty === true
       && result?.hasPartialFailure !== true;
+    const recoveryAuthorizationComplete = runEnvelope.authorizationKind === 'recovery';
     // A missing next endpoint can also mean a recoverable proof/funding
     // blocker. Keep the authorization record armed until the authoritative
-    // terminal sweep says the wallet is empty.
-    runEnvelope.status = terminalSweepComplete ? 'complete' : 'armed';
+    // terminal sweep says the wallet is empty. Recovery envelopes authorize
+    // exactly one saved-journal action and must be reviewed again if another
+    // recovery action remains afterward.
+    runEnvelope.status = terminalSweepComplete || recoveryAuthorizationComplete ? 'complete' : 'armed';
     const envelopeResponse = publicV2RunEnvelope(runEnvelope);
     if (runEnvelope.status === 'complete') v2RunEnvelopes.delete(runEnvelope.id);
 
@@ -4655,7 +5050,13 @@ function recordTokenJournalProgress(walletPublicKey, event) {
   const token = {};
   if (event.tokenMint) token.mint = event.tokenMint;
   if (event.metadataUri) token.metadataUri = event.metadataUri;
+  if (event.metadataHash) token.metadataHash = event.metadataHash;
   if (event.imageUri) token.imageUri = event.imageUri;
+  if (event.onChainMetadataUri) token.onChainMetadataUri = event.onChainMetadataUri;
+  if (typeof event.sealedLaunch === 'boolean') token.sealedLaunch = event.sealedLaunch;
+  if (typeof event.sealedMetadataPending === 'boolean') {
+    token.sealedMetadataPending = event.sealedMetadataPending;
+  }
   if (typeof event.mintAuthorityRenounced === 'boolean') {
     token.mintAuthorityRenounced = event.mintAuthorityRenounced;
   }
@@ -5177,15 +5578,25 @@ function materializePhase1RecoveryResults(journal, priorResults, allocations) {
   return { recoveredResults, blockedEvents };
 }
 
-app.post('/api/finish-token-creation', async (req, res) => {
+async function finishTokenCreationHandler(req, res) {
+  let walletPublicKey = null;
+  let claimedLaunchOp = false;
   try {
-    const { secretKeyArr, walletPublicKey } = resolveSigner({
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'finishing an interrupted token creation')) {
+      return;
+    }
+    const resolvedSigner = resolveSigner({
       tempWalletSecretKey: req.body.tempWalletSecretKey,
       walletPublicKey: req.body.walletPublicKey,
     });
+    const { secretKeyArr } = resolvedSigner;
+    walletPublicKey = resolvedSigner.walletPublicKey;
     if (!walletPublicKey) {
       return res.status(400).json({ success: false, error: 'walletPublicKey or tempWalletSecretKey required' });
     }
+    if (rejectOrClaimLaunchOp(res, walletPublicKey, 'finish-token-creation')) return;
+    claimedLaunchOp = true;
 
     const journal = launchJournal.activeForWallet(walletPublicKey);
     if (!journal || !journal.token || !journal.token.mint) {
@@ -5210,6 +5621,7 @@ app.post('/api/finish-token-creation', async (req, res) => {
       totalSupply,
       metadataUri,
       journalEvents: journal.events || [],
+      sealedLaunch: journal.token.sealedLaunch === true,
       onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
     });
 
@@ -5227,6 +5639,8 @@ app.post('/api/finish-token-creation', async (req, res) => {
           ...journal.token,
           mintAuthorityRenounced: status.mintAuthorityRenounced,
           metadataUpdateAuthorityRevoked: status.updateAuthorityRevoked,
+          metadataImmutable: status.updateAuthorityRevoked && journal.token.sealedLaunch !== true,
+          sealedMetadataPending: status.sealedMetadataPending === true,
           isSafe: status.isSafe,
         },
       },
@@ -5241,9 +5655,178 @@ app.post('/api/finish-token-creation', async (req, res) => {
     res.json({ success: true, ...status });
   } catch (error) {
     console.error('Error finishing token creation:', error);
-    res.status(500).json({ success: false, error: error.message });
+    const accountStillSettling = /InvalidAccountData|invalid account data for instruction/i.test(
+      [error?.message, ...(Array.isArray(error?.logs) ? error.logs : [])].filter(Boolean).join(' '),
+    );
+    const publicMessage = accountStillSettling
+      ? 'Solana RPC has not finished propagating the token account yet. The existing mint is preserved and no supply was duplicated. Wait a few seconds, then choose Finish token safely again.'
+      : error?.message || 'Trebuchet could not finish the interrupted token.';
+    if (walletPublicKey) {
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        {
+          status: 'failed',
+          stage: 'token_finish_failed',
+          error: publicMessage,
+          errorDetails: launchFailureDetails(error, { failedPhase: 'finish_token' }),
+        },
+        { stage: 'token_finish_failed', error: publicMessage },
+      );
+    }
+    if (accountStillSettling) {
+      const friendlyError = new Error(publicMessage);
+      friendlyError.code = 'TOKEN_ACCOUNT_SETTLING';
+      friendlyError.statusCode = 409;
+      friendlyError.errorDetails = launchFailureDetails(error, { failedPhase: 'finish_token' });
+      sendErrorResponse(res, friendlyError, 409);
+    } else {
+      sendErrorResponse(res, error);
+    }
+  } finally {
+    if (claimedLaunchOp && walletPublicKey) {
+      clearLaunchOpInFlight(walletPublicKey);
+    }
   }
-});
+}
+
+app.post('/api/finish-token-creation', finishTokenCreationHandler);
+
+function sealedMetadataRevealReadiness(journal) {
+  const results = v2JournalLiquidityResults(journal);
+  const plannedPoolCount = Math.max(
+    1,
+    Array.isArray(journal?.poolPlan?.allocations) ? journal.poolPlan.allocations.length : 0,
+    Array.isArray(journal?.poolPlan?.pools) ? journal.poolPlan.pools.length : 0,
+  );
+  const recordedPoolCount = results.filter((pool) => v2TrimmedText(pool?.poolId || pool?.id)).length;
+  const positionCount = v2ProofPositionCount(results);
+  const lockedPositionCount = v2ProofLockedPositionCount(results);
+  const ready = recordedPoolCount >= plannedPoolCount
+    && positionCount > 0
+    && lockedPositionCount === positionCount;
+  return {
+    ready,
+    plannedPoolCount,
+    recordedPoolCount,
+    positionCount,
+    lockedPositionCount,
+  };
+}
+
+async function revealSealedMetadataForJournal({ walletPublicKey, secretKeyArr }) {
+  const journal = latestLaunchJournalForWallet(walletPublicKey);
+  const token = journal?.token;
+  if (!journal || !token?.mint) throw new Error('No launch journal with a token mint was found.');
+  if (token.sealedLaunch !== true || token.sealedMetadataPending !== true) {
+    return {
+      tokenMint: token.mint,
+      metadataUri: token.metadataUri || null,
+      sealedMetadataPending: false,
+      skipped: true,
+    };
+  }
+  const revealReadiness = sealedMetadataRevealReadiness(journal);
+  if (!revealReadiness.ready) {
+    const error = new Error(
+      'Identity remains sealed until every planned pool exists and every liquidity position is locked. '
+      + `Recorded ${revealReadiness.recordedPoolCount}/${revealReadiness.plannedPoolCount} pools and `
+      + `${revealReadiness.lockedPositionCount}/${revealReadiness.positionCount} locked positions.`,
+    );
+    error.code = 'SEALED_METADATA_WAITING_FOR_LOCKS';
+    error.statusCode = 409;
+    error.revealReadiness = revealReadiness;
+    throw error;
+  }
+  const result = await revealSealedTokenMetadata({
+    tempWalletSecretKey: secretKeyArr,
+    tokenMint: token.mint,
+    name: token.name,
+    symbol: token.symbol,
+    metadataUri: token.metadataUri,
+    onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
+  });
+  launchJournal.update(
+    journal.id,
+    {
+      status: 'active',
+      stage: 'metadata_revealed',
+      error: null,
+      errorDetails: null,
+      token: {
+        sealedMetadataPending: false,
+        onChainMetadataUri: token.metadataUri,
+        metadataUpdateAuthorityRevoked: true,
+        metadataImmutable: true,
+        isSafe: true,
+      },
+    },
+    { stage: 'metadata_revealed', tokenMint: token.mint, metadataUri: token.metadataUri },
+  );
+  const updated = launchJournal.get(journal.id);
+  registerOfficialBrandLaunch({ journal: updated, token: updated.token, secretKey: secretKeyArr });
+  const followupScan = setTimeout(() => void runBrandShieldScan(), 20_000);
+  followupScan.unref?.();
+  return result;
+}
+
+async function revealSealedMetadataAfterLiquidity({ walletPublicKey, secretKeyArr }) {
+  const journal = latestLaunchJournalForWallet(walletPublicKey);
+  if (journal?.token?.sealedLaunch !== true || journal?.token?.sealedMetadataPending !== true) {
+    return revealSealedMetadataForJournal({ walletPublicKey, secretKeyArr });
+  }
+  const readiness = sealedMetadataRevealReadiness(journal);
+  if (!readiness.ready) {
+    return {
+      success: false,
+      skipped: true,
+      pending: true,
+      code: 'SEALED_METADATA_WAITING_FOR_LOCKS',
+      reason: 'Identity remains sealed until every planned liquidity position is locked.',
+      readiness,
+    };
+  }
+  return revealSealedMetadataForJournal({ walletPublicKey, secretKeyArr });
+}
+
+async function revealSealedMetadataHandler(req, res) {
+  let walletPublicKey = null;
+  let claimedLaunchOp = false;
+  try {
+    if (req.body.walletPublicKey
+        && rejectIfSecretPinLocked(res, 'revealing and locking sealed token metadata')) return;
+    const signer = resolveSigner({
+      tempWalletSecretKey: req.body.tempWalletSecretKey,
+      walletPublicKey: req.body.walletPublicKey,
+    });
+    walletPublicKey = signer.walletPublicKey;
+    if (rejectOrClaimLaunchOp(res, walletPublicKey, 'reveal-sealed-metadata')) return;
+    claimedLaunchOp = true;
+    const result = await revealSealedMetadataForJournal({
+      walletPublicKey,
+      secretKeyArr: signer.secretKeyArr,
+    });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    if (walletPublicKey && error?.code !== 'SEALED_METADATA_WAITING_FOR_LOCKS') {
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        {
+          status: 'active',
+          stage: 'metadata_reveal_failed',
+          error: launchJournal.errorMessage(error),
+          errorDetails: launchFailureDetails(error, { failedPhase: 'metadata_reveal' }),
+          token: { sealedMetadataPending: true },
+        },
+        { stage: 'metadata_reveal_failed', error: launchJournal.errorMessage(error) },
+      );
+    }
+    sendErrorResponse(res, error, error.statusCode || 500);
+  } finally {
+    if (claimedLaunchOp && walletPublicKey) clearLaunchOpInFlight(walletPublicKey);
+  }
+}
+
+app.post('/api/reveal-sealed-metadata', revealSealedMetadataHandler);
 
 async function createTokenHandler(req, res) {
   // uploadLogo (multer) has already parsed req.body / req.file by the time
@@ -5262,7 +5845,10 @@ async function createTokenHandler(req, res) {
       vanitySuffix,
       vanityCAKeypair: vanityCAKeypairRaw,
       vanityCAPublicKey,
+      sealedLaunch,
     } = req.body;
+
+    const useSealedLaunch = sealedLaunch === true || sealedLaunch === 'true' || sealedLaunch === '1';
 
     if ((req.body.walletPublicKey || vanityCAPublicKey)
         && rejectIfSecretPinLocked(res, 'creating a token with saved recovery secrets')) {
@@ -5329,6 +5915,8 @@ async function createTokenHandler(req, res) {
           symbol: normalizedSymbol,
           totalSupply: normalizedTotalSupply,
           decimals: 9,
+          sealedLaunch: useSealedLaunch,
+          sealedMetadataPending: useSealedLaunch,
         },
       },
       {
@@ -5364,6 +5952,7 @@ async function createTokenHandler(req, res) {
       vanityPrefix: normalizedVanityPrefix || null,
       vanitySuffix: normalizedVanitySuffix || null,
       vanityCAKeypair,
+      sealedLaunch: useSealedLaunch,
       onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
     });
     if (vanityCAPublicKey) {
@@ -5383,16 +5972,37 @@ async function createTokenHandler(req, res) {
           totalSupply: normalizedTotalSupply,
           decimals: 9,
           metadataUri: result.metadataUri,
+          metadataHash: result.metadataHash || null,
           imageUri: result.imageUri || null,
+          onChainMetadataUri: result.onChainMetadataUri || result.metadataUri,
           isSafe: result.isSafe,
           mintAuthorityRenounced: result.mintAuthorityRenounced,
           freezeAuthorityDisabled: result.freezeAuthorityDisabled,
           metadataUpdateAuthorityRevoked: result.metadataUpdateAuthorityRevoked,
           metadataImmutable: result.metadataImmutable,
+          sealedLaunch: result.sealedLaunch === true,
+          sealedMetadataPending: result.sealedMetadataPending === true,
         },
       },
       { stage: 'token_created', tokenMint: result.tokenMint, metadataUri: result.metadataUri },
     );
+
+    const brandJournal = launchJournal.activeForWallet(walletPublicKey);
+    registerOfficialBrandLaunch({
+      journal: brandJournal,
+      secretKey: tempWalletSecretKeyArr,
+      token: brandJournal?.token || {
+        mint: result.tokenMint,
+        name: normalizedName,
+        symbol: normalizedSymbol,
+        totalSupply: normalizedTotalSupply,
+        decimals: 9,
+        metadataUri: result.metadataUri,
+        metadataHash: result.metadataHash,
+        imageUri: result.imageUri,
+        sealedLaunch: result.sealedLaunch === true,
+      },
+    });
 
     res.json({
       success: true,
@@ -6518,6 +7128,12 @@ async function createLpHandler(req, res) {
     console.log('Creating LP for token:', tokenMint);
     console.log('Allocations:', JSON.stringify(allocations, null, 2));
 
+    if (await rejectIfTokenIncompleteForLiquidity(res, {
+      tokenMint,
+      tokenTotalSupply,
+      tokenDecimals: tokenDecimals || 9,
+    })) return;
+
     if (req.body.walletPublicKey
         && rejectIfSecretPinLocked(res, 'creating liquidity pools with a saved launch wallet')) {
       return;
@@ -6613,7 +7229,27 @@ async function createLpHandler(req, res) {
       { stage: 'lp_created', poolCount: result.results?.length || 0 },
     );
 
-    res.json({ success: true, ...result });
+    let metadataReveal = null;
+    try {
+      metadataReveal = await revealSealedMetadataAfterLiquidity({
+        walletPublicKey,
+        secretKeyArr,
+      });
+    } catch (revealError) {
+      metadataReveal = { success: false, error: launchJournal.errorMessage(revealError) };
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        {
+          status: 'active',
+          stage: 'metadata_reveal_failed',
+          error: metadataReveal.error,
+          token: { sealedMetadataPending: true },
+        },
+        { stage: 'metadata_reveal_failed', error: metadataReveal.error },
+      );
+    }
+
+    res.json({ success: true, ...result, metadataReveal });
   } catch (error) {
     const message = launchJournal.errorMessage(error);
     const errorDetails = launchFailureDetails(error, {
@@ -6738,6 +7374,11 @@ async function resumeLaunchHandler(req, res) {
     if (!Array.isArray(priorResults)) {
       throw new Error('priorResults must be an array (use [] for a fresh launch)');
     }
+    if (await rejectIfTokenIncompleteForLiquidity(res, {
+      tokenMint,
+      tokenTotalSupply,
+      tokenDecimals: tokenDecimals || 9,
+    })) return;
 
     console.log(
       `Resuming launch for ${tokenMint}: ${priorResults.length}/${allocations.length} ` +
@@ -6900,7 +7541,27 @@ async function resumeLaunchHandler(req, res) {
       { stage: 'lp_created', poolCount: result.results?.length || 0 },
     );
 
-    res.json({ success: true, ...result });
+    let metadataReveal = null;
+    try {
+      metadataReveal = await revealSealedMetadataAfterLiquidity({
+        walletPublicKey,
+        secretKeyArr,
+      });
+    } catch (revealError) {
+      metadataReveal = { success: false, error: launchJournal.errorMessage(revealError) };
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        {
+          status: 'active',
+          stage: 'metadata_reveal_failed',
+          error: metadataReveal.error,
+          token: { sealedMetadataPending: true },
+        },
+        { stage: 'metadata_reveal_failed', error: metadataReveal.error },
+      );
+    }
+
+    res.json({ success: true, ...result, metadataReveal });
   } catch (error) {
     const message = launchJournal.errorMessage(error);
     const errorDetails = launchFailureDetails(error, {
@@ -7876,6 +8537,12 @@ app.post('/api/launch-journals/resume', async (req, res) => {
         error: 'launch journal is missing the token or pool plan needed to resume',
       });
     }
+
+    if (await rejectIfTokenIncompleteForLiquidity(res, {
+      tokenMint,
+      tokenTotalSupply,
+      tokenDecimals,
+    })) return;
 
     const priorResults = priorResultsFromJournal(journal);
     priorResultsForFailure = priorResults;

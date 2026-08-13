@@ -1123,6 +1123,42 @@ test('buildV2ExecutionReadiness maps a ready setup to classic create-token paylo
   assert.equal(readiness.phases.find((phase) => phase.id === 'liquidity')?.state, 'waiting');
 });
 
+test('buildV2ExecutionReadiness finishes a partial mint before liquidity recovery', () => {
+  const readiness = buildV2ExecutionReadiness(
+    {
+      token: { name: 'MoonKit', symbol: 'MKT', supply: '1000' },
+      poolTopology: {
+        targetMarketCapUsd: 250000,
+        sweepDestination: VALID_SWEEP_DESTINATION,
+      },
+      funding: { estimate: { totalSol: 2.4 } },
+    },
+    {
+      demoMode: false,
+      walletPublicKey: '11111111111111111111111111111111',
+      walletAvailable: true,
+      secretAvailable: true,
+      secretPinLocked: false,
+      tokenMint: 'PartialMint111',
+      tokenNeedsFinish: true,
+      failedLaunch: true,
+      priorResults: [{ allocationIndex: 0, poolId: 'EmptyPool111' }],
+      now: '2026-06-20T12:00:00.000Z',
+    },
+  );
+
+  assert.equal(readiness.status, 'ready');
+  assert.equal(readiness.nextEndpoint, '/api/finish-token-creation');
+  assert.equal(readiness.nextAction, 'Finish interrupted token');
+  assert.equal(readiness.completion.tokenCreated, false);
+  assert.equal(readiness.completion.tokenNeedsFinish, true);
+  assert.deepEqual(readiness.classicPayloads.finishToken, {
+    walletPublicKey: '11111111111111111111111111111111',
+  });
+  assert.equal(readiness.phases.find((phase) => phase.id === 'token')?.title, 'Finish token');
+  assert.equal(readiness.phases.find((phase) => phase.id === 'liquidity')?.state, 'waiting');
+});
+
 test('buildV2ExecutionReadiness advances from created token to create-lp, resume, and sweep endpoints', () => {
   const baseInput = {
     token: { name: 'MoonKit', symbol: 'MKT', supply: '1000' },
@@ -1188,13 +1224,51 @@ test('buildV2ExecutionReadiness advances from created token to create-lp, resume
     Object.values(sweep.classicEndpoints),
     [
       '/api/create-token',
+      '/api/finish-token-creation',
       '/api/estimate-lp-funding',
       '/api/preflight-create-lp',
       '/api/create-lp',
       '/api/resume-launch',
+      '/api/reveal-sealed-metadata',
       '/api/transfer-assets',
     ],
   );
+});
+
+test('sealed launch inserts a post-liquidity identity reveal and recovery endpoint', () => {
+  const input = {
+    token: { name: 'MoonKit', symbol: 'MKT', supply: '1000', sealedLaunch: true },
+    poolTopology: {
+      targetMarketCapUsd: 250000,
+      sweepDestination: VALID_SWEEP_DESTINATION,
+    },
+    funding: { estimate: { totalSol: 2.4 } },
+  };
+  const plan = buildV2LaunchPlan(input, { demoMode: false });
+  const ids = plan.operations.map((operation) => operation.id);
+  assert.equal(plan.token.sealedLaunch, true);
+  assert.equal(ids.indexOf('v2-reveal-metadata'), ids.indexOf('v2-lock-liquidity') + 1);
+  assert.equal(plan.operations.find((operation) => operation.id === 'v2-report-sweep').requires[0], 'v2-reveal-metadata');
+  assert.notEqual(launchPlanConfigFingerprint(input), launchPlanConfigFingerprint({
+    ...input,
+    token: { ...input.token, sealedLaunch: false },
+  }));
+
+  const readiness = buildV2ExecutionReadiness(input, {
+    demoMode: false,
+    walletPublicKey: '11111111111111111111111111111111',
+    walletAvailable: true,
+    secretAvailable: true,
+    secretPinLocked: false,
+    tokenMint: 'Mint111',
+    liquidityComplete: true,
+    metadataRevealPending: true,
+  });
+  assert.equal(readiness.nextEndpoint, '/api/reveal-sealed-metadata');
+  assert.equal(readiness.nextAction, 'Reveal sealed identity');
+  assert.deepEqual(readiness.classicPayloads.revealMetadata, {
+    walletPublicKey: '11111111111111111111111111111111',
+  });
 });
 
 test('buildV2ExecutionReadiness keeps sweep recoverable until terminal transfer evidence', () => {
@@ -2683,12 +2757,21 @@ test('server exposes the v2 launch-plan contract as an authenticated API route',
   assert.match(serverSource, /app\.post\('\/api\/v2\/wallets\/generate'/);
   assert.match(serverSource, /app\.post\('\/api\/v2\/wallets\/import'/);
   assert.match(serverSource, /app\.post\('\/api\/v2\/run-envelope\/arm'/);
+  assert.match(serverSource, /launchConfig: v2LaunchConfigSnapshotFromPlan\(fullPlan\)/);
+  assert.match(serverSource, /stage: 'launch_plan_armed'/);
   assert.match(serverSource, /app\.post\('\/api\/v2\/run-envelope\/execute-next'/);
   assert.match(serverSource, /const v2RunEnvelopes = new Map\(\)/);
   assert.match(serverSource, /requireV2RunEnvelope\(/);
   assert.match(serverSource, /String\(req\.body\?\.runEnvelopeId \|\| ''\)\.trim\(\)/);
   assert.match(serverSource, /runEnvelope\.configFingerprint === readiness\.plan\?\.v2LaunchConfigFingerprint/);
   assert.match(serverSource, /runEnvelope\.fundingEstimateHash === v2RunEnvelopeFundingHash\(req\.body\?\.fundingEstimate\)/);
+  assert.match(serverSource, /const V2_RECOVERY_ENDPOINTS = new Set\(\[/);
+  assert.match(serverSource, /function v2RecoveryAuthorizationPlan/);
+  assert.match(serverSource, /authorizationKind: recoveryEndpoint \? 'recovery' : 'launch'/);
+  assert.match(serverSource, /fundingEstimateHash: demoMode \|\| recoveryEndpoint \? null/);
+  assert.match(serverSource, /runEnvelope\.nextEndpoint === readiness\.nextEndpoint/);
+  assert.match(serverSource, /const recoveryAuthorizationComplete = runEnvelope\.authorizationKind === 'recovery'/);
+  assert.match(serverSource, /terminalSweepComplete \|\| recoveryAuthorizationComplete \? 'complete' : 'armed'/);
   assert.match(serverSource, /result\?\.walletEmpty === true/);
   assert.match(serverSource, /result\?\.hasPartialFailure !== true/);
   assert.match(serverSource, /v2RunEnvelopes\.delete\(runEnvelope\.id\)/);
@@ -2717,7 +2800,7 @@ test('server exposes the v2 launch-plan contract as an authenticated API route',
   assert.match(serverSource, /buildV2LaunchPlan\(req\.body \|\| \{\}/);
   assert.match(
     serverSource,
-    /const plan = buildV2LaunchPlan\(\{\s+\.\.\.config,\s+walletPublicKey,\s+\}, \{/,
+    /const fullPlan = buildV2LaunchPlan\(\{\s+\.\.\.config,\s+walletPublicKey,\s+\}, \{/,
   );
   assert.match(serverSource, /buildV2ExecutionReadiness\(config/);
   assert.match(serverSource, /requireCurrentFundingEstimate: true/);

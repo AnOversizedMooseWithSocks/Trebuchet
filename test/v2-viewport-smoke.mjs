@@ -20,6 +20,8 @@ const requiredChecks = [
   'fundingMeter',
   'parityPanel',
   'firstViewportFit',
+  'terminalPanelFit',
+  'discoveryTokenViewport',
 ];
 
 const viewports = [
@@ -89,10 +91,15 @@ async function smokeViewport(browser, viewport) {
         clientWidth: document.documentElement.clientWidth,
         sidebarVisible: Boolean(document.querySelector('.sidebar')?.getClientRects().length),
         topbarVisible: Boolean(document.querySelector('.topbar')?.getClientRects().length),
+        visibleAdvancedChrome: [
+          '.cockpit-heading',
+          '.launch-summary-drawer',
+          '#launchWorkspaceTabs',
+          '.launch-choice-bar',
+        ].filter((selector) => document.querySelector(selector)?.getClientRects().length),
         rects: {
           flow: rectFor('#guidedLaunchFlow'),
           welcome: rectFor('.guided-welcome'),
-          experience: rectFor('.experience-row'),
         },
       };
     });
@@ -101,11 +108,16 @@ async function smokeViewport(browser, viewport) {
     assert.match(guidedMetrics.welcomeText, /sends no transaction, and spends no SOL/);
     assert.equal(guidedMetrics.sidebarVisible, false, `${viewport.name}: Guided Mode still shows the app sidebar`);
     assert.equal(guidedMetrics.topbarVisible, false, `${viewport.name}: Guided Mode still shows the terminal header`);
+    assert.deepEqual(
+      guidedMetrics.visibleAdvancedChrome,
+      [],
+      `${viewport.name}: Guided Mode exposes advanced launch chrome`,
+    );
     assert.ok(
       guidedMetrics.scrollWidth <= guidedMetrics.clientWidth + 1,
       `${viewport.name}: guided launch overflows horizontally`,
     );
-    for (const selector of ['flow', 'welcome', 'experience']) {
+    for (const selector of ['flow', 'welcome']) {
       assertRectVisible(guidedMetrics.rects[selector], `guided ${selector}`, viewport);
     }
 
@@ -115,6 +127,21 @@ async function smokeViewport(browser, viewport) {
     await page.click('[data-action="guided-next"]');
     await page.fill('[data-guided-field="destinationWallet"]', '11111111111111111111111111111112');
     await page.click('[data-action="guided-next"]');
+    const guidedConsoleSkin = await page.evaluate(() => {
+      const bodyStyle = getComputedStyle(document.body);
+      const formStyle = getComputedStyle(document.querySelector('.guided-form-card'));
+      const strategyStyle = getComputedStyle(document.querySelector('.guided-strategy-preview strong'));
+      return {
+        fontFamily: bodyStyle.fontFamily,
+        formRadius: formStyle.borderTopLeftRadius,
+        formShadow: formStyle.boxShadow,
+        strategyFontSize: Number.parseFloat(strategyStyle.fontSize),
+      };
+    });
+    assert.match(guidedConsoleSkin.fontFamily, /JetBrains Mono|SFMono-Regular|Consolas/);
+    assert.equal(guidedConsoleSkin.formRadius, '0px', `${viewport.name}: Guided Mode still uses rounded glass panels`);
+    assert.equal(guidedConsoleSkin.formShadow, 'none', `${viewport.name}: Guided Mode still uses floating card shadows`);
+    assert.ok(guidedConsoleSkin.strategyFontSize <= 12, `${viewport.name}: Step 3 strategy copy is oversized`);
     await page.click('[data-action="guided-value-preset"][data-value="100000"]');
     await page.click('[data-action="guided-next"]');
 
@@ -143,7 +170,7 @@ async function smokeViewport(browser, viewport) {
     assertRectVisible(guidedReview.actionRect, 'guided practice action', viewport);
     assert.deepEqual(guidedReview.visibleAdvancedPanes, [], `${viewport.name}: guided review exposes advanced wallet operations`);
 
-    await page.click('[data-action="select-experience"][data-experience="advanced"]');
+    await page.click('.guided-advanced-shortcut');
     await page.waitForFunction(() => document.body.dataset.experienceMode === 'advanced');
     await page.click('.launch-workspace-tab[data-launch-workspace="configure"]');
 
@@ -162,6 +189,7 @@ async function smokeViewport(browser, viewport) {
         cockpit: rect(cockpit),
         workspace: rect(workspace),
         shell: rect(shell),
+        workspaceOverflowY: workspace ? getComputedStyle(workspace).overflowY : null,
       };
     });
     assert.equal(collapsedMetrics.open, false, `${viewport.name}: launch summary should start collapsed`);
@@ -249,9 +277,8 @@ async function smokeViewport(browser, viewport) {
       assert.equal(workspaceState.classicSectionVisible, true, `${viewport.name}: ${workspace} content is hidden`);
     }
     const firstViewportFit = viewport.name === 'desktop'
-      ? collapsedMetrics.scrollHeight <= collapsedMetrics.clientHeight + 1
-        && collapsedMetrics.shell.bottom <= collapsedMetrics.clientHeight + 1
-        && collapsedMetrics.workspace.bottom <= collapsedMetrics.clientHeight + 1
+      ? collapsedMetrics.workspace.top < collapsedMetrics.clientHeight
+        && collapsedMetrics.workspaceOverflowY === 'auto'
       : collapsedMetrics.cockpit.bottom <= viewport.height + 1;
     assert.ok(
       firstViewportFit,
@@ -264,9 +291,13 @@ async function smokeViewport(browser, viewport) {
 
     const initiallyVisibleSelectors = viewport.name === 'mobile'
       ? ['cockpit', 'chartDeck', 'tokenomicsChart', 'workspaceTabs', 'setupDock']
-      : ['launchShell', 'cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'workspaceTabs', 'workspaceViewport', 'setupDock'];
+      : ['cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'workspaceTabs'];
     for (const selector of initiallyVisibleSelectors) {
       assertRectVisible(metrics.rects[selector], selector, viewport);
+    }
+    if (viewport.name === 'desktop') {
+      assert.ok(metrics.rects.workspaceViewport.top < viewport.height, 'desktop: active phase panel starts below the viewport');
+      assert.ok(metrics.rects.setupDock.top < viewport.height, 'desktop: configure panel starts below the viewport');
     }
     if (viewport.name === 'mobile') {
       assert.ok(
@@ -274,6 +305,77 @@ async function smokeViewport(browser, viewport) {
         'mobile: expanded launch summary should not require horizontal scrolling',
       );
     }
+    let terminalPanelFit = true;
+    if (viewport.name === 'desktop') {
+      await page.click('.launch-workspace-tab[data-launch-workspace="finish"]');
+      const terminalMetrics = await page.evaluate(() => {
+        const bridge = document.querySelector('#classicBridge');
+        bridge.classList.add('has-recovery-notice', 'is-terminal-launch');
+        bridge.innerHTML = `
+          <aside class="recovered-plan-notice" role="status">
+            <i></i><span><strong>Recovery loaded</strong><small>Only unfinished work remains.</small></span><button class="text-button">View record</button>
+          </aside>
+          <section class="classic-workspace-section classic-workspace-verify" data-classic-workspace="finish">
+            <section class="launch-step-guide is-complete"><span class="launch-step-kicker">Launch complete</span><div><h2>Assets swept and proof recorded</h2><p>Launch wallet empty.</p></div><aside><span><strong>Final sweep verified.</strong></span></aside></section>
+            <div class="finalize-panel is-terminal"><div class="finalize-head"><span><h3>Launch complete</h3></span></div><div class="finalize-grid"><span><small>Sweep</small><strong>Recorded</strong></span></div><div class="verify-panel-stage"><div class="proof-review-panel"><div class="proof-link-grid"><span><small>Mint</small><strong>Mint111</strong></span></div></div></div><div class="operator-toolbar compact"><button class="pill-button">Download proof</button></div></div>
+          </section>`;
+        const rect = (selector) => {
+          const value = document.querySelector(selector)?.getBoundingClientRect();
+          return value ? { top: value.top, bottom: value.bottom, height: value.height } : null;
+        };
+        return {
+          viewport: rect('#launchWorkspaceViewport'),
+          bridge: rect('#classicBridge'),
+          notice: rect('.recovered-plan-notice'),
+          phase: rect('.classic-workspace-verify'),
+          guide: rect('.launch-step-guide.is-complete'),
+          finalize: rect('.finalize-panel.is-terminal'),
+        };
+      });
+      terminalPanelFit = Boolean(
+        terminalMetrics.viewport
+        && terminalMetrics.bridge
+        && terminalMetrics.notice
+        && terminalMetrics.phase
+        && terminalMetrics.guide
+        && terminalMetrics.finalize
+        && terminalMetrics.notice.height <= 46
+        && terminalMetrics.phase.top - terminalMetrics.notice.bottom <= 12
+        && terminalMetrics.guide.top < viewport.height
+        && terminalMetrics.finalize.top < viewport.height
+        && terminalMetrics.phase.bottom <= terminalMetrics.viewport.bottom + 1
+      );
+      assert.ok(terminalPanelFit, `desktop: terminal recovery workspace is not tightly panelized: ${JSON.stringify(terminalMetrics)}`);
+    }
+    await page.click('.nav-item[data-view="discovery"]');
+    await page.waitForFunction(() => document.body.dataset.activeView === 'discovery');
+    const discoveryMetrics = await page.evaluate(() => {
+      const rect = (selector) => {
+        const value = document.querySelector(selector)?.getBoundingClientRect();
+        return value ? { top: value.top, bottom: value.bottom, width: value.width, height: value.height } : null;
+      };
+      return {
+        tabs: rect('.discovery-pane-tabs'),
+        firstTab: rect('.discovery-pane-tab'),
+        tokenPanel: rect('.token-discovery-panel'),
+        tokenFeed: rect('#personalTokenNetwork'),
+        personalizeBannerCount: document.querySelectorAll('.discovery-personalize-banner, #discoveryPersonalizeBanner').length,
+        duplicateWalletActions: document.querySelectorAll('#view-discovery .surface-main [data-discovery-pane-panel="tokens"] [data-action="open-wallet-tracking"]').length,
+      };
+    });
+    const discoveryTokenViewport = Boolean(
+      discoveryMetrics.tabs
+      && discoveryMetrics.firstTab
+      && discoveryMetrics.tokenPanel
+      && discoveryMetrics.tokenFeed
+      && discoveryMetrics.tabs.height <= 36
+      && discoveryMetrics.firstTab.height <= 36
+      && discoveryMetrics.tokenPanel.top - discoveryMetrics.tabs.bottom <= 10
+      && discoveryMetrics.tokenPanel.top < viewport.height
+      && discoveryMetrics.personalizeBannerCount === 0
+      && discoveryMetrics.duplicateWalletActions === 0
+    );
+    assert.ok(discoveryTokenViewport, `${viewport.name}: Discovery navigation still crowds the token feed: ${JSON.stringify(discoveryMetrics)}`);
     return {
       name: viewport.name,
       width: viewport.width,
@@ -287,6 +389,8 @@ async function smokeViewport(browser, viewport) {
         fundingMeter: metrics.fundingRowCount >= 3,
         parityPanel: metrics.parityRowCount >= 3,
         firstViewportFit,
+        terminalPanelFit,
+        discoveryTokenViewport,
       },
     };
   } finally {

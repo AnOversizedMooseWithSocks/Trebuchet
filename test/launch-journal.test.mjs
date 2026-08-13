@@ -127,6 +127,45 @@ test('updates token, pool, and transfer state while filtering secrets', async (t
   assert.equal(rawText.includes('[1,2,3]'), false);
 });
 
+test('persists the armed launch recipe as one replaceable recovery snapshot', async (t) => {
+  const configDir = makeTempConfigDir(t);
+  const launchJournal = await importFreshLaunchJournal(configDir);
+  const walletPublicKey = 'WalletPlan22222222222222222222222222222222';
+
+  launchJournal.start({ walletPublicKey });
+  launchJournal.upsertForWallet(walletPublicKey, {
+    stage: 'launch_plan_armed',
+    launchConfig: {
+      schema: 'trebuchet-v2-launch-config',
+      source: 'trebuchet-v2',
+      token: { name: 'First plan', symbol: 'ONE', supply: '1000' },
+      poolTopology: {
+        sweepDestination: 'DestinationOne',
+        pools: [{ id: 'sol-main', quoteToken: 'SOL', supplyPercent: 100 }],
+      },
+      privateSigningKey: 'never-write-this',
+    },
+  });
+  launchJournal.upsertForWallet(walletPublicKey, {
+    launchConfig: {
+      schema: 'trebuchet-v2-launch-config',
+      source: 'trebuchet-v2',
+      token: { name: 'Replacement plan', symbol: 'TWO', supply: '2000' },
+      poolTopology: {
+        sweepDestination: 'DestinationTwo',
+        pools: [{ id: 'usdc-main', quoteToken: 'USDC', supplyPercent: 80 }],
+      },
+    },
+  });
+
+  const restored = launchJournal.activeForWallet(walletPublicKey);
+  assert.equal(restored.launchConfig.token.name, 'Replacement plan');
+  assert.equal(restored.launchConfig.poolTopology.sweepDestination, 'DestinationTwo');
+  assert.equal(restored.launchConfig.poolTopology.pools.length, 1);
+  assert.equal(restored.launchConfig.poolTopology.pools[0].id, 'usdc-main');
+  assert.equal('privateSigningKey' in restored.launchConfig, false);
+});
+
 test('archives journals without deleting history', async (t) => {
   const configDir = makeTempConfigDir(t);
   const launchJournal = await importFreshLaunchJournal(configDir);

@@ -29,6 +29,7 @@ const serverSrc = readFileSync(path.join(REPO, 'server.js'), 'utf8');
 
 const ROUTE_HANDLERS = {
   '/api/create-token': 'createTokenHandler',
+  '/api/finish-token-creation': 'finishTokenCreationHandler',
   '/api/create-lp': 'createLpHandler',
   '/api/resume-launch': 'resumeLaunchHandler',
   '/api/transfer-assets': 'transferAssetsHandler',
@@ -87,6 +88,7 @@ test('mutex infrastructure exists', () => {
 // duplicate never frees the running op's lock.
 for (const [route, op] of [
   ['/api/create-token', 'create-token'],
+  ['/api/finish-token-creation', 'finish-token-creation'],
   ['/api/create-lp', 'create-lp'],
   ['/api/resume-launch', 'resume-launch'],
   ['/api/transfer-assets', 'transfer-assets'],
