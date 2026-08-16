@@ -3494,6 +3494,19 @@ export async function createPoolsAndPositions({
   const ownerKeypair = Keypair.fromSecretKey(Uint8Array.from(tempWalletSecretKey));
   const raydium = await initSdk(ownerKeypair);
   const connection = raydium.connection;
+  const launchedMintCompatibility = await getMintCompatibilityWithRaydiumClmm(
+    connection,
+    new PublicKey(tokenMint),
+  );
+  if (!launchedMintCompatibility.compatible) {
+    const err = new Error(
+      `Launched token ${tokenMint} uses Token-2022 extensions Raydium CLMM does not support: `
+      + `${launchedMintCompatibility.disallowedNames.join(', ')}.`,
+    );
+    err.failedPhase = 'pre_flight';
+    err.partialResults = priorResults;
+    throw err;
+  }
 
   // -----------------------------------------------------------------------
   // 2. Compute launch USD price for the token: target_mc / supply
@@ -3848,8 +3861,8 @@ export async function createPoolsAndPositions({
   // -----------------------------------------------------------------------
   const launchedToken = {
     address: tokenMint,
-    programId: TOKEN_PROGRAM_ID.toBase58(),
-    decimals: tokenDecimals,
+    programId: launchedMintCompatibility.programId.toBase58(),
+    decimals: launchedMintCompatibility.decimals ?? tokenDecimals,
   };
 
   // -----------------------------------------------------------------------

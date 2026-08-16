@@ -4,10 +4,14 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 import {
+  buildV2RecoveryAuthorizationPlan,
   buildV2ExecutionReadiness,
   buildV2LaunchPlan,
   launchPlanConfigFingerprint,
+  launchPlanIntegrityDigest,
   launchPlanWalletFingerprint,
+  verifyLaunchPlan,
+  verifyV2RecoveryAuthorizationPlan,
   v2FundingEstimateFingerprint,
 } from '../v2LaunchPlan.js';
 
@@ -134,6 +138,9 @@ test('buildV2LaunchPlan returns a normalized local-wallet run contract', () => {
       sizeBytes: VALID_PNG_LOGO_BYTES.length,
       dataUrl: VALID_PNG_LOGO_DATA_URL,
     },
+    mintFormat: 'token-2022',
+    tokenProgram: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+    metadataStandard: 'token-2022-inline',
   });
   assert.deepEqual(plan.vanity, {
     mode: 'both',
@@ -226,6 +233,32 @@ test('removed collection configuration is ignored by the v2 launch contract', ()
   assert.equal(plan.operations.some((operation) => operation.id.includes('avatar')), false);
 });
 
+test('classic SPL remains available as an explicit mint compatibility profile', () => {
+  const plan = buildV2LaunchPlan({
+    token: {
+      name: 'Compatibility Token',
+      symbol: 'COMPAT',
+      supply: '1000',
+      mintFormat: 'classic-spl',
+    },
+    poolTopology: {
+      targetMarketCapUsd: 1000,
+      pools: [{
+        id: 'sol-main',
+        quoteToken: 'SOL',
+        quoteSymbol: 'SOL',
+        supplyPercent: 100,
+      }],
+    },
+  }, { demoMode: true });
+
+  assert.equal(plan.token.mintFormat, 'classic-spl');
+  assert.equal(plan.token.tokenProgram, 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+  assert.equal(plan.token.metadataStandard, 'metaplex-pda');
+  assert.equal(plan.operations.find((row) => row.id === 'v2-mint-metadata')?.effects[0],
+    'Creates COMPAT classic SPL mint with Metaplex metadata');
+});
+
 test('guided recipe identity is carried by the plan and bound to its fingerprint', () => {
   const base = {
     token: { name: 'First Token', symbol: 'FIRST', supply: '1000000000' },
@@ -271,6 +304,10 @@ test('guided recipe identity is carried by the plan and bound to its fingerprint
 });
 
 test('buildV2LaunchPlan rejects invalid launch config before staging', () => {
+  assert.throws(
+    () => buildV2LaunchPlan({ token: { name: 'Token', symbol: 'TOK', supply: '1000' }, mode: 'dryrun' }),
+    /Launch mode must be one of/,
+  );
   assert.throws(
     () => buildV2LaunchPlan({ token: { name: '', symbol: 'TOK', supply: '1000' } }),
     /Token name is required/,
@@ -404,6 +441,60 @@ test('buildV2LaunchPlan rejects invalid launch config before staging', () => {
       vanity: { prefix: 'MKT', suffix: 'K1T', selectedPublicKey: `MKT${'1'.repeat(26)}BAD` },
     }),
     /does not end with K1T/,
+  );
+});
+
+test('sealed launch plans verify with the reveal operation in dependency order', () => {
+  const plan = buildV2LaunchPlan({
+    walletPublicKey: VALID_ROUND_TRIP_DESTINATION,
+    token: { name: 'Stealth Token', symbol: 'STLTH', supply: '1000', sealedLaunch: true },
+    mode: 'guarded',
+  }, { demoMode: false, now: '2026-06-20T12:00:00.000Z' });
+
+  assert.deepEqual(plan.operations.slice(-3).map((operation) => operation.id), [
+    'v2-lock-liquidity',
+    'v2-reveal-metadata',
+    'v2-report-sweep',
+  ]);
+  assert.deepEqual(verifyLaunchPlan(plan).errors, []);
+});
+
+test('launch-plan verification rejects an explicit unsupported mode', () => {
+  const plan = buildV2LaunchPlan({
+    token: { name: 'Token', symbol: 'TOK', supply: '1000' },
+  }, { demoMode: true, now: '2026-06-20T12:00:00.000Z' });
+  plan.mode = 'dryrun';
+  plan.integrity.digest = launchPlanIntegrityDigest(plan);
+
+  assert.equal(verifyLaunchPlan(plan).errors.some((error) => error.code === 'INVALID_MODE'), true);
+});
+
+test('recovery authorization is a distinct one-operation integrity contract', () => {
+  const launchPlan = buildV2LaunchPlan({
+    walletPublicKey: VALID_ROUND_TRIP_DESTINATION,
+    token: { name: 'Token', symbol: 'TOK', supply: '1000' },
+  }, { demoMode: false, now: '2026-06-20T12:00:00.000Z' });
+  const recoveryPlan = buildV2RecoveryAuthorizationPlan({
+    launchPlan,
+    nextEndpoint: '/api/transfer-assets',
+    now: '2026-06-20T12:01:00.000Z',
+    operation: {
+      id: 'recovery-transfer-assets',
+      label: 'Complete final sweep',
+      endpoint: '/api/transfer-assets',
+      simulation: { decoded: true },
+    },
+  });
+
+  assert.equal(recoveryPlan.schema, 'trebuchet-recovery-authorization/v1');
+  assert.equal(recoveryPlan.operations.length, 1);
+  assert.equal(Object.hasOwn(recoveryPlan, 'funding'), false);
+  assert.equal(verifyV2RecoveryAuthorizationPlan(recoveryPlan).valid, true);
+
+  recoveryPlan.operations[0].endpoint = '/api/create-token';
+  assert.equal(
+    verifyV2RecoveryAuthorizationPlan(recoveryPlan).errors.some((error) => error.code === 'INVALID_ENDPOINT'),
+    true,
   );
 });
 
@@ -1113,6 +1204,7 @@ test('buildV2ExecutionReadiness maps a ready setup to classic create-token paylo
       sizeBytes: VALID_JPEG_LOGO_BYTES.length,
       dataUrl: VALID_JPEG_LOGO_DATA_URL,
     },
+    mintFormat: 'token-2022',
     vanityCAPublicKey: VALID_VANITY_PUBLIC_KEY,
     vanityPrefix: null,
     vanitySuffix: null,
@@ -2478,6 +2570,7 @@ test('server v2 report publish requires a complete launch-config snapshot', () =
   });
   const terminalTransferEvidenceHash = sandbox.v2TransferEvidenceHash(terminalTransfer);
   assert.ok(terminalTransferEvidenceHash);
+  assert.match(terminalTransferEvidenceHash, /^[a-f0-9]{64}$/);
   assert.notEqual(terminalTransferFingerprint, draftTransferFingerprint);
   assert.match(terminalTransferFingerprint, new RegExp(terminalTransferEvidenceHash));
   assert.match(terminalTransferFingerprint, /"terminalTransferEvidenceHash":/);
@@ -2800,8 +2893,11 @@ test('server exposes the v2 launch-plan contract as an authenticated API route',
   assert.match(serverSource, /buildV2LaunchPlan\(req\.body \|\| \{\}/);
   assert.match(
     serverSource,
-    /const fullPlan = buildV2LaunchPlan\(\{\s+\.\.\.config,\s+walletPublicKey,\s+\}, \{/,
+    /const canonicalPlan = buildV2LaunchPlan\(\{\s+\.\.\.config,\s+walletPublicKey,\s+\}, \{/,
   );
+  assert.match(serverSource, /RUN_ENVELOPE_PLAN_MISMATCH/);
+  assert.match(serverSource, /reviewedPlanDigest !== canonicalDigest/);
+  assert.match(serverSource, /buildV2RecoveryAuthorizationPlan\(\{/);
   assert.match(serverSource, /buildV2ExecutionReadiness\(config/);
   assert.match(serverSource, /requireCurrentFundingEstimate: true/);
   assert.match(serverSource, /invokeJsonHandler\(demoChainService\.handleCreateToken/);

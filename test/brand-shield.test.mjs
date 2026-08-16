@@ -177,11 +177,60 @@ test('remote metadata fingerprinting refuses hostnames that resolve to private n
     fetchImpl: async () => ({
       ok: true,
       status: 200,
+      headers: { get: (name) => name === 'content-length' ? '92' : null },
       text: async () => JSON.stringify({ name: 'XRAT', symbol: 'XRAT', image: 'https://arweave.net/xrat' }),
     }),
   });
   assert.equal(allowed.name, 'XRAT');
   assert.equal(allowed.metadataHash.length, 64);
+});
+
+test('remote metadata fingerprinting rejects oversized documents before buffering them', async () => {
+  let textRead = false;
+  const oversized = await fetchMetadataFingerprint('https://metadata.example/large.json', {
+    lookupImpl: async () => [{ address: '203.0.113.10', family: 4 }],
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name) => name === 'content-length' ? String((512 * 1024) + 1) : null },
+      text: async () => {
+        textRead = true;
+        return '{}';
+      },
+    }),
+  });
+
+  assert.equal(oversized, null);
+  assert.equal(textRead, false);
+});
+
+test('remote metadata fingerprinting cancels a stream that crosses the byte cap', async () => {
+  let readCount = 0;
+  let cancelled = false;
+  const oversized = await fetchMetadataFingerprint('https://metadata.example/stream.json', {
+    lookupImpl: async () => [{ address: '203.0.113.10', family: 4 }],
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: {
+        getReader() {
+          return {
+            async read() {
+              readCount += 1;
+              if (readCount <= 2) return { done: false, value: Buffer.alloc(300 * 1024) };
+              return { done: true };
+            },
+            async cancel() { cancelled = true; },
+          };
+        },
+      },
+    }),
+  });
+
+  assert.equal(oversized, null);
+  assert.equal(readCount, 2);
+  assert.equal(cancelled, true);
 });
 
 test('persistent Brand Shield registry records liquidity-collapse alerts', () => {

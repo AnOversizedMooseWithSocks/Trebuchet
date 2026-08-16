@@ -64,6 +64,9 @@ bind('createTokenBtn', 'click', async () => {
 
       createdTokenInfo = {
         mint: data.tokenMint,
+        mintFormat: data.mintFormat || 'token-2022',
+        tokenProgram: data.tokenProgram || 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+        metadataStandard: data.metadataStandard || 'token-2022-inline',
         decimals: data.decimals || 9,
         totalSupply: totalSupplyRaw,
         name: data.name || document.getElementById('tokenName').value.trim(),
@@ -79,6 +82,7 @@ bind('createTokenBtn', 'click', async () => {
         freezeAuthorityDisabled: data.freezeAuthorityDisabled === true,
         metadataUpdateAuthorityRevoked: data.metadataUpdateAuthorityRevoked === true,
         metadataImmutable: data.metadataImmutable === true,
+        metadataPointerAuthorityRevoked: data.metadataPointerAuthorityRevoked === true,
       };
 
       document.getElementById('tokenMintAddress').textContent = data.tokenMint;

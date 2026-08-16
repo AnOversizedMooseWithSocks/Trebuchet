@@ -22,9 +22,20 @@ import {
 
 const CONTRACT_VERSION = 1;
 export const TREBUCHET_PLAN_SCHEMA = 'trebuchet-launch-plan/v1';
+export const TREBUCHET_RECOVERY_AUTHORIZATION_SCHEMA = 'trebuchet-recovery-authorization/v1';
 export const TREBUCHET_CORE_PROTOCOL_VERSION = 1;
+export const TOKEN_MINT_FORMAT_TOKEN_2022 = 'token-2022';
+export const TOKEN_MINT_FORMAT_CLASSIC = 'classic-spl';
+export const TOKEN_2022_PROGRAM_ADDRESS = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+export const CLASSIC_TOKEN_PROGRAM_ADDRESS = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const TOKEN_DECIMALS = 9;
 const VALID_MODES = new Set(['guarded', 'operator', 'dry-run']);
+const VALID_RECOVERY_ENDPOINTS = new Set([
+  '/api/finish-token-creation',
+  '/api/resume-launch',
+  '/api/reveal-sealed-metadata',
+  '/api/transfer-assets',
+]);
 const DEFAULT_SOL_MINT = 'So11111111111111111111111111111111111111112';
 const DEFAULT_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const DEFAULT_MEME_FLYWHEEL_MINT = 'HipYKXiDh3Kjd1jb7ji6jCEsKQMSGWiFJMdtvH8yb5r';
@@ -69,6 +80,25 @@ const REQUIRED_OPERATION_IDS = Object.freeze([
   'v2-lock-liquidity',
   'v2-report-sweep',
 ]);
+const SEALED_REQUIRED_OPERATION_IDS = Object.freeze([
+  ...REQUIRED_OPERATION_IDS.slice(0, -1),
+  'v2-reveal-metadata',
+  REQUIRED_OPERATION_IDS.at(-1),
+]);
+
+export function normalizeTokenMintFormat(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['classic-spl', 'classic', 'spl', 'tokenkeg'].includes(normalized)) {
+    return TOKEN_MINT_FORMAT_CLASSIC;
+  }
+  return TOKEN_MINT_FORMAT_TOKEN_2022;
+}
+
+export function tokenProgramAddressForMintFormat(value) {
+  return normalizeTokenMintFormat(value) === TOKEN_MINT_FORMAT_CLASSIC
+    ? CLASSIC_TOKEN_PROGRAM_ADDRESS
+    : TOKEN_2022_PROGRAM_ADDRESS;
+}
 
 function transferSweepErrorCount(transfer = {}) {
   const tokenErrors = Array.isArray(transfer.tokenTransferErrors)
@@ -104,8 +134,12 @@ function normalizeLaunchSol(value) {
 }
 
 function normalizeMode(value) {
-  const mode = String(value || 'guarded').trim();
-  return VALID_MODES.has(mode) ? mode : 'guarded';
+  if (value === undefined || value === null || String(value).trim() === '') return 'guarded';
+  const mode = String(value).trim();
+  if (!VALID_MODES.has(mode)) {
+    throw new Error(`Launch mode must be one of: ${[...VALID_MODES].join(', ')}`);
+  }
+  return mode;
 }
 
 function numeric(value, fallback = 0) {
@@ -270,6 +304,7 @@ export function launchPlanConfigFingerprint(input = {}) {
       supply: normalizeV2TokenSupply(token.supply ?? input.tokenSupply ?? '1000000000'),
       description: token.description || null,
       decimals: token.decimals ?? TOKEN_DECIMALS,
+      mintFormat: normalizeTokenMintFormat(token.mintFormat ?? token.format),
       logo: launchPlanLogoFingerprint(token.logo),
       ...(token.sealedLaunch === true ? { sealedLaunch: true } : {}),
     },
@@ -1221,6 +1256,8 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
   const supply = normalizeV2TokenSupply(tokenInput.supply ?? input.tokenSupply ?? '1000000000');
   const description = normalizeTokenDescription(tokenInput.description ?? input.tokenDescription ?? '');
   const sealedLaunch = tokenInput.sealedLaunch === true;
+  const mintFormat = normalizeTokenMintFormat(tokenInput.mintFormat ?? tokenInput.format);
+  const tokenProgram = tokenProgramAddressForMintFormat(mintFormat);
   const logo = normalizeTokenLogo(tokenInput.logo || input.logo || null);
   const launchSol = normalizeLaunchSol(input.launchSol ?? input.funding?.launchSol ?? 0);
   const mode = normalizeMode(input.mode);
@@ -1307,7 +1344,9 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
       risk: 'Low',
       costSol: COST_TOKEN_CREATE_SOL + COST_TX_BUFFER_SOL,
       effects: [
-        `Creates ${symbol} SPL mint`,
+        mintFormat === TOKEN_MINT_FORMAT_TOKEN_2022
+          ? `Creates ${symbol} Token-2022 mint with self-contained metadata`
+          : `Creates ${symbol} classic SPL mint with Metaplex metadata`,
         description ? `Uploads metadata payload: ${description.slice(0, 80)}` : 'Uploads metadata payload',
         logo ? `Attaches token logo ${logo.name}` : 'Uses generated symbol mark until a logo is attached',
         'Creates launch vault token account',
@@ -1418,6 +1457,11 @@ export function buildV2LaunchPlan(input = {}, options = {}) {
       decimals: TOKEN_DECIMALS,
       description,
       logo,
+      mintFormat,
+      tokenProgram,
+      metadataStandard: mintFormat === TOKEN_MINT_FORMAT_TOKEN_2022
+        ? 'token-2022-inline'
+        : 'metaplex-pda',
       ...(sealedLaunch ? { sealedLaunch: true } : {}),
     },
     vanity,
@@ -1559,6 +1603,9 @@ export function verifyLaunchPlan(plan = {}) {
   if (plan.contractVersion !== CONTRACT_VERSION) {
     addError('UNSUPPORTED_CONTRACT', 'contractVersion', `Expected contract version ${CONTRACT_VERSION}.`);
   }
+  if (!VALID_MODES.has(String(plan.mode || ''))) {
+    addError('INVALID_MODE', 'mode', `Expected one of: ${[...VALID_MODES].join(', ')}.`);
+  }
   try {
     normalizeTokenName(plan.token?.name);
     normalizeTokenSymbol(plan.token?.symbol);
@@ -1569,9 +1616,12 @@ export function verifyLaunchPlan(plan = {}) {
 
   const operations = Array.isArray(plan.operations) ? plan.operations : [];
   const operationIds = operations.map((operation) => String(operation?.id || ''));
+  const requiredOperationIds = plan.token?.sealedLaunch === true
+    ? SEALED_REQUIRED_OPERATION_IDS
+    : REQUIRED_OPERATION_IDS;
   if (
-    operationIds.length !== REQUIRED_OPERATION_IDS.length
-    || REQUIRED_OPERATION_IDS.some((id, index) => operationIds[index] !== id)
+    operationIds.length !== requiredOperationIds.length
+    || requiredOperationIds.some((id, index) => operationIds[index] !== id)
   ) {
     addError('INVALID_OPERATIONS', 'operations', 'Launch operations are missing, reordered, or unsupported.');
   }
@@ -1604,6 +1654,80 @@ export function verifyLaunchPlan(plan = {}) {
   return {
     valid: errors.length === 0,
     schema: TREBUCHET_PLAN_SCHEMA,
+    protocolVersion: TREBUCHET_CORE_PROTOCOL_VERSION,
+    digest: expectedDigest,
+    errors,
+  };
+}
+
+export function buildV2RecoveryAuthorizationPlan({
+  launchPlan = {},
+  operation = null,
+  nextEndpoint = null,
+  now = null,
+} = {}) {
+  const endpoint = String(nextEndpoint || operation?.endpoint || '').trim();
+  if (!VALID_RECOVERY_ENDPOINTS.has(endpoint)) {
+    throw new Error('Recovery authorization requires an eligible recovery endpoint.');
+  }
+  if (!operation || typeof operation !== 'object' || Array.isArray(operation)) {
+    throw new Error('Recovery authorization requires exactly one decoded operation.');
+  }
+  const operationId = String(operation.id || '').trim();
+  if (!operationId) throw new Error('Recovery authorization operation requires an ID.');
+  const plan = {
+    schema: TREBUCHET_RECOVERY_AUTHORIZATION_SCHEMA,
+    protocolVersion: TREBUCHET_CORE_PROTOCOL_VERSION,
+    contractVersion: CONTRACT_VERSION,
+    id: `${String(launchPlan.id || 'launch')}:recovery:${operationId}`,
+    source: 'local-api',
+    authorizationKind: 'recovery',
+    generatedAt: now || new Date().toISOString(),
+    v2LaunchConfigFingerprint: launchPlan.v2LaunchConfigFingerprint || null,
+    v2LaunchWalletFingerprint: launchPlan.v2LaunchWalletFingerprint || null,
+    recovery: { nextEndpoint: endpoint },
+    operations: [{ ...operation, endpoint }],
+  };
+  return {
+    ...plan,
+    integrity: {
+      algorithm: 'sha256',
+      digest: launchPlanIntegrityDigest(plan),
+    },
+  };
+}
+
+export function verifyV2RecoveryAuthorizationPlan(plan = {}) {
+  const errors = [];
+  const addError = (code, path, message) => errors.push({ code, path, message });
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
+    addError('INVALID_PLAN', '$', 'Recovery authorization must be a JSON object.');
+    return { valid: false, schema: TREBUCHET_RECOVERY_AUTHORIZATION_SCHEMA, errors };
+  }
+  if (plan.schema !== TREBUCHET_RECOVERY_AUTHORIZATION_SCHEMA) {
+    addError('UNSUPPORTED_SCHEMA', 'schema', `Expected ${TREBUCHET_RECOVERY_AUTHORIZATION_SCHEMA}.`);
+  }
+  if (plan.protocolVersion !== TREBUCHET_CORE_PROTOCOL_VERSION) {
+    addError('UNSUPPORTED_PROTOCOL', 'protocolVersion', `Expected protocol version ${TREBUCHET_CORE_PROTOCOL_VERSION}.`);
+  }
+  if (plan.contractVersion !== CONTRACT_VERSION) {
+    addError('UNSUPPORTED_CONTRACT', 'contractVersion', `Expected contract version ${CONTRACT_VERSION}.`);
+  }
+  const operations = Array.isArray(plan.operations) ? plan.operations : [];
+  if (operations.length !== 1 || !String(operations[0]?.id || '').trim()) {
+    addError('INVALID_OPERATIONS', 'operations', 'Recovery authorization must contain exactly one decoded operation.');
+  }
+  const endpoint = String(plan.recovery?.nextEndpoint || '').trim();
+  if (!VALID_RECOVERY_ENDPOINTS.has(endpoint) || String(operations[0]?.endpoint || '').trim() !== endpoint) {
+    addError('INVALID_ENDPOINT', 'recovery.nextEndpoint', 'Recovery endpoint must match the authorized operation.');
+  }
+  const expectedDigest = launchPlanIntegrityDigest(plan);
+  if (plan.integrity?.algorithm !== 'sha256' || String(plan.integrity?.digest || '') !== expectedDigest) {
+    addError('INTEGRITY_MISMATCH', 'integrity', 'Recovery authorization digest does not match its contents.');
+  }
+  return {
+    valid: errors.length === 0,
+    schema: TREBUCHET_RECOVERY_AUTHORIZATION_SCHEMA,
     protocolVersion: TREBUCHET_CORE_PROTOCOL_VERSION,
     digest: expectedDigest,
     errors,
@@ -2112,6 +2236,7 @@ export function buildV2ExecutionReadiness(input = {}, context = {}) {
         description: plan.token.description,
         totalSupply: plan.token.supply,
         logo: plan.token.logo,
+        mintFormat: plan.token.mintFormat,
         ...(plan.token.sealedLaunch === true ? { sealedLaunch: true } : {}),
         vanityCAPublicKey: plan.vanity.selectedPublicKey || null,
         vanityPrefix: plan.vanity.selectedPublicKey ? null : plan.vanity.prefix || null,

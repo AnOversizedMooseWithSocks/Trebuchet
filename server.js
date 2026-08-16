@@ -16,6 +16,7 @@ import {
   getWalletQRCode,
   checkWalletBalance,
   findFundingWallet,
+  normalizeMintFormat,
   refreshConnection as refreshTokenServiceConnection,
 } from './tokenService.js';
 
@@ -81,8 +82,10 @@ import {
 import { normalizeDistribution } from './lpDistribution.js';
 import { isWalletEffectivelyEmpty } from './walletRecovery.js';
 import {
+  buildV2RecoveryAuthorizationPlan,
   buildV2ExecutionReadiness,
   buildV2LaunchPlan,
+  verifyLaunchPlan,
   v2FundingEstimateFingerprint,
 } from './v2LaunchPlan.js';
 import {
@@ -226,16 +229,11 @@ function v2RecoveryAuthorizationOperation(endpoint, readiness = {}) {
 }
 
 function v2RecoveryAuthorizationPlan(plan, endpoint, readiness) {
-  return {
-    ...plan,
-    source: 'recovery-journal',
-    authorizationKind: 'recovery',
-    recovery: {
-      ...(plan?.recovery && typeof plan.recovery === 'object' ? plan.recovery : {}),
-      nextEndpoint: endpoint,
-    },
-    operations: [v2RecoveryAuthorizationOperation(endpoint, readiness)],
-  };
+  return buildV2RecoveryAuthorizationPlan({
+    launchPlan: plan,
+    nextEndpoint: endpoint,
+    operation: v2RecoveryAuthorizationOperation(endpoint, readiness),
+  });
 }
 
 function stableJsonValue(value) {
@@ -2800,6 +2798,9 @@ function v2LaunchConfigSnapshotFromPlan(plan = {}, journal = null) {
       supply: tokenSource.supply || tokenSource.totalSupply || journalPoolPlan?.tokenTotalSupply || null,
       description: tokenSource.description || null,
       decimals: tokenSource.decimals ?? journalPoolPlan?.tokenDecimals ?? 9,
+      mintFormat: tokenSource.mintFormat || token.mintFormat || 'token-2022',
+      tokenProgram: tokenSource.tokenProgram || token.tokenProgram || null,
+      metadataStandard: tokenSource.metadataStandard || token.metadataStandard || null,
       logo,
       sealedLaunch: tokenSource.sealedLaunch === true,
     },
@@ -2878,6 +2879,8 @@ function v2ExecutionProofFromContext(context = {}, readiness = {}) {
     && tokenInfo?.freezeAuthorityDisabled === true
     && tokenInfo?.metadataUpdateAuthorityRevoked === true
     && tokenInfo?.metadataImmutable === true
+    && (tokenInfo?.mintFormat !== 'token-2022'
+      || tokenInfo?.metadataPointerAuthorityRevoked === true)
   );
   const reportableExecutionProof = Boolean(
     tokenMint
@@ -2931,6 +2934,10 @@ function v2ExecutionProofFromContext(context = {}, readiness = {}) {
       totalSupply: tokenInfo?.totalSupply ?? plan?.token?.supply ?? null,
       metadataUri: tokenInfo?.metadataUri || null,
       imageUri: tokenInfo?.imageUri || null,
+      mintFormat: tokenInfo?.mintFormat || plan?.token?.mintFormat || null,
+      tokenProgram: tokenInfo?.tokenProgram || plan?.token?.tokenProgram || null,
+      metadataStandard: tokenInfo?.metadataStandard || plan?.token?.metadataStandard || null,
+      metadataPointerAuthorityRevoked: tokenInfo?.metadataPointerAuthorityRevoked === true,
       mintAuthorityRenounced: tokenInfo?.mintAuthorityRenounced === true,
       freezeAuthorityDisabled: tokenInfo?.freezeAuthorityDisabled === true,
       metadataUpdateAuthorityRevoked: tokenInfo?.metadataUpdateAuthorityRevoked === true,
@@ -3045,12 +3052,58 @@ function v2NumberOrNull(value) {
 
 function v2StableHashString(value) {
   const text = String(value ?? '');
-  let hash = 0x811c9dc5;
+  const bytes = [];
   for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
+    let codePoint = text.codePointAt(index);
+    if (codePoint > 0xffff) index += 1;
+    if (codePoint <= 0x7f) bytes.push(codePoint);
+    else if (codePoint <= 0x7ff) bytes.push(0xc0 | (codePoint >>> 6), 0x80 | (codePoint & 0x3f));
+    else if (codePoint <= 0xffff) bytes.push(0xe0 | (codePoint >>> 12), 0x80 | ((codePoint >>> 6) & 0x3f), 0x80 | (codePoint & 0x3f));
+    else bytes.push(0xf0 | (codePoint >>> 18), 0x80 | ((codePoint >>> 12) & 0x3f), 0x80 | ((codePoint >>> 6) & 0x3f), 0x80 | (codePoint & 0x3f));
   }
-  return (hash >>> 0).toString(16).padStart(8, '0');
+  const bitLength = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  const high = Math.floor(bitLength / 0x100000000);
+  const low = bitLength >>> 0;
+  for (let shift = 24; shift >= 0; shift -= 8) bytes.push((high >>> shift) & 0xff);
+  for (let shift = 24; shift >= 0; shift -= 8) bytes.push((low >>> shift) & 0xff);
+  const rotate = (word, bits) => (word >>> bits) | (word << (32 - bits));
+  const constants = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+  const state = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  for (let offset = 0; offset < bytes.length; offset += 64) {
+    const words = new Array(64).fill(0);
+    for (let index = 0; index < 16; index += 1) {
+      const cursor = offset + (index * 4);
+      words[index] = ((bytes[cursor] << 24) | (bytes[cursor + 1] << 16) | (bytes[cursor + 2] << 8) | bytes[cursor + 3]) >>> 0;
+    }
+    for (let index = 16; index < 64; index += 1) {
+      const s0 = rotate(words[index - 15], 7) ^ rotate(words[index - 15], 18) ^ (words[index - 15] >>> 3);
+      const s1 = rotate(words[index - 2], 17) ^ rotate(words[index - 2], 19) ^ (words[index - 2] >>> 10);
+      words[index] = (words[index - 16] + s0 + words[index - 7] + s1) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, h] = state;
+    for (let index = 0; index < 64; index += 1) {
+      const sum1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25);
+      const choice = (e & f) ^ (~e & g);
+      const temp1 = (h + sum1 + choice + constants[index] + words[index]) >>> 0;
+      const sum0 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
+      const majority = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (sum0 + majority) >>> 0;
+      h = g; g = f; f = e; e = (d + temp1) >>> 0; d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
+    }
+    [a, b, c, d, e, f, g, h].forEach((word, index) => { state[index] = (state[index] + word) >>> 0; });
+  }
+  return state.map((word) => word.toString(16).padStart(8, '0')).join('');
 }
 
 function v2NormalizeAirdropEntry(row = {}) {
@@ -3355,10 +3408,14 @@ function v2ProofFromLaunchData(launchData = {}) {
       : launchData.destinationWallet || null,
     token: {
       mint: launchData?.token?.mint || launchData.mint || null,
+      mintFormat: launchData?.token?.mintFormat || null,
+      tokenProgram: launchData?.token?.tokenProgram || null,
+      metadataStandard: launchData?.token?.metadataStandard || null,
       mintAuthorityRenounced: authorities.mintAuthorityRenounced === true,
       freezeAuthorityDisabled: authorities.freezeAuthorityDisabled === true,
       metadataUpdateAuthorityRevoked: authorities.metadataUpdateAuthorityRevoked === true,
       metadataImmutable: authorities.metadataImmutable === true,
+      metadataPointerAuthorityRevoked: authorities.metadataPointerAuthorityRevoked === true,
     },
     liquidity: {
       poolIds: pools.map((pool) => pool?.poolId).filter(Boolean),
@@ -3983,6 +4040,10 @@ function v2LaunchDataReportCompletenessState(launchData = {}) {
     feeKeyRowCount,
   );
   const missingAuthorityFields = authorityFields.filter((field) => authorities[field] !== true);
+  if (launchData?.token?.mintFormat === 'token-2022'
+      && authorities.metadataPointerAuthorityRevoked !== true) {
+    missingAuthorityFields.push('metadataPointerAuthorityRevoked');
+  }
   const poolRowsMissingCreateProof = pools.filter((pool) => (
     !v2TrimmedText(pool?.poolId || pool?.id)
     || !v2TrimmedText(pool?.createPoolTx || pool?.txIds?.createPool)
@@ -4620,6 +4681,8 @@ app.post('/api/v2/run-envelope/arm', async (req, res) => {
     const config = req.body?.config || {};
     const fundingEstimate = req.body?.fundingEstimate || null;
     const recoveryEndpoint = String(req.body?.recoveryEndpoint || '').trim();
+    const reviewedPlan = req.body?.reviewedPlan || null;
+    const reviewedPlanDigest = String(req.body?.reviewedPlanDigest || '').trim().toLowerCase();
     if (!walletPublicKey) {
       return res.status(400).json({ success: false, error: 'walletPublicKey required' });
     }
@@ -4676,12 +4739,32 @@ app.post('/api/v2/run-envelope/arm', async (req, res) => {
         });
       }
     }
-    const fullPlan = buildV2LaunchPlan({
+    const canonicalPlan = buildV2LaunchPlan({
       ...config,
       walletPublicKey,
     }, {
       demoMode,
+      ...(reviewedPlan?.generatedAt ? { now: reviewedPlan.generatedAt } : {}),
     });
+    if (!recoveryEndpoint) {
+      const reviewedPlanVerification = verifyLaunchPlan(reviewedPlan);
+      const submittedDigest = String(reviewedPlan?.integrity?.digest || '').trim().toLowerCase();
+      const canonicalDigest = String(canonicalPlan.integrity?.digest || '').trim().toLowerCase();
+      if (
+        !reviewedPlanVerification.valid
+        || !/^[a-f0-9]{64}$/.test(reviewedPlanDigest)
+        || reviewedPlanDigest !== submittedDigest
+        || reviewedPlanDigest !== canonicalDigest
+      ) {
+        return res.status(409).json({
+          success: false,
+          code: 'RUN_ENVELOPE_PLAN_MISMATCH',
+          error: 'The launch plan changed after review. Stage and review the current plan before arming.',
+          planErrors: reviewedPlanVerification.errors,
+        });
+      }
+    }
+    const fullPlan = canonicalPlan;
     const plan = recoveryEndpoint
       ? v2RecoveryAuthorizationPlan(fullPlan, recoveryEndpoint, recoveryReadiness)
       : fullPlan;
@@ -4702,6 +4785,7 @@ app.post('/api/v2/run-envelope/arm', async (req, res) => {
       maxSpendSol: recoveryEndpoint ? null : Math.max(plan.funding.estimatedSolCost, fundingTotalSol),
       authorizationKind: recoveryEndpoint ? 'recovery' : 'launch',
       nextEndpoint: recoveryEndpoint || null,
+      planDigest: plan.integrity?.digest || null,
       configFingerprint: fullPlan.v2LaunchConfigFingerprint,
       walletFingerprint: fullPlan.v2LaunchWalletFingerprint,
       fundingEstimateHash: demoMode || recoveryEndpoint ? null : v2RunEnvelopeFundingHash(fundingEstimate),
@@ -5053,6 +5137,12 @@ function recordTokenJournalProgress(walletPublicKey, event) {
   if (event.metadataHash) token.metadataHash = event.metadataHash;
   if (event.imageUri) token.imageUri = event.imageUri;
   if (event.onChainMetadataUri) token.onChainMetadataUri = event.onChainMetadataUri;
+  if (event.mintFormat) token.mintFormat = event.mintFormat;
+  if (event.tokenProgram) token.tokenProgram = event.tokenProgram;
+  if (event.metadataStandard) token.metadataStandard = event.metadataStandard;
+  if (typeof event.metadataPointerAuthorityRevoked === 'boolean') {
+    token.metadataPointerAuthorityRevoked = event.metadataPointerAuthorityRevoked;
+  }
   if (typeof event.sealedLaunch === 'boolean') token.sealedLaunch = event.sealedLaunch;
   if (typeof event.sealedMetadataPending === 'boolean') {
     token.sealedMetadataPending = event.sealedMetadataPending;
@@ -5605,7 +5695,8 @@ async function finishTokenCreationHandler(req, res) {
         error: 'No interrupted token creation found for this wallet (no recorded mint).',
       });
     }
-    const { mint, name, symbol, totalSupply, metadataUri } = journal.token;
+    const { mint, name, symbol, totalSupply } = journal.token;
+    const metadataUri = journal.token.onChainMetadataUri || journal.token.metadataUri;
     if (totalSupply == null) {
       return res.status(409).json({
         success: false,
@@ -5620,6 +5711,7 @@ async function finishTokenCreationHandler(req, res) {
       symbol,
       totalSupply,
       metadataUri,
+      metadataHash: journal.token.metadataHash,
       journalEvents: journal.events || [],
       sealedLaunch: journal.token.sealedLaunch === true,
       onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
@@ -5638,6 +5730,11 @@ async function finishTokenCreationHandler(req, res) {
         token: {
           ...journal.token,
           mintAuthorityRenounced: status.mintAuthorityRenounced,
+          mintFormat: status.mintFormat || journal.token.mintFormat,
+          tokenProgram: status.tokenProgram || journal.token.tokenProgram,
+          metadataStandard: status.metadataStandard || journal.token.metadataStandard,
+          metadataPointerAuthorityRevoked: status.metadataPointerAuthorityRevoked
+            ?? journal.token.metadataPointerAuthorityRevoked,
           metadataUpdateAuthorityRevoked: status.updateAuthorityRevoked,
           metadataImmutable: status.updateAuthorityRevoked && journal.token.sealedLaunch !== true,
           sealedMetadataPending: status.sealedMetadataPending === true,
@@ -5743,6 +5840,7 @@ async function revealSealedMetadataForJournal({ walletPublicKey, secretKeyArr })
     name: token.name,
     symbol: token.symbol,
     metadataUri: token.metadataUri,
+    metadataHash: token.metadataHash,
     onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
   });
   launchJournal.update(
@@ -5755,6 +5853,11 @@ async function revealSealedMetadataForJournal({ walletPublicKey, secretKeyArr })
       token: {
         sealedMetadataPending: false,
         onChainMetadataUri: token.metadataUri,
+        mintFormat: result.mintFormat || token.mintFormat,
+        tokenProgram: result.tokenProgram || token.tokenProgram,
+        metadataStandard: result.metadataStandard || token.metadataStandard,
+        metadataPointerAuthorityRevoked: result.metadataPointerAuthorityRevoked
+          ?? token.metadataPointerAuthorityRevoked,
         metadataUpdateAuthorityRevoked: true,
         metadataImmutable: true,
         isSafe: true,
@@ -5846,9 +5949,11 @@ async function createTokenHandler(req, res) {
       vanityCAKeypair: vanityCAKeypairRaw,
       vanityCAPublicKey,
       sealedLaunch,
+      mintFormat,
     } = req.body;
 
     const useSealedLaunch = sealedLaunch === true || sealedLaunch === 'true' || sealedLaunch === '1';
+    const normalizedMintFormat = normalizeMintFormat(mintFormat);
 
     if ((req.body.walletPublicKey || vanityCAPublicKey)
         && rejectIfSecretPinLocked(res, 'creating a token with saved recovery secrets')) {
@@ -5915,6 +6020,7 @@ async function createTokenHandler(req, res) {
           symbol: normalizedSymbol,
           totalSupply: normalizedTotalSupply,
           decimals: 9,
+          mintFormat: normalizedMintFormat,
           sealedLaunch: useSealedLaunch,
           sealedMetadataPending: useSealedLaunch,
         },
@@ -5953,6 +6059,7 @@ async function createTokenHandler(req, res) {
       vanitySuffix: normalizedVanitySuffix || null,
       vanityCAKeypair,
       sealedLaunch: useSealedLaunch,
+      mintFormat: normalizedMintFormat,
       onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
     });
     if (vanityCAPublicKey) {
@@ -5975,6 +6082,10 @@ async function createTokenHandler(req, res) {
           metadataHash: result.metadataHash || null,
           imageUri: result.imageUri || null,
           onChainMetadataUri: result.onChainMetadataUri || result.metadataUri,
+          mintFormat: result.mintFormat,
+          tokenProgram: result.tokenProgram,
+          metadataStandard: result.metadataStandard,
+          metadataPointerAuthorityRevoked: result.metadataPointerAuthorityRevoked,
           isSafe: result.isSafe,
           mintAuthorityRenounced: result.mintAuthorityRenounced,
           freezeAuthorityDisabled: result.freezeAuthorityDisabled,
@@ -7741,11 +7852,23 @@ app.get('/api/diagnose-launch', async (req, res) => {
         if (userWalletParam) {
           // Fast path: scan the user's wallet for position NFTs
           const userPk = new PublicKey(userWalletParam);
-          const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-            userPk,
-            { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
-          );
-          for (const ta of tokenAccounts.value) {
+          const tokenAccounts = [];
+          for (const programAddress of [
+            'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+            'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+          ]) {
+            try {
+              const accountsForProgram = await connection.getParsedTokenAccountsByOwner(
+                userPk,
+                { programId: new PublicKey(programAddress) },
+              );
+              tokenAccounts.push(...accountsForProgram.value);
+            } catch {
+              // Some RPC providers disable parsed Token-2022 scans. Keep
+              // diagnostics useful with whichever program query succeeded.
+            }
+          }
+          for (const ta of tokenAccounts) {
             const info = ta.account.data.parsed.info;
             // Position NFTs: decimals=0, amount=1
             if (info.tokenAmount.decimals !== 0 || info.tokenAmount.uiAmount !== 1) continue;

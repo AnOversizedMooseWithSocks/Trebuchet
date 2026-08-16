@@ -204,7 +204,55 @@ async function publicMetadataUrl(uri, lookupImpl) {
   }
 }
 
-export async function fetchMetadataFingerprint(uri, {
+async function readBoundedMetadataText(response, maxBytes = MAX_METADATA_BYTES) {
+  const declaredLengthHeader = response?.headers?.get?.('content-length');
+  const declaredLength = declaredLengthHeader === null
+    || declaredLengthHeader === undefined
+    || String(declaredLengthHeader).trim() === ''
+    ? null
+    : Number(declaredLengthHeader);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error('Metadata document exceeds the download limit.');
+  }
+  const chunks = [];
+  let totalBytes = 0;
+  const append = (value) => {
+    const chunk = Buffer.from(value || []);
+    totalBytes += chunk.length;
+    if (totalBytes > maxBytes) throw new Error('Metadata document exceeds the download limit.');
+    chunks.push(chunk);
+  };
+  if (response?.body?.getReader) {
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        append(value);
+      }
+    } catch (error) {
+      await reader.cancel?.().catch?.(() => null);
+      throw error;
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  }
+  if (response?.body?.[Symbol.asyncIterator]) {
+    for await (const chunk of response.body) append(chunk);
+    return Buffer.concat(chunks).toString('utf8');
+  }
+  // Real fetch Responses always expose a stream. This narrow fallback exists
+  // for deterministic test adapters and only accepts a declared bounded size.
+  if (Number.isFinite(declaredLength) && declaredLength >= 0 && typeof response?.text === 'function') {
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') > maxBytes) {
+      throw new Error('Metadata document exceeds the download limit.');
+    }
+    return text;
+  }
+  throw new Error('Metadata response does not support bounded streaming.');
+}
+
+export async function fetchMetadataDocument(uri, {
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
   lookupImpl = dns.lookup,
@@ -229,21 +277,26 @@ export async function fetchMetadataFingerprint(uri, {
       if (!url) return null;
     }
     if (!response.ok) return null;
-    const text = await response.text();
-    if (Buffer.byteLength(text, 'utf8') > MAX_METADATA_BYTES) return null;
+    const text = await readBoundedMetadataText(response);
     const json = JSON.parse(text);
     if (!json || typeof json !== 'object' || Array.isArray(json)) return null;
-    return {
-      metadataHash: metadataDocumentHash(json),
-      imageUri: normalizedUri(json.image) || null,
-      name: String(json.name || '').trim() || null,
-      symbol: String(json.symbol || '').trim() || null,
-    };
+    return json;
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function fetchMetadataFingerprint(uri, options = {}) {
+  const json = await fetchMetadataDocument(uri, options);
+  if (!json) return null;
+  return {
+    metadataHash: metadataDocumentHash(json),
+    imageUri: normalizedUri(json.image) || null,
+    name: String(json.name || '').trim() || null,
+    symbol: String(json.symbol || '').trim() || null,
+  };
 }
 
 function matchSignals(candidate, launch) {

@@ -35,6 +35,7 @@ import {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
   unpackMint,
+  getTokenMetadata as getToken2022Metadata,
 } from '@solana/spl-token';
 import Decimal from 'decimal.js';
 import { getRpcUrl } from './rpcConfig.js';
@@ -207,6 +208,7 @@ async function readOnChainBasics(mintAddress, rpcUrl = getRpcUrl()) {
   // getMint and getAccountInfo separately.
   const [mintInfo, metadataInfo] = await connection.getMultipleAccountsInfo(
     [mintPubkey, metadataPDA],
+    'confirmed',
   );
 
   if (!mintInfo) {
@@ -248,6 +250,31 @@ async function readOnChainBasics(mintAddress, rpcUrl = getRpcUrl()) {
     } catch (e) {
       console.warn(
         `tokenInfoService: failed to parse Metaplex metadata for ${mintAddress}: ${e.message}`,
+      );
+    }
+  }
+
+  // Trebuchet-native Token-2022 launches keep the canonical name, symbol,
+  // URI, and provenance commitment inside the mint via TokenMetadata. This
+  // path is independent of Metaplex/Helius indexing and therefore works as
+  // soon as the mint is finalized. A Metaplex PDA remains a fallback for
+  // third-party Token-2022 assets that use the older convention.
+  if (programIdPk.equals(TOKEN_2022_PROGRAM_ID)) {
+    try {
+      const inline = await getToken2022Metadata(
+        connection,
+        mintPubkey,
+        'confirmed',
+        TOKEN_2022_PROGRAM_ID,
+      );
+      if (inline) {
+        symbol = inline.symbol || symbol;
+        name = inline.name || name;
+        uri = inline.uri || uri;
+      }
+    } catch (e) {
+      console.warn(
+        `tokenInfoService: failed to read Token-2022 inline metadata for ${mintAddress}: ${e.message}`,
       );
     }
   }

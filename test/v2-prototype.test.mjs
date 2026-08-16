@@ -3150,7 +3150,8 @@ test('v2 six-phase launch procedure preserves the complete v1 feature set withou
   assert.match(js, /targetMarketCapUsd/);
   assert.match(js, /Launch market cap/);
   assert.match(js, /buildV2ReportPositionAuditRecord/);
-  assert.match(js, /tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'/);
+  assert.match(js, /TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb/);
+  assert.match(js, /TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA/);
   assert.match(js, /allocatedToPoolsPercent/);
   assert.match(js, /preallocationPercent/);
   assert.match(js, /explicitPreallocationPercent/);
@@ -11020,6 +11021,9 @@ test('v2 API client manages Trebuchet local wallets and run envelopes', async ()
         assert.equal(init.headers['x-trebuchet-session'], 'wallet-token');
         assert.match(init.body, /Generated111/);
         assert.match(init.body, /v2FundingFingerprint/);
+        const body = JSON.parse(init.body);
+        assert.equal(body.reviewedPlan.integrity.digest, 'a'.repeat(64));
+        assert.equal(body.reviewedPlanDigest, 'a'.repeat(64));
         return jsonResponse({
           success: true,
           envelope: { id: 'run-1', status: 'armed', walletPublicKey: 'Generated111' },
@@ -11091,6 +11095,8 @@ test('v2 API client manages Trebuchet local wallets and run envelopes', async ()
     walletPublicKey: generated.publicKey,
     config: { token: { name: 'MoonKit', symbol: 'MKT', supply: '1000' } },
     fundingEstimate: { totalSol: 1.25, v2FundingFingerprint: 'funding-current' },
+    reviewedPlan: { integrity: { algorithm: 'sha256', digest: 'a'.repeat(64) } },
+    reviewedPlanDigest: 'a'.repeat(64),
   });
   const executed = await client.executeNextRunOperation({
     walletPublicKey: generated.publicKey,

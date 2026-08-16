@@ -762,10 +762,26 @@
       return data.wallet;
     }
 
-    async function armRunEnvelope({ walletPublicKey, config, fundingEstimate, recoveryEndpoint, localDossier }) {
+    async function armRunEnvelope({
+      walletPublicKey,
+      config,
+      fundingEstimate,
+      recoveryEndpoint,
+      localDossier,
+      reviewedPlan,
+      reviewedPlanDigest,
+    }) {
       const data = await request(V2_RUN_ARM_PATH, {
         method: 'POST',
-        body: { walletPublicKey, config, fundingEstimate, recoveryEndpoint, localDossier },
+        body: {
+          walletPublicKey,
+          config,
+          fundingEstimate,
+          recoveryEndpoint,
+          localDossier,
+          reviewedPlan,
+          reviewedPlanDigest,
+        },
       });
       if (!data?.envelope) {
         throw new V2ApiError('Run envelope response missing envelope.', { code: 'BAD_RUN_ENVELOPE' });

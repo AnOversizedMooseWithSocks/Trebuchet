@@ -56,7 +56,7 @@
     "contractVersion": 1,
     "id": "v2-one-1000000000-dry-run",
     "generatedAt": "2026-08-09T00:00:00.000Z",
-    "configFingerprint": "{\"experience\":{\"mode\":\"guided\",\"recipeId\":\"simple-sol-v1\"},\"funding\":{\"launchSol\":1,\"targetMarketCapUsd\":250000},\"launchSol\":1,\"mode\":\"dry-run\",\"poolTopology\":{\"airdrop\":{\"enabled\":false,\"recipients\":[],\"supplyPercent\":0},\"pools\":[{\"distribution\":[{\"sharePercent\":100}],\"id\":\"sol-main\",\"ladder\":{\"mode\":\"off\"},\"quoteMint\":\"So11111111111111111111111111111111111111112\",\"quoteSymbol\":\"SOL\",\"supplyPercent\":80,\"support\":{\"mode\":\"off\"}}],\"preallocation\":{\"enabled\":true,\"source\":\"team\",\"supplyPercent\":20},\"report\":{\"publish\":false},\"sweepDestination\":\"11111111111111111111111111111116\",\"targetMarketCapUsd\":250000},\"token\":{\"decimals\":9,\"description\":\"Golden fixture\",\"logo\":null,\"name\":\"Launch One\",\"supply\":\"1000000000\",\"symbol\":\"one\"},\"vanity\":null}",
+    "configFingerprint": "{\"experience\":{\"mode\":\"guided\",\"recipeId\":\"simple-sol-v1\"},\"funding\":{\"launchSol\":1,\"targetMarketCapUsd\":250000},\"launchSol\":1,\"mode\":\"dry-run\",\"poolTopology\":{\"airdrop\":{\"enabled\":false,\"recipients\":[],\"supplyPercent\":0},\"pools\":[{\"distribution\":[{\"sharePercent\":100}],\"id\":\"sol-main\",\"ladder\":{\"mode\":\"off\"},\"quoteMint\":\"So11111111111111111111111111111111111111112\",\"quoteSymbol\":\"SOL\",\"supplyPercent\":80,\"support\":{\"mode\":\"off\"}}],\"preallocation\":{\"enabled\":true,\"source\":\"team\",\"supplyPercent\":20},\"report\":{\"publish\":false},\"sweepDestination\":\"11111111111111111111111111111116\",\"targetMarketCapUsd\":250000},\"token\":{\"decimals\":9,\"description\":\"Golden fixture\",\"logo\":null,\"mintFormat\":\"token-2022\",\"name\":\"Launch One\",\"supply\":\"1000000000\",\"symbol\":\"one\"},\"vanity\":null}",
     "walletFingerprint": "11111111111111111111111111111115",
     "estimatedSolCost": 1.17,
     "operationIds": [
@@ -68,6 +68,6 @@
       "v2-lock-liquidity",
       "v2-report-sweep"
     ],
-    "integrityDigest": "b8ccea4a38b1ab9bd3c6a675bfaf0389a00239874430cdfd2f32128aecf38089"
+    "integrityDigest": "dd5091f68983616cd7d15d87d7814296044f4eb81abaed5c27da4ebed273eb4c"
   }
 }

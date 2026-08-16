@@ -61,6 +61,10 @@ function proofCompletenessIssues(proof = {}) {
   REQUIRED_AUTHORITY_FIELDS.forEach((field) => {
     if (proof?.token?.[field] !== true) issues.push(`${field} is not confirmed`);
   });
+  if (proof?.token?.mintFormat === 'token-2022'
+      && proof?.token?.metadataPointerAuthorityRevoked !== true) {
+    issues.push('metadataPointerAuthorityRevoked is not confirmed');
+  }
 
   const pools = Array.isArray(proof?.liquidity?.results) ? proof.liquidity.results : [];
   if (!pools.length) issues.push('liquidity pool evidence is missing');

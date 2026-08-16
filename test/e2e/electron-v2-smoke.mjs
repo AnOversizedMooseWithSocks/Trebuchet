@@ -70,7 +70,13 @@ async function launchRouteSmoke({ classic = false } = {}) {
       ), null, { timeout: 30_000 });
       assert.equal(await page.getAttribute('body', 'data-experience-mode'), 'guided');
       assert.equal(await page.isVisible('.sidebar'), false, 'Guided Mode should use the focused tutorial shell');
-      await page.click('[data-action="select-experience"][data-experience="advanced"]');
+      // The renderer keeps desktop and compact experience controls in the DOM
+      // so responsive layout can switch without rebuilding launch state. Click
+      // the active layout's control instead of whichever duplicate appears
+      // first in document order.
+      await page.locator(
+        '[data-action="select-experience"][data-experience="advanced"]:visible',
+      ).first().click();
       await page.waitForSelector('.sidebar', { state: 'visible' });
       await page.click('[data-view="wallet"]');
       await page.click('[data-action="import-wallet"]');

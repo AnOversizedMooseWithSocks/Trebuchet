@@ -1609,10 +1609,13 @@ function buildLaunchReportData(lp) {
     })(),
     token: {
       mint: createdTokenInfo?.mint || null,
-      // Trebuchet mints classic SPL tokens; recording the program id lets a
-      // verifier confirm there are no Token-2022 extensions (transfer
-      // hooks, pausable, etc.) without guessing.
-      tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+      mintFormat: createdTokenInfo?.mintFormat || 'classic-spl',
+      tokenProgram: createdTokenInfo?.tokenProgram
+        || (createdTokenInfo?.mintFormat === 'token-2022'
+          ? 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+          : 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+      metadataStandard: createdTokenInfo?.metadataStandard
+        || (createdTokenInfo?.mintFormat === 'token-2022' ? 'token-2022-inline' : 'metaplex-pda'),
       metadataUri: createdTokenInfo?.metadataUri || null,
       // Safety facts recorded at creation time. Each is independently
       // verifiable on-chain: mint/freeze authority from the mint account
@@ -1625,6 +1628,7 @@ function buildLaunchReportData(lp) {
         freezeAuthorityDisabled: createdTokenInfo?.freezeAuthorityDisabled === true,
         metadataUpdateAuthorityRevoked: createdTokenInfo?.metadataUpdateAuthorityRevoked === true,
         metadataImmutable: createdTokenInfo?.metadataImmutable === true,
+        metadataPointerAuthorityRevoked: createdTokenInfo?.metadataPointerAuthorityRevoked === true,
       },
     },
     pools: results.map((r) => ({

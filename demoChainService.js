@@ -50,6 +50,7 @@ const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 // Classic SPL token program id — the only programId the demo ledger ever
 // reports. Token-2022 specifics don't matter for a UI walkthrough.
 const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
 // Known quote-token metadata, keyed by both symbol and mint so a pool
 // configured either way resolves cleanly.
@@ -520,6 +521,7 @@ export async function handleCreateToken(req, res) {
       vanityCAKeypair: vanityCAKeypairRaw,
       vanityPrefix,
       vanitySuffix,
+      mintFormat = 'token-2022',
     } = req.body;
 
     const decimals = 9;
@@ -587,10 +589,22 @@ export async function handleCreateToken(req, res) {
       mint = demoAddress();
     }
     const metadataUri = `https://arweave.net/${demoAddress()}`;
+    const normalizedMintFormat = mintFormat === 'classic-spl' ? 'classic-spl' : 'token-2022';
+    const tokenProgram = normalizedMintFormat === 'classic-spl'
+      ? TOKEN_PROGRAM_ID
+      : TOKEN_2022_PROGRAM_ID;
 
     // Record the token and credit the full supply to the launch wallet.
-    st.createdTokens.push({ mint, name, symbol, decimals, totalSupply: supplyNum });
-    creditToken(st, mint, rawFromWhole(supplyNum, decimals), decimals);
+    st.createdTokens.push({
+      mint,
+      name,
+      symbol,
+      decimals,
+      totalSupply: supplyNum,
+      mintFormat: normalizedMintFormat,
+      tokenProgram,
+    });
+    creditToken(st, mint, rawFromWhole(supplyNum, decimals), decimals, tokenProgram);
 
     console.log(`[demo] token created: ${mint}`);
 
@@ -602,6 +616,12 @@ export async function handleCreateToken(req, res) {
       tokenMint: mint,
       decimals,
       metadataUri,
+      mintFormat: normalizedMintFormat,
+      tokenProgram,
+      metadataStandard: normalizedMintFormat === 'classic-spl'
+        ? 'metaplex-pda'
+        : 'token-2022-inline',
+      metadataPointerAuthorityRevoked: normalizedMintFormat === 'token-2022',
       isSafe: true,
       mintAndFreezeAuthoritiesSafe: true,
       mintAuthorityRenounced: true,

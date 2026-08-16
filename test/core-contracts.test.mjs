@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
@@ -116,6 +117,24 @@ test('Core independently verifies stored proof fingerprints', () => {
   const invalid = core.verifyProof(payload);
   assert.equal(invalid.valid, false);
   assert.ok(invalid.errors.some(({ code }) => code === 'FINGERPRINT_MISMATCH'));
+});
+
+test('terminal transfer evidence uses a full SHA-256 digest', () => {
+  const transfer = {
+    destinationWallet: 'Destination111',
+    status: 'completed',
+    walletEmpty: true,
+  };
+  const canonicalEvidence = JSON.stringify({
+    destinationWallet: 'Destination111',
+    status: 'completed',
+    walletEmpty: true,
+    rows: [],
+  });
+  const expected = crypto.createHash('sha256').update(canonicalEvidence).digest('hex');
+
+  assert.equal(v2TransferEvidenceHash(transfer), expected);
+  assert.match(expected, /^[a-f0-9]{64}$/);
 });
 
 test('Core rejects fabricated, incomplete, and unbound proof objects', () => {

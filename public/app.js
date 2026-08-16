@@ -13753,10 +13753,13 @@ function buildLaunchReportData(lp) {
     })(),
     token: {
       mint: createdTokenInfo?.mint || null,
-      // Trebuchet mints classic SPL tokens; recording the program id lets a
-      // verifier confirm there are no Token-2022 extensions (transfer
-      // hooks, pausable, etc.) without guessing.
-      tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+      mintFormat: createdTokenInfo?.mintFormat || 'classic-spl',
+      tokenProgram: createdTokenInfo?.tokenProgram
+        || (createdTokenInfo?.mintFormat === 'token-2022'
+          ? 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+          : 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+      metadataStandard: createdTokenInfo?.metadataStandard
+        || (createdTokenInfo?.mintFormat === 'token-2022' ? 'token-2022-inline' : 'metaplex-pda'),
       metadataUri: createdTokenInfo?.metadataUri || null,
       // Safety facts recorded at creation time. Each is independently
       // verifiable on-chain: mint/freeze authority from the mint account
@@ -13769,6 +13772,7 @@ function buildLaunchReportData(lp) {
         freezeAuthorityDisabled: createdTokenInfo?.freezeAuthorityDisabled === true,
         metadataUpdateAuthorityRevoked: createdTokenInfo?.metadataUpdateAuthorityRevoked === true,
         metadataImmutable: createdTokenInfo?.metadataImmutable === true,
+        metadataPointerAuthorityRevoked: createdTokenInfo?.metadataPointerAuthorityRevoked === true,
       },
     },
     pools: results.map((r) => ({
@@ -15942,6 +15946,9 @@ bind('createTokenBtn', 'click', async () => {
 
       createdTokenInfo = {
         mint: data.tokenMint,
+        mintFormat: data.mintFormat || 'token-2022',
+        tokenProgram: data.tokenProgram || 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+        metadataStandard: data.metadataStandard || 'token-2022-inline',
         decimals: data.decimals || 9,
         totalSupply: totalSupplyRaw,
         name: data.name || document.getElementById('tokenName').value.trim(),
@@ -15957,6 +15964,7 @@ bind('createTokenBtn', 'click', async () => {
         freezeAuthorityDisabled: data.freezeAuthorityDisabled === true,
         metadataUpdateAuthorityRevoked: data.metadataUpdateAuthorityRevoked === true,
         metadataImmutable: data.metadataImmutable === true,
+        metadataPointerAuthorityRevoked: data.metadataPointerAuthorityRevoked === true,
       };
 
       document.getElementById('tokenMintAddress').textContent = data.tokenMint;
@@ -19450,6 +19458,15 @@ function prepareRecoveredSessionFromJournal(journal, wallet) {
   fundingDetectionExhausted = false;
   createdTokenInfo = {
     mint: journal.token.mint,
+    mintFormat: journal.token.mintFormat || 'classic-spl',
+    tokenProgram: journal.token.tokenProgram || (
+      journal.token.mintFormat === 'token-2022'
+        ? 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+        : 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+    ),
+    metadataStandard: journal.token.metadataStandard || (
+      journal.token.mintFormat === 'token-2022' ? 'token-2022-inline' : 'metaplex-pda'
+    ),
     decimals: journal.token.decimals || journal.poolPlan?.tokenDecimals || 9,
     totalSupply: journal.token.totalSupply || journal.poolPlan?.tokenTotalSupply,
     name: journal.token.name || '',
@@ -19463,6 +19480,7 @@ function prepareRecoveredSessionFromJournal(journal, wallet) {
     freezeAuthorityDisabled: journal.token.freezeAuthorityDisabled === true,
     metadataUpdateAuthorityRevoked: journal.token.metadataUpdateAuthorityRevoked === true,
     metadataImmutable: journal.token.metadataImmutable === true,
+    metadataPointerAuthorityRevoked: journal.token.metadataPointerAuthorityRevoked === true,
   };
   lpResult = { results: journalPriorResults(journal) };
 

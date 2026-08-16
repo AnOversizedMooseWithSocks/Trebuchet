@@ -563,6 +563,7 @@ const GUIDED_ADVANCED_FIELD_IDS = Object.freeze([
   'tokenSupply',
   'tokenDescription',
   'sealedLaunch',
+  'mintFormat',
   'targetMarketCapUsd',
   'launchSol',
   'liquidityBudgetSol',
@@ -5356,6 +5357,7 @@ function currentLaunchConfig() {
       description: $('#tokenDescription').value,
       logo: state.tokenLogo,
       sealedLaunch: $('#sealedLaunch')?.checked !== false,
+      mintFormat: $('#mintFormat')?.value || 'token-2022',
     },
     launchSol: Number($('#launchSol').value || 0),
     mode: state.launchMode,
@@ -5409,6 +5411,7 @@ function recoveryLaunchConfig(journal = {}) {
       supply: token?.supply || token?.totalSupply || poolPlan?.tokenTotalSupply || current.token?.supply || null,
       description: token?.description || current.token?.description || null,
       decimals: token?.decimals ?? poolPlan?.tokenDecimals ?? current.token?.decimals ?? 9,
+      mintFormat: token?.mintFormat || token?.format || current.token?.mintFormat || 'token-2022',
     },
     launchSol: Number(current.launchSol || 0),
     mode: current.mode,
@@ -5490,6 +5493,9 @@ function restoreLaunchConfigFromJournal(journal = {}) {
   if ($('#tokenSupply') && token.supply != null) $('#tokenSupply').value = String(token.supply);
   if ($('#tokenDescription') && token.description != null) $('#tokenDescription').value = String(token.description).slice(0, 1000);
   if ($('#sealedLaunch')) $('#sealedLaunch').checked = token.sealedLaunch !== false;
+  if ($('#mintFormat')) $('#mintFormat').value = token.mintFormat === 'classic-spl'
+    ? 'classic-spl'
+    : 'token-2022';
   if ($('#targetMarketCapUsd') && Number.isFinite(Number(topology.targetMarketCapUsd ?? config.funding?.targetMarketCapUsd))) {
     $('#targetMarketCapUsd').value = String(Number(topology.targetMarketCapUsd ?? config.funding.targetMarketCapUsd));
   }
@@ -7758,12 +7764,58 @@ function comparisonReportCountIsExplicit(value) {
 
 function stableHashString(value) {
   const text = String(value ?? '');
-  let hash = 0x811c9dc5;
+  const bytes = [];
   for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
+    let codePoint = text.codePointAt(index);
+    if (codePoint > 0xffff) index += 1;
+    if (codePoint <= 0x7f) bytes.push(codePoint);
+    else if (codePoint <= 0x7ff) bytes.push(0xc0 | (codePoint >>> 6), 0x80 | (codePoint & 0x3f));
+    else if (codePoint <= 0xffff) bytes.push(0xe0 | (codePoint >>> 12), 0x80 | ((codePoint >>> 6) & 0x3f), 0x80 | (codePoint & 0x3f));
+    else bytes.push(0xf0 | (codePoint >>> 18), 0x80 | ((codePoint >>> 12) & 0x3f), 0x80 | ((codePoint >>> 6) & 0x3f), 0x80 | (codePoint & 0x3f));
   }
-  return (hash >>> 0).toString(16).padStart(8, '0');
+  const bitLength = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  const high = Math.floor(bitLength / 0x100000000);
+  const low = bitLength >>> 0;
+  for (let shift = 24; shift >= 0; shift -= 8) bytes.push((high >>> shift) & 0xff);
+  for (let shift = 24; shift >= 0; shift -= 8) bytes.push((low >>> shift) & 0xff);
+  const rotate = (word, bits) => (word >>> bits) | (word << (32 - bits));
+  const constants = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+  const state = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  for (let offset = 0; offset < bytes.length; offset += 64) {
+    const words = new Array(64).fill(0);
+    for (let index = 0; index < 16; index += 1) {
+      const cursor = offset + (index * 4);
+      words[index] = ((bytes[cursor] << 24) | (bytes[cursor + 1] << 16) | (bytes[cursor + 2] << 8) | bytes[cursor + 3]) >>> 0;
+    }
+    for (let index = 16; index < 64; index += 1) {
+      const s0 = rotate(words[index - 15], 7) ^ rotate(words[index - 15], 18) ^ (words[index - 15] >>> 3);
+      const s1 = rotate(words[index - 2], 17) ^ rotate(words[index - 2], 19) ^ (words[index - 2] >>> 10);
+      words[index] = (words[index - 16] + s0 + words[index - 7] + s1) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, h] = state;
+    for (let index = 0; index < 64; index += 1) {
+      const sum1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25);
+      const choice = (e & f) ^ (~e & g);
+      const temp1 = (h + sum1 + choice + constants[index] + words[index]) >>> 0;
+      const sum0 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
+      const majority = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (sum0 + majority) >>> 0;
+      h = g; g = f; f = e; e = (d + temp1) >>> 0; d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
+    }
+    [a, b, c, d, e, f, g, h].forEach((word, index) => { state[index] = (state[index] + word) >>> 0; });
+  }
+  return state.map((word) => word.toString(16).padStart(8, '0')).join('');
 }
 
 function normalizeComparisonAirdropEntry(row = {}) {
@@ -10483,7 +10535,17 @@ function buildV2LaunchReportData(proof = currentLaunchProof(), config = currentL
     targetMarketCapUsd,
     token: {
       mint: token.mint || null,
-      tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+      tokenProgram: token.tokenProgram
+        || config?.token?.tokenProgram
+        || ((token.mintFormat || config?.token?.mintFormat) === 'classic-spl'
+          ? 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+          : 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'),
+      mintFormat: token.mintFormat || config?.token?.mintFormat || 'token-2022',
+      metadataStandard: token.metadataStandard
+        || config?.token?.metadataStandard
+        || ((token.mintFormat || config?.token?.mintFormat) === 'classic-spl'
+          ? 'metaplex-pda'
+          : 'token-2022-inline'),
       metadataUri: token.metadataUri || null,
       imageUri: token.imageUri || null,
       authorities: {
@@ -10491,6 +10553,7 @@ function buildV2LaunchReportData(proof = currentLaunchProof(), config = currentL
         freezeAuthorityDisabled: token.freezeAuthorityDisabled === true,
         metadataUpdateAuthorityRevoked: token.metadataUpdateAuthorityRevoked === true,
         metadataImmutable: token.metadataImmutable === true,
+        metadataPointerAuthorityRevoked: token.metadataPointerAuthorityRevoked === true,
       },
     },
     supply: {
@@ -14397,6 +14460,7 @@ function launchPlanConfigFingerprint(config = currentLaunchConfig()) {
       supply: fundingEstimateTokenSupply(token.supply),
       description: token.description || null,
       decimals: token.decimals ?? 9,
+      mintFormat: token.mintFormat === 'classic-spl' ? 'classic-spl' : 'token-2022',
       logo: launchPlanLogoFingerprint(token.logo),
       ...(token.sealedLaunch === true ? { sealedLaunch: true } : {}),
     },
@@ -18120,6 +18184,10 @@ function exportableLaunchConfigSnapshot(config = currentLaunchConfig()) {
       supply: token.supply || null,
       description: token.description || null,
       decimals: token.decimals ?? 9,
+      mintFormat: token.mintFormat === 'classic-spl' ? 'classic-spl' : 'token-2022',
+      tokenProgram: token.tokenProgram || null,
+      metadataStandard: token.metadataStandard || null,
+      sealedLaunch: token.sealedLaunch === true,
       logo,
     },
     launchSol: Number.isFinite(Number(config?.launchSol)) ? Number(config.launchSol) : null,
@@ -19271,6 +19339,9 @@ async function stageTransactions({ openApproval = true, announce = true } = {}) 
         walletPublicKey: selectedLaunchWalletPublicKey(),
       });
     }
+    if (!plan && state.apiStatus === 'connected') {
+      throw new Error('The local API did not return a launch plan.');
+    }
     applyLaunchPlan(plan || fallbackLaunchPlan(), config, { openApproval });
     if (announce) {
       notify(plan?.source === 'local-api'
@@ -19279,8 +19350,11 @@ async function stageTransactions({ openApproval = true, announce = true } = {}) 
     }
   } catch (error) {
     console.warn('v2 launch-plan staging failed:', error);
-    applyLaunchPlan(fallbackLaunchPlan(), config, { openApproval });
-    if (announce) notify('Local plan unavailable; staged static fallback');
+    state.launchPlan = null;
+    state.transactions = [];
+    state.activeApprovalId = null;
+    state.approvalOpen = false;
+    if (announce) notify(error.message || 'The local launch plan could not be staged');
   } finally {
     state.staging = false;
     renderAll();
@@ -21238,6 +21312,16 @@ async function runLaunchEnvelope() {
   }
   const config = currentLaunchConfig();
   const recoveryEndpoint = recoveryAuthorizationEndpoint();
+  const reviewedPlanStatus = recoveryEndpoint ? null : localApiLaunchPlanStatus(state.launchPlan, config);
+  const reviewedPlanDigest = String(state.launchPlan?.integrity?.digest || '').trim().toLowerCase();
+  if (
+    !recoveryEndpoint
+    && (!reviewedPlanStatus?.ready || !/^[a-f0-9]{64}$/.test(reviewedPlanDigest))
+  ) {
+    notify('The launch plan changed or is incomplete. Stage and review it again before arming.');
+    await stageTransactions({ openApproval: true, announce: false });
+    return;
+  }
   const fundingEstimate = recoveryEndpoint ? null : currentClassicFundingEstimateForConfig(config);
   if (!recoveryEndpoint && !fundingEstimate) {
     notify('Run a current funding estimate before arming');
@@ -21254,6 +21338,8 @@ async function runLaunchEnvelope() {
       fundingEstimate,
       recoveryEndpoint,
       localDossier,
+      reviewedPlan: recoveryEndpoint ? null : state.launchPlan,
+      reviewedPlanDigest: recoveryEndpoint ? null : reviewedPlanDigest,
     });
   } catch (error) {
     notify(error.message || 'Could not arm local run');
@@ -22977,6 +23063,7 @@ function bindEvents() {
     'tokenSymbol',
     'tokenSupply',
     'tokenDescription',
+    'mintFormat',
     'targetMarketCapUsd',
     'vanityStart',
     'vanityEnd',
