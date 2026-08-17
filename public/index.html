@@ -3097,6 +3097,111 @@
             .settings-header-sep,
             .settings-header-rpc { display: none; }
         }
+        /* Amber "RPC setup needed" pill on the collapsed settings header.
+           Shown by togglePublicRpcWarning() while the active endpoint is a
+           known public host, so the settings entry point itself signals
+           that action is required — the user doesn't have to scroll down
+           to the danger banner to learn it. */
+        .settings-setup-pill {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            background: var(--warn-amber-bg);
+            border: 1px solid var(--warn-amber-border);
+            color: var(--warn-amber-ink);
+            border-radius: var(--radius-sm);
+            padding: 0.1rem 0.45rem;
+            white-space: nowrap;
+        }
+
+        /* ------------------------------------------------------------------
+           First-launch welcome card. Two panels: the demo walkthrough
+           (champion placement — amber, tagged, big button) and the "set up
+           your RPC" explainer for real launches. Dismissible; visibility is
+           managed by setupWelcomeCard() in startup.js from the
+           showWelcomeCard user pref and the current demo status.
+           ------------------------------------------------------------------ */
+        .welcome-card { border: 1px solid var(--rule); }
+        .welcome-card .welcome-title {
+            font-family: var(--font-display);
+            color: var(--ink);
+        }
+        .welcome-col {
+            border: 1px dashed var(--rule);
+            border-radius: var(--radius-sm);
+            padding: 1rem;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        /* The demo panel is the one we want first-time eyes on: solid amber
+           field instead of parchment, a heavier border, and the tag row on
+           top. Amber is already the app-wide "rehearsal" colour (banner,
+           sticky badge), so the association carries through. */
+        .welcome-col.welcome-demo {
+            background: var(--warn-amber-bg);
+            border: 2px solid var(--warn-amber-border);
+        }
+        .welcome-col.welcome-demo p { color: var(--warn-amber-ink-dark); }
+        .champion-tag {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-weight: 700;
+            color: var(--warn-amber-ink);
+            background: rgba(255, 255, 255, 0.55);
+            border: 1px solid var(--warn-amber-border);
+            border-radius: var(--radius-sm);
+            padding: 0.15rem 0.5rem;
+            align-self: flex-start;
+        }
+        .welcome-col .welcome-actions { margin-top: auto; }
+        .welcome-demo-btn {
+            background: var(--warn-amber-ink);
+            border-color: var(--warn-amber-ink-dark);
+            color: #fff;
+            font-weight: 600;
+        }
+        .welcome-demo-btn:hover {
+            background: var(--warn-amber-ink-dark);
+            border-color: var(--warn-amber-ink-dark);
+            color: #fff;
+        }
+        .welcome-hide-row {
+            text-align: right;
+            margin-top: 0.5rem;
+        }
+        .welcome-hide-row a { color: var(--ink-fade); font-size: 0.75rem; }
+        .welcome-hide-row a:hover { color: var(--ink-soft); text-decoration: underline; }
+
+        /* Demo-mode section inside the settings panel: same champion
+           treatment as the welcome card so the two affordances read as one
+           feature wherever the user meets it. */
+        .demo-champion {
+            background: var(--warn-amber-bg);
+            border: 2px solid var(--warn-amber-border);
+            border-radius: var(--radius-sm);
+            padding: 0.75rem 1rem;
+        }
+        .demo-champion .help { color: var(--warn-amber-ink-dark); }
+
+        /* Inline concept-help links (see public/modules/help.js). A small,
+           consistent "what's this?" affordance next to jargon terms: rubric
+           ink, dotted underline, help cursor. Kept quiet on purpose — it
+           should read as a footnote, not a button. */
+        .explain-link {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            color: var(--rubric);
+            text-decoration: underline dotted;
+            text-underline-offset: 2px;
+            cursor: help;
+            white-space: nowrap;
+        }
+        .explain-link:hover { color: var(--rubric-dark); }
         .rpc-row {
             display: flex;
             justify-content: space-between;
@@ -3515,6 +3620,11 @@
                     <div class="settings-header-main">
                         <span class="icon settings-gear"><i class="fas fa-gear"></i></span>
                         <span class="settings-header-label">Settings</span>
+                        <!-- Amber action pill: shown by togglePublicRpcWarning()
+                             while the active RPC is a public endpoint, so the
+                             collapsed header itself says setup is needed. -->
+                        <span class="settings-setup-pill hidden" id="settingsSetupPill"
+                              title="You're on a public RPC — launches will fail. Open Settings to add a dedicated endpoint.">RPC setup needed</span>
                         <span class="settings-header-sep" aria-hidden="true">·</span>
                         <span class="settings-header-rpc">
                             <span class="icon"><i class="fas fa-server"></i></span>
@@ -3529,6 +3639,28 @@
                 </div>
 
                 <div id="rpcSettingsPanel" class="hidden mt-3">
+                    <!-- Why-an-RPC explainer. This education used to live only
+                         in the public-RPC danger banner, i.e. AFTER the user
+                         was already on the wrong endpoint. Here it fronts the
+                         section, so the first visit to Settings answers "what
+                         is this and why do I need one" before anything else. -->
+                    <h6 class="subtitle is-6 mb-2" id="rpcSectionAnchor">RPC Endpoint <a href="#" class="explain-link" data-explain="rpc-endpoint">what's this?</a></h6>
+                    <p class="is-size-7 mb-2">
+                        Everything Trebuchet does on-chain — creating your token,
+                        opening pools, locking positions, sweeping funds — goes
+                        through the RPC endpoint configured here. It is your
+                        connection to Solana.
+                    </p>
+                    <p class="is-size-7 mb-3">
+                        The free public endpoint is heavily rate-limited, and a
+                        launch needs a sustained burst of dozens of requests —
+                        on a public RPC it will be throttled mid-flow and fail.
+                        A <strong>free</strong> API key from a dedicated provider
+                        (<a href="https://www.helius.dev/" target="_blank" rel="noopener"><strong>Helius</strong></a>,
+                        QuickNode, Triton, Alchemy — free tiers are plenty) takes
+                        about two minutes to set up: sign up, copy your RPC URL,
+                        and add it below.
+                    </p>
                     <h6 class="subtitle is-6 mb-2">Saved Endpoints</h6>
                     <div id="rpcSavedList"></div>
                     <hr class="my-3">
@@ -3576,31 +3708,41 @@
                         </div>
                     </div>
                     <p class="help mb-2">
-                        Encrypts launch-wallet recovery phrases and saved Vanity CAs with your PIN plus this device.
+                        Protects your saved secrets with a PIN: launch-wallet
+                        recovery phrases and any custom token addresses you've
+                        generated are encrypted with your PIN plus this device.
                     </p>
 
                     <!-- ============================================ -->
                     <!-- Demo mode toggle. Intentional opt-in (no      -->
-                    <!-- default-on, no first-run prompt). When on,    -->
-                    <!-- all on-chain operations are simulated.        -->
+                    <!-- default-on). When on, all on-chain operations -->
+                    <!-- are simulated. Styled as the same amber       -->
+                    <!-- "champion" card as the welcome panel so the   -->
+                    <!-- feature reads identically wherever it appears.-->
                     <!-- ============================================ -->
                     <hr class="my-3">
-                    <h6 class="subtitle is-6 mb-2">Demo Mode</h6>
-                    <div class="field">
-                        <label class="checkbox">
-                            <input type="checkbox" id="demoModeToggle">
-                            <span>Enable demo mode</span>
-                        </label>
+                    <div class="demo-champion">
+                        <h6 class="subtitle is-6 mb-2">
+                            Demo Mode
+                            <span class="champion-tag ml-2">Recommended for first-time users</span>
+                        </h6>
+                        <div class="field">
+                            <label class="checkbox">
+                                <input type="checkbox" id="demoModeToggle">
+                                <span>Enable demo mode</span>
+                            </label>
+                        </div>
+                        <p class="help mb-2">
+                            Walk through the entire launch — wallet, token, pools,
+                            lock, sweep — with every on-chain operation simulated.
+                            No transactions are sent and no SOL is spent, and the
+                            flow behaves identically to a real launch. The best way
+                            to learn the app before risking anything.
+                        </p>
+                        <p class="help">
+                            ⚠ Disable before doing real launches.
+                        </p>
                     </div>
-                    <p class="help mb-2">
-                        When enabled, all on-chain operations are simulated. No
-                        transactions are sent and no SOL is spent. The flow behaves
-                        identically to a real launch, for UI testing and screenshots.
-                    </p>
-                    <p class="help has-text-warning">
-                        ⚠ Use only for testing and tutorial creation. Disable before
-                        doing real launches.
-                    </p>
 
                     <!-- ============================================ -->
                     <!-- Startup options. The intro video plays on     -->
@@ -3710,6 +3852,65 @@
                     </p>
 
 
+                </div>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- First-launch welcome card.                                    -->
+            <!--                                                               -->
+            <!-- Two panels: the demo walkthrough (champion placement) and     -->
+            <!-- the set-up-your-RPC explainer. Shown while the                -->
+            <!-- showWelcomeCard user pref is true and demo mode is off        -->
+            <!-- (the sticky demo banner owns that state); dismissible via     -->
+            <!-- the "Don't show this again" link. Wired by                    -->
+            <!-- setupWelcomeCard() in startup.js.                             -->
+            <!-- ============================================================ -->
+            <div class="box mb-4 p-4 welcome-card hidden" id="welcomeCard">
+                <h5 class="title is-5 mb-3 welcome-title">
+                    <span class="icon"><i class="fas fa-flag"></i></span>
+                    First time here?
+                </h5>
+                <div class="columns is-variable is-3">
+                    <div class="column is-half">
+                        <div class="welcome-col welcome-demo">
+                            <span class="champion-tag">Recommended for first-time users</span>
+                            <p class="is-size-6 has-text-weight-semibold mb-1">Try a demo launch first</p>
+                            <p class="is-size-7">
+                                Walk through the entire launch — wallet, token,
+                                pools, lock, sweep — with every on-chain action
+                                simulated. Free, risk-free, and identical to the
+                                real flow. Nothing is sent and no SOL is spent.
+                            </p>
+                            <div class="welcome-actions">
+                                <button class="button welcome-demo-btn" id="welcomeTryDemoBtn">
+                                    <span class="icon"><i class="fas fa-play"></i></span>
+                                    <span>Try a demo launch</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="column is-half">
+                        <div class="welcome-col">
+                            <p class="is-size-6 has-text-weight-semibold mb-1">Launching for real? Set up your RPC first.</p>
+                            <p class="is-size-7">
+                                Trebuchet talks to Solana through the RPC endpoint
+                                in <strong>Settings</strong> (above). The free public
+                                endpoint is too rate-limited for pool creation —
+                                launches fail mid-flow on it. A free key from a
+                                dedicated provider (Helius, QuickNode, Triton)
+                                takes about two minutes.
+                            </p>
+                            <div class="welcome-actions">
+                                <button class="button is-small" id="welcomeOpenRpcBtn">
+                                    <span class="icon"><i class="fas fa-server"></i></span>
+                                    <span>Set up my RPC</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="welcome-hide-row">
+                    <a href="#" id="welcomeHideLink">Don't show this again</a>
                 </div>
             </div>
 
@@ -3839,33 +4040,11 @@
                             <p class="mt-2"><strong>The key is stored encrypted on this machine</strong> until the launch completes. If the app closes or crashes mid-launch, the wallet appears in the recovery panel on the start screen so nothing is stranded. Generating a wallet costs nothing and touches nothing on-chain.</p>
                         </div>
                     </details>
-                    <p class="mb-3">A fresh keypair will be generated to perform all on-chain actions. You'll fund it once, and at the end everything in the wallet (token supply remainders, SOL, and Fee Key NFTs) gets swept to your destination wallet.</p>
+                    <p class="mb-3">A fresh keypair will be generated to perform all on-chain actions. You'll fund it once, and at the end everything in the wallet (token supply remainders, SOL, and Fee Key NFTs) gets swept to your destination wallet. <a href="#" class="explain-link" data-explain="ephemeral-wallet">about this wallet</a></p>
                     <button class="button is-primary" id="generateWalletBtn">
                         <span class="icon"><i class="fas fa-wallet"></i></span>
                         <span>Generate Wallet</span>
                     </button>
-
-                    <div class="notification is-info is-light is-size-7 mt-4 py-2 px-3" id="solflareWalletPanel">
-                        <div class="is-flex is-align-items-center is-justify-content-space-between is-flex-wrap-wrap mb-2" style="gap: 0.5rem;">
-                            <strong>Solflare</strong>
-                            <span id="solflareStatus" class="tag is-light">Not connected</span>
-                        </div>
-                        <div class="buttons are-small mb-1">
-                            <button class="button is-warning" id="connectSolflareBtn" type="button">
-                                <span class="icon is-small"><i class="fas fa-link"></i></span>
-                                <span>Connect Solflare</span>
-                            </button>
-                            <button class="button is-light hidden" id="disconnectSolflareBtn" type="button">
-                                <span class="icon is-small"><i class="fas fa-unlink"></i></span>
-                                <span>Disconnect</span>
-                            </button>
-                            <button class="button is-info hidden" id="useSolflareDestinationBtn" type="button">
-                                <span class="icon is-small"><i class="fas fa-arrow-right"></i></span>
-                                <span>Use as destination</span>
-                            </button>
-                        </div>
-                        <p class="mb-0">Connect your browser wallet for the web flow. The current launch path still uses the temporary wallet below for transaction execution.</p>
-                    </div>
 
                     <div id="walletInfo" class="hidden mt-4">
                         <div class="columns is-vcentered">
@@ -3938,7 +4117,7 @@
                         </div>
                         <div class="column is-narrow">
                             <div class="field">
-                                <label class="label is-small">Market Cap (USD)</label>
+                                <label class="label is-small">Market Cap (USD) <a href="#" class="explain-link" data-explain="market-cap">what's this?</a></label>
                                 <div class="control has-icons-left">
                                     <input class="input is-small" type="text" inputmode="numeric" id="targetMarketCap" required value="100,000" style="max-width: 160px;">
                                     <span class="icon is-small is-left"><i class="fas fa-dollar-sign"></i></span>
@@ -3991,7 +4170,7 @@
                         </div>
                     </div>
                     <!-- Vanity CA: grind a custom token mint address -->
-                    <h4 class="title is-6 mt-4">Vanity CA <span class="tag is-warning is-light is-size-7" style="vertical-align: middle;">Optional</span></h4>
+                    <h4 class="title is-6 mt-4">Vanity CA <span class="tag is-warning is-light is-size-7" style="vertical-align: middle;">Optional</span> <a href="#" class="explain-link" data-explain="vanity-ca">what's this?</a></h4>
                     <p class="help is-size-7 mb-2">Make your token CA start or end with a custom string. Saved candidates survive restarts.</p>
                     <div class="field has-addons">
                         <p class="control">
@@ -4125,7 +4304,7 @@
                           inside simple mode. Same relocation pattern
                           lockPositionsField uses.
                         -->
-                        <h4 class="title is-6 mb-2">Preallocation</h4>
+                        <h4 class="title is-6 mb-2">Preallocation <a href="#" class="explain-link" data-explain="preallocation">what's this?</a></h4>
                         <div id="customizePreallocSlot" class="mb-4"></div>
 
                         <!-- Section 2: Pool Configuration.
@@ -4133,7 +4312,7 @@
                              header — see container comment above for
                              the placement rationale. -->
                         <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
-                            <h4 class="title is-6 mb-0">Pool Configuration</h4>
+                            <h4 class="title is-6 mb-0">Pool Configuration <a href="#" class="explain-link" data-explain="liquidity-pool">what's this?</a></h4>
                             <button type="button" class="button is-small is-light" id="returnToSimpleBtn">
                                 <span class="icon is-small"><i class="fas fa-arrow-left"></i></span>
                                 <span>Switch to simple mode</span>
@@ -4170,7 +4349,13 @@
                           <div class="mb-2">
                               <label class="checkbox is-size-7">
                                   <input type="checkbox" id="lockPositions" checked>
-                                  &nbsp;<strong>Lock liquidity (Burn &amp; Earn)</strong> — recommended; mints transferable Fee Key NFTs that earn fees forever.
+                                  &nbsp;<strong>Lock liquidity (Burn &amp; Earn)</strong> — recommended; mints transferable Fee Key NFTs that earn fees forever. <a href="#" class="explain-link" data-explain="burn-and-earn">what's this?</a>
+                              </label>
+                          </div>
+                          <div class="mb-2">
+                              <label class="checkbox is-size-7">
+                                  <input type="checkbox" id="revokeMetadataToggle" checked>
+                                  &nbsp;<strong>Make metadata permanent</strong> — the name, symbol, and logo can never be changed by anyone. Uncheck to keep the ability to update them later from your destination wallet. <a href="#" class="explain-link" data-explain="metadata-authority">what's this?</a>
                               </label>
                           </div>
                           <div>
@@ -4673,7 +4858,7 @@
                                 <p class="mt-2">If any individual transfer fails (rare, usually an RPC blip), the rest still complete and you can run the sweep again to pick up stragglers. The launch wallet's recovery entry is only cleared once the app verifies on-chain that the wallet is actually empty.</p>
                             </div>
                         </details>
-                        <p class="is-size-7 mb-3">Sweeps everything still in the ephemeral wallet — leftover launched tokens, SOL, and any Fee Key NFTs (from locked positions) — to your destination wallet.</p>
+                        <p class="is-size-7 mb-3">Sweeps everything still in the ephemeral wallet — leftover launched tokens, SOL, and any Fee Key NFTs (from locked positions) — to your destination wallet. <a href="#" class="explain-link" data-explain="sweep">what's this?</a> <a href="#" class="explain-link" data-explain="fee-key-nft">what\'s a fee key?</a></p>
 
                         <div class="field">
                             <label class="label is-small">Destination Wallet</label>
@@ -4908,6 +5093,10 @@
                 <div class="content is-size-7">
                     <p><strong>Verify EVERY character above against your real wallet.</strong></p>
                     <p>Once submitted, this transfer cannot be reversed. Solana addresses can look similar by coincidence — don't just spot-check the prefix.</p>
+                    <p><strong>Use a wallet you control</strong> (Phantom, Solflare, a hardware
+                    wallet). <strong>Do not use an exchange deposit address</strong> (Coinbase,
+                    Binance, Kraken, etc.): exchanges usually don't credit token or NFT
+                    deposits, so your tokens and Fee Key NFTs would be lost.</p>
                 </div>
                 <label class="checkbox">
                     <input type="checkbox" id="transferConfirmCheckbox">

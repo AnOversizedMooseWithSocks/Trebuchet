@@ -12,6 +12,14 @@ bind('transferAssetsBtn', 'click', () => {
     log("Destination address doesn't look like a valid Solana address", 'danger');
     return;
   }
+  // Sweeping the launch wallet to itself is always a mistake (pays fees,
+  // moves nothing, and leaves the wallet reading as non-empty). Easy for
+  // someone to do by copying the wrong address off this very page.
+  if (tempWallet && dest === tempWallet.publicKey) {
+    log('That is the launch wallet\'s own address. Enter the wallet you want '
+      + 'the funds sent TO — for example your Phantom or Solflare address.', 'danger');
+    return;
+  }
   showTransferConfirmModal(dest);
 });
 
@@ -477,6 +485,12 @@ async function runTransfer() {
           ...(demoModeActive ? { tempWalletSecretKey: tempWallet.secretKey } : {}),
           destinationWallet: dest,
           tokenMint: createdTokenInfo ? createdTokenInfo.mint : '',
+          // Keep-authority launches: tell the server to hand the metadata
+          // update authority to the destination BEFORE sweeping — the
+          // launch wallet (the current authority) is destroyed after this.
+          ...(createdTokenInfo && createdTokenInfo.metadataAuthorityKept
+            ? { keepMetadataAuthorityMint: createdTokenInfo.mint }
+            : {}),
           // No airdrop payload: it already ran in step 6a. The server
           // keeps its in-process airdrop branch as a safety net for old
           // clients, but this client never exercises it.

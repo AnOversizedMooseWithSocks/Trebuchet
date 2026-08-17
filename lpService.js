@@ -1102,10 +1102,17 @@ async function lpPriorityFeeMicroLamports(connection, writableAccounts) {
         .sort((a, b) => a - b);
       if (fees.length === 0) return LP_PRIORITY_FEE_FLOOR_MICROLAMPORTS;
       const idx = Math.min(fees.length - 1, Math.floor(fees.length * 0.75));
-      const p75 = fees[idx];
+      // Bid 10% OVER the observed p75, rounded up — never exactly at it.
+      // The sample prices the last ~150 blocks; a rising market means the
+      // going rate when our tx lands is higher than what we measured, and
+      // bidding exact is how launch-critical txs get dropped. Bounded by
+      // the ceiling clamp, so worst-case cost is unchanged. Integer math
+      // (×11 ÷10) keeps the result deterministic; ×1.1 in floats can
+      // overshoot by a stray unit.
+      const bid = Math.ceil((fees[idx] * 11) / 10);
       return Math.max(
         LP_PRIORITY_FEE_FLOOR_MICROLAMPORTS,
-        Math.min(LP_PRIORITY_FEE_CEIL_MICROLAMPORTS, p75),
+        Math.min(LP_PRIORITY_FEE_CEIL_MICROLAMPORTS, bid),
       );
     }
   } catch (e) {
@@ -2649,6 +2656,11 @@ async function lockAllPositions({ raydium, results, onProgress }) {
       try {
         const lockRes = await raydium.clmm.lockPosition({
           ownerPosition: { nftMint: new PublicKey(pos.nftMint) },
+          // Locks were the one SDK call in this file sent WITHOUT a priority
+          // fee — the same dynamic, pool-scoped config every other builder
+          // here passes. LockPosition accepts computeBudgetConfig (verified
+          // against the SDK's type defs in node_modules).
+          computeBudgetConfig: await lpComputeBudgetConfig(raydium, r.poolId),
           txVersion: TxVersion.V0,
         });
         const lockTx = await lockRes.execute({ sendAndConfirm: true });
@@ -2737,6 +2749,8 @@ async function lockAllPositions({ raydium, results, onProgress }) {
       try {
         const lockRes = await raydium.clmm.lockPosition({
           ownerPosition: { nftMint: new PublicKey(lp.nftMint) },
+          // Same priority-fee config as the main-position locks above.
+          computeBudgetConfig: await lpComputeBudgetConfig(raydium, r.poolId),
           txVersion: TxVersion.V0,
         });
         const lockTx = await lockRes.execute({ sendAndConfirm: true });
@@ -2818,6 +2832,8 @@ async function lockAllPositions({ raydium, results, onProgress }) {
       try {
         const lockRes = await raydium.clmm.lockPosition({
           ownerPosition: { nftMint: new PublicKey(sp.nftMint) },
+          // Same priority-fee config as the main-position locks above.
+          computeBudgetConfig: await lpComputeBudgetConfig(raydium, r.poolId),
           txVersion: TxVersion.V0,
         });
         const lockTx = await lockRes.execute({ sendAndConfirm: true });
@@ -2880,6 +2896,8 @@ async function lockAllPositions({ raydium, results, onProgress }) {
       try {
         const lockRes = await raydium.clmm.lockPosition({
           ownerPosition: { nftMint: new PublicKey(bs.nftMint) },
+          // Same priority-fee config as the main-position locks above.
+          computeBudgetConfig: await lpComputeBudgetConfig(raydium, r.poolId),
           txVersion: TxVersion.V0,
         });
         const lockTx = await lockRes.execute({ sendAndConfirm: true });

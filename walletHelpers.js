@@ -42,6 +42,15 @@ import {
   getAccount,
 } from '@solana/spl-token';
 import { getRpcUrl } from './rpcConfig.js';
+import {
+  samplePriorityFeeMicroLamports,
+  computeBudgetIxs,
+  priorityFeeLamports,
+  CU_SOL_TRANSFER,
+  CU_TOKEN_TRANSFER,
+  PRIORITY_FEE_CEIL_MICROLAMPORTS,
+  SWEEP_FEE_PAD_LAMPORTS,
+} from './priorityFees.js';
 
 // Both token programs we need to query. Order matters only for log readability.
 const TOKEN_PROGRAMS = [
@@ -409,11 +418,18 @@ export async function sweepSolToDestination({
   const destPk = new PublicKey(destinationWallet);
 
   const solBalance = await connection.getBalance(ownerKeypair.publicKey);
-  // Leave the account rent-exempt minimum plus a tiny cushion for the
-  // transfer tx fee itself. 5000 lamports is the base tx fee on Solana
-  // mainnet; we don't pay priority on the final sweep so this is enough.
+  // The final sweep now pays a priority fee too — during congestion the
+  // very last tx of a launch is not the one to leave un-prioritized. That
+  // means the reserve must cover base fee (5000 lamports/signature) PLUS
+  // the priority cost of this tx, or the sweep itself fails with
+  // "insufficient lamports". The rent-exempt minimum keeps the account
+  // alive after the sweep.
+  const microLamports = await samplePriorityFeeMicroLamports(connection);
+  const feeReserve = 5000
+    + priorityFeeLamports(CU_SOL_TRANSFER, microLamports)
+    + SWEEP_FEE_PAD_LAMPORTS; // never reserve exactly-enough; see priorityFees.js
   const minRentExemption = await connection.getMinimumBalanceForRentExemption(0);
-  const transferAmount = solBalance - minRentExemption - 5000;
+  const transferAmount = solBalance - minRentExemption - feeReserve;
 
   console.log(`SOL sweep: balance=${solBalance / LAMPORTS_PER_SOL}, ` +
     `transferring=${transferAmount / LAMPORTS_PER_SOL}`);
@@ -423,6 +439,9 @@ export async function sweepSolToDestination({
   }
 
   const tx = new Transaction().add(
+    // ComputeBudget instructions FIRST (limit must be set before the app
+    // instruction runs), then the transfer. See priorityFees.js.
+    ...computeBudgetIxs({ units: CU_SOL_TRANSFER, microLamports }),
     SystemProgram.transfer({
       fromPubkey: ownerKeypair.publicKey,
       toPubkey: destPk,
@@ -475,6 +494,12 @@ export async function transferTokenWithProgram({
   );
 
   const tx = new Transaction();
+
+  // Priority fee: sampled fresh per transfer so each tx reflects current
+  // conditions. This path serves every token/NFT sweep and the Fee Key
+  // slice transfers — all post-launch money movements that must land.
+  const microLamports = await samplePriorityFeeMicroLamports(connection);
+  tx.add(...computeBudgetIxs({ units: CU_TOKEN_TRANSFER, microLamports }));
 
   // Idempotent ATA creation for the destination — does nothing if the ATA
   // already exists, otherwise creates it. Owner pays rent.
@@ -670,10 +695,20 @@ function buildAirdropTx({
   tokenDecimals,
   programId,
   recentBlockhash,
+  priorityFeeMicroLamports,
 }) {
   const tx = new Transaction();
   tx.feePayer = ownerKeypair.publicKey;
   tx.recentBlockhash = recentBlockhash;
+  // Priority fee, sampled once per airdrop run by executeAirdrop and
+  // escalated per retry attempt by deliverOneAirdropRecipient. Airdrop
+  // txs used to ride at zero priority — the first thing dropped when the
+  // network is busy, and with many small txs per run the failure odds
+  // compound per recipient.
+  tx.add(...computeBudgetIxs({
+    units: CU_TOKEN_TRANSFER,
+    microLamports: priorityFeeMicroLamports,
+  }));
   // Idempotent ATA creation for the recipient. No-op if their ATA
   // already exists. Owner pays the rent either way.
   tx.add(
@@ -760,6 +795,7 @@ async function deliverOneAirdropRecipient({
   amountRaw,
   tokenDecimals,
   programId,
+  priorityFeeMicroLamports,
 }) {
   let lastError = null;
   let lastSignature = null;
@@ -788,9 +824,20 @@ async function deliverOneAirdropRecipient({
     }
 
     // Build + sign tx. Cheap and deterministic; doesn't touch RPC.
+    //
+    // Fee escalation on retry: double the bid each attempt (x1, x2, x4),
+    // clamped at the global ceiling. If attempt 1 didn't land, current
+    // conditions demand more than our sample said — the standard
+    // retry-with-higher-fee pattern. The ceiling keeps the worst case
+    // bounded (see priorityFees.js cost math).
+    const escalatedFee = Math.min(
+      PRIORITY_FEE_CEIL_MICROLAMPORTS,
+      priorityFeeMicroLamports * (2 ** (attempt - 1)),
+    );
     const tx = buildAirdropTx({
       ownerKeypair, ownerAta, recipientPk, recipientAta, mintPk,
       amountRaw, tokenDecimals, programId, recentBlockhash: blockhash,
+      priorityFeeMicroLamports: escalatedFee,
     });
 
     // Phase 1: send. Pre-send errors are clean retries (the tx didn't
@@ -913,6 +960,13 @@ export async function executeAirdrop({
   const transferred = [];
   const failed = [];
 
+  // Sample the priority fee ONCE for the whole run. Airdrops can span
+  // minutes, but the clamp bounds any drift and the per-attempt doubling
+  // in deliverOneAirdropRecipient absorbs a market that moves up mid-run.
+  // One sample also spares the RPC ~1 call per recipient.
+  const priorityFeeMicroLamports = await samplePriorityFeeMicroLamports(connection);
+  console.log(`  airdrop priority fee: ${priorityFeeMicroLamports} microlamports/CU`);
+
   // Pre-compute the owner's launched-token ATA. Stable across the run;
   // doing it inside the loop would just repeat the same derivation.
   const ownerAta = getAssociatedTokenAddressSync(
@@ -1026,6 +1080,7 @@ export async function executeAirdrop({
       amountRaw,
       tokenDecimals,
       programId,
+      priorityFeeMicroLamports,
     });
 
     if (result.ok) {

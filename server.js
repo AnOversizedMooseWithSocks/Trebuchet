@@ -8,6 +8,7 @@ import dnsPromises from 'node:dns/promises';
 import {
   createTokenWithMetaplex,
   finishTokenCreation,
+  transferMetadataAuthority,
   generateTemporaryWallet,
   getWalletQRCode,
   checkWalletBalance,
@@ -1469,6 +1470,9 @@ function recordTokenJournalProgress(walletPublicKey, event) {
   if (typeof event.metadataImmutable === 'boolean') {
     token.metadataImmutable = event.metadataImmutable;
   }
+  if (typeof event.metadataAuthorityKept === 'boolean') {
+    token.metadataAuthorityKept = event.metadataAuthorityKept;
+  }
 
   launchJournal.upsertForWallet(
     walletPublicKey,
@@ -1829,6 +1833,7 @@ app.post('/api/finish-token-creation', async (req, res) => {
       totalSupply,
       metadataUri,
       journalEvents: journal.events || [],
+      keepMetadataAuthority: journal.token?.metadataAuthorityKept === true,
       onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
     });
 
@@ -1940,6 +1945,10 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
           name: normalizedName,
           symbol: normalizedSymbol,
           totalSupply: normalizedTotalSupply,
+          // User's metadata-authority choice, recorded up front so the
+          // finish/resume path honors it even if creation crashes before
+          // reaching the revoke step. FormData fields arrive as strings.
+          metadataAuthorityKept: req.body.keepMetadataAuthority === 'true',
           decimals: 9,
         },
       },
@@ -1976,6 +1985,7 @@ app.post('/api/create-token', uploadLogo, async (req, res) => {
       vanityPrefix,
       vanitySuffix,
       vanityCAKeypair,
+      keepMetadataAuthority: req.body.keepMetadataAuthority === 'true',
       onProgress: (event) => recordTokenJournalProgress(walletPublicKey, event),
     });
     if (vanityCAPublicKey) {
@@ -3760,6 +3770,27 @@ app.post('/api/transfer-assets', async (req, res) => {
       },
       { stage: 'transfer_started', destinationWallet },
     );
+
+    // 0. Metadata authority handoff (keep-authority launches only). The
+    //    update authority currently sits on the launch wallet, which this
+    //    transfer is about to empty and destroy. Hand it to the destination
+    //    FIRST; on failure abort the whole transfer — nothing has been
+    //    swept yet, so the user just retries, instead of losing the only
+    //    key that can ever change the token's name/logo.
+    if (typeof req.body.keepMetadataAuthorityMint === 'string'
+        && req.body.keepMetadataAuthorityMint) {
+      console.log('Transferring metadata update authority to destination...');
+      await transferMetadataAuthority({
+        tempWalletSecretKey: secretKeyArr,
+        tokenMint: req.body.keepMetadataAuthorityMint,
+        newAuthority: destinationWallet,
+      });
+      launchJournal.upsertForWallet(
+        walletPublicKey,
+        { stage: 'metadata_authority_transferred' },
+        { stage: 'metadata_authority_transferred', destinationWallet },
+      );
+    }
 
     // 1. NFTs first. Fee Keys especially — these are the most valuable
     //    sweep items and we want them locked in before risking SOL.

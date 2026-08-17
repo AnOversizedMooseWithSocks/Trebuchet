@@ -210,3 +210,46 @@ test('finishTokenCreation: unreadable mint -> clear error (cannot proceed withou
     /cannot read mint/,
   );
 });
+
+test('finishTokenCreation: keepMetadataAuthority skips the revoke step entirely', async () => {
+  const mintKp = Keypair.generate();
+  const mintB58 = mintKp.publicKey.toBase58();
+  const pda = metaPda(mintKp.publicKey);
+
+  // Everything else is complete on-chain; the update authority is still
+  // held (revoked: false) — which is exactly the desired end state when
+  // the user opted to keep it.
+  tokenService.setConnectionFactoryForTests(() => connFor(mintB58, pda.toBase58(), {
+    mintAccount: makeMintAccount({ supplyRaw: TOTAL_RAW, mintAuthority: null }),
+    metaAccount: makeMetadataAccount({ revoked: false }),
+  }));
+  // Fake umi cannot build updateV1 — if the revoke step ran anyway, it
+  // would throw-and-catch and leave its trace in steps/sanity. It must
+  // never be attempted with the keep flag set.
+  tokenService.setUmiFactoryForTests(() => makeFakeUmi());
+
+  const events = [];
+  const status = await tokenService.finishTokenCreation({
+    tempWalletSecretKey: SECRET_KEY,
+    tokenMint: mintB58,
+    name: 'T',
+    symbol: 'T',
+    totalSupply: TOTAL_SUPPLY,
+    metadataUri: 'https://arweave.test/m',
+    journalEvents: [],
+    keepMetadataAuthority: true,
+    onProgress: (e) => events.push(e.stage),
+  });
+
+  assert.equal(status.metadataExists, true);
+  assert.equal(status.supplyMinted, true);
+  assert.equal(status.mintAuthorityRenounced, true);
+  // Not revoked — by choice, so no sanity flag about the mismatch.
+  assert.equal(status.updateAuthorityRevoked, false);
+  assert.deepEqual(status.sanity, [], 'kept-by-choice must not read as a journal/chain mismatch');
+  assert.ok(
+    status.steps.includes('metadata update authority kept (user option)'),
+    'the skip is recorded explicitly in the step log',
+  );
+  assert.ok(events.includes('metadata_authority_kept'), 'progress event emitted for the journal');
+});
