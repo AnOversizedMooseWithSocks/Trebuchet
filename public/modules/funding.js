@@ -179,8 +179,18 @@ async function showLaunchSuccessModal() {
   if (summary.totalRecipient > 0) {
     summaryParts.push(`${summary.transferred} / ${summary.totalRecipient} Fee Key NFTs delivered`);
   }
+  // A demo run must not read as a real launch. "The launch is committed
+  // on-chain" in front of a first-time demo user says they just launched
+  // a real token — the opposite of true. Say what actually happened, and
+  // point at the natural next step.
+  const closingLine = demoModeActive
+    ? ' — all simulated. This was a demo: nothing was sent on-chain and no '
+      + 'SOL was spent. Ready for the real thing? Click "Disable demo" in '
+      + 'the amber bar at the top of the page, and set up your RPC in '
+      + 'Settings first.'
+    : '. Liquidity is live; the launch is committed on-chain.';
   document.getElementById('launchSuccessSummary').textContent =
-    summaryParts.join(' · ') + '. Liquidity is live; the launch is committed on-chain.';
+    summaryParts.join(' · ') + closingLine;
 
   // ---- Activate the modal ----
   // Add is-active first so the mount has dimensions before the coin

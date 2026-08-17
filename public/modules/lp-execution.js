@@ -50,6 +50,10 @@ bind('createTokenBtn', 'click', async () => {
       }
       const logoFile = document.getElementById('tokenLogo').files[0];
       if (logoFile) formData.append('logo', logoFile);
+      // Metadata-authority choice. Checkbox CHECKED means revoke (the
+      // long-standing default); the server flag is the inverse: keep.
+      const revokeMeta = document.getElementById('revokeMetadataToggle');
+      formData.append('keepMetadataAuthority', String(!!(revokeMeta && !revokeMeta.checked)));
 
       const resp = await fetch('/api/create-token', { method: 'POST', body: formData });
       const data = await resp.json();
@@ -79,6 +83,9 @@ bind('createTokenBtn', 'click', async () => {
         freezeAuthorityDisabled: data.freezeAuthorityDisabled === true,
         metadataUpdateAuthorityRevoked: data.metadataUpdateAuthorityRevoked === true,
         metadataImmutable: data.metadataImmutable === true,
+        // True when the user opted to keep the update authority; step 6
+        // reads this to trigger the authority handoff before the sweep.
+        metadataAuthorityKept: data.metadataAuthorityKept === true,
       };
 
       document.getElementById('tokenMintAddress').textContent = data.tokenMint;

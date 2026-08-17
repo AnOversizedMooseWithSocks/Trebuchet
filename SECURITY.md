@@ -2,13 +2,26 @@
 
 ## npm audit residuals
 
-`npm audit --audit-level=high` currently reports high-severity findings in transitive Solana/Irys dependencies:
+`npm audit --audit-level=high` currently reports 4 high-severity findings, all in one unfixable transitive chain:
 
-- `bigint-buffer` through `@solana/spl-token` and `@raydium-io/raydium-sdk-v2`.
+- `bigint-buffer` through `@solana/spl-token` -> `@solana/buffer-layout-utils` (and `@raydium-io/raydium-sdk-v2`).
 - `elliptic` through `@metaplex-foundation/umi-uploader-irys` and its Irys upload stack.
 
-`tmp <0.2.6` was also reported through `@metaplex-foundation/umi-uploader-irys -> @irys/sdk -> arbundles -> tmp-promise`.
-That path is pinned with an npm override to `tmp ^0.2.6`, because npm reported a non-force fix path for this package and it does not require changing the Metaplex/Irys API surface.
+Three findings that DID have safe fix paths were resolved by override/version bumps rather than left as residuals
+(release audit, August 2026). Each stays within its current major, so no API surface changed:
+
+| Package | Was | Now | Advisory |
+| --- | --- | --- | --- |
+| `multer` (direct) | `^2.1.1` | `^2.2.0` | DoS via deeply nested field names; DoS via incomplete cleanup of aborted uploads. Directly reachable — this is the logo-upload endpoint. |
+| `axios` (override) | `^1.16.1` | `^1.19.0` | Ten advisories incl. prototype pollution, `maxBodyLength` bypass, `NO_PROXY` bypass. Reached via Raydium SDK and the Irys stack. |
+| `tmp` (override) | `^0.2.6` | `^0.2.7` | Type-confusion path traversal via non-string prefix/postfix. Reached via `arbundles -> tmp-promise`. |
+| `form-data` (override) | `^4.0.5` | `^4.0.6` | CRLF injection via unescaped multipart field names. |
+
+`bigint-buffer` has **no patched release at all** (latest published is the vulnerable `1.1.5`), so it cannot be
+fixed in place at any version — it is an ecosystem-wide residual affecting every Solana app on the current
+`@solana/spl-token` line. Mitigating detail: the vulnerability is in the *native* binding's `toBigIntLE()`, and
+this app logs `bigint: Failed to load bindings, pure JS will be used` at startup, so the affected native path is
+not the one in use. Revisit when `@solana/buffer-layout-utils` drops the dependency.
 
 The npm force fixes are not safe to apply blindly:
 

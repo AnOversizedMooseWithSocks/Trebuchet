@@ -45,7 +45,11 @@ test('sweepSolToDestination: transfers SOL above rent exemption', async () => {
   });
 
   assert.ok(result.txId, 'txId should be returned');
-  const expectedLamports = solBalance - rentExemption - 5000;
+  // Reserve = 5000 base fee + priority fee + flat safety pad. The fake
+  // connection has no getRecentPrioritizationFees, so the sampler falls
+  // back to the 50k uL/CU floor: ceil(20_000 CU * 50_000 uL / 1e6) = 1000,
+  // plus SWEEP_FEE_PAD_LAMPORTS (10_000) = 16_000 total on top of rent.
+  const expectedLamports = solBalance - rentExemption - 16_000;
   assert.equal(
     result.solTransferred,
     expectedLamports / LAMPORTS_PER_SOL,

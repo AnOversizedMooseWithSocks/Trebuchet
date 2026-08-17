@@ -76,7 +76,7 @@ test('round-trips multiple writes without losing or duplicating fields', async (
   const onDisk = JSON.parse(readFileSync(path.join(configDir, 'userPrefs.json'), 'utf8'));
   assert.deepEqual(
     Object.keys(onDisk).sort(),
-    ['checkForUpdatesOnStartup', 'coinPreview', 'coinPreviewParked', 'demoMode', 'medievalCursor', 'medievalCursorOptIn', 'playIntroVideo', 'playSoundEffects', 'playBackgroundMusic', 'publishLaunchReport'].sort(),
+    ['checkForUpdatesOnStartup', 'coinPreview', 'coinPreviewParked', 'demoMode', 'medievalCursor', 'medievalCursorOptIn', 'playIntroVideo', 'playSoundEffects', 'playBackgroundMusic', 'publishLaunchReport', 'showWelcomeCard'].sort(),
   );
   assert.equal(onDisk.checkForUpdatesOnStartup, false);
 });
@@ -114,7 +114,7 @@ test('rejects unknown keys without corrupting existing state', async (t) => {
   const onDisk = JSON.parse(readFileSync(path.join(configDir, 'userPrefs.json'), 'utf8'));
   assert.deepEqual(
     Object.keys(onDisk).sort(),
-    ['checkForUpdatesOnStartup', 'coinPreview', 'coinPreviewParked', 'demoMode', 'medievalCursor', 'medievalCursorOptIn', 'playIntroVideo', 'playSoundEffects', 'playBackgroundMusic', 'publishLaunchReport'].sort(),
+    ['checkForUpdatesOnStartup', 'coinPreview', 'coinPreviewParked', 'demoMode', 'medievalCursor', 'medievalCursorOptIn', 'playIntroVideo', 'playSoundEffects', 'playBackgroundMusic', 'publishLaunchReport', 'showWelcomeCard'].sort(),
   );
 });
 

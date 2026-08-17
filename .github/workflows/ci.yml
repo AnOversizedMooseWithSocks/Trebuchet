@@ -1,6 +1,11 @@
 name: CI
 
 on:
+  # Direct pushes to main must run the suite too — as a solo-dev repo,
+  # most commits land on main without a PR, and pull_request alone means
+  # those ship untested.
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

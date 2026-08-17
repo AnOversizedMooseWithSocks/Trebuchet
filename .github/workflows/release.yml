@@ -15,8 +15,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Hard gate: the full suite must pass before any release artifact is
+  # built. Without this, nothing between a push to main and a published
+  # installer ever ran the tests (CI covers PRs only; auto-release tags
+  # and dispatches this workflow unconditionally) — so a broken commit
+  # pushed straight to main would ship to users untested. Money-handling
+  # app: a release that never ran its suite is not an acceptable release.
+  test:
+    name: Test (release gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
   build:
     name: Release ${{ matrix.name }}
+    needs: test
     runs-on: ${{ matrix.os }}
     env:
       ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron

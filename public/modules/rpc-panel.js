@@ -375,6 +375,24 @@ function togglePublicRpcWarning(activeUrl) {
   }
 
   banner.classList.toggle('hidden', !isPublic);
+  // Mirror the state onto the collapsed settings header so the entry
+  // point itself says setup is needed — the user shouldn't have to
+  // scroll to the danger banner to learn their RPC won't work.
+  const pill = document.getElementById('settingsSetupPill');
+  if (pill) pill.classList.toggle('hidden', !isPublic);
+}
+
+// Open the settings panel (if collapsed) and scroll to the RPC section.
+// Used by the welcome card's "Set up my RPC" button; kept here next to
+// toggleSettingsPanel so the expand logic stays in one module.
+function openSettingsToRpc() {
+  const panel = document.getElementById('rpcSettingsPanel');
+  if (panel && panel.classList.contains('hidden')) toggleSettingsPanel();
+  const anchor = document.getElementById('rpcSectionAnchor');
+  if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Put the cursor where the user's next action is.
+  const nameInput = document.getElementById('newRpcName');
+  if (nameInput) nameInput.focus({ preventScroll: true });
 }
 
 async function selectRpc(url) {

@@ -38,7 +38,13 @@ test('dependency risk controls document audit residuals and PR checklist', () =>
   const pkg = JSON.parse(read('package.json'));
   const template = read('.github/pull_request_template.md');
 
-  assert.equal(pkg.overrides.tmp, '^0.2.6');
+  // Override pins. These are deliberate: each was chosen as the lowest
+  // version that clears its advisory WITHOUT crossing a major boundary.
+  // If you bump one, update the table in SECURITY.md in the same commit.
+  assert.equal(pkg.overrides.tmp, '^0.2.7');
+  assert.equal(pkg.overrides.axios, '^1.19.0');
+  assert.equal(pkg.overrides['form-data'], '^4.0.6');
+  assert.equal(pkg.dependencies.multer, '^2.2.0');
   assert.match(security, /SDK compatibility matrix/);
   assert.match(security, /npm audit --audit-level=high/);
   assert.match(security, /@metaplex-foundation\/umi-uploader-irys/);

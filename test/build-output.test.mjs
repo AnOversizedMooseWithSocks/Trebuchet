@@ -51,26 +51,38 @@ test('app.js contains the airdrop feature', () => {
   );
 });
 
-test('app.js contains the Solflare browser wallet bridge', () => {
+test('app.js contains the concept-help glossary', () => {
+  // help.js: the HELP_TOPICS dictionary plus the delegated [data-explain]
+  // click handler. If either is missing, every "what's this?" link in the
+  // markup silently does nothing — worse than no link at all.
   assert.ok(
-    appJs.includes('getSolflareProvider'),
-    'the Solflare provider detection is missing from app.js',
+    appJs.includes('HELP_TOPICS'),
+    'the help glossary is missing from app.js',
   );
   assert.ok(
-    appJs.includes('window.solana?.providers'),
-    'the Solflare multi-provider detection is missing from app.js',
+    appJs.includes('data-explain'),
+    'the [data-explain] delegation is missing from app.js',
+  );
+});
+
+test('app.js does not contain the removed Solflare wallet bridge', () => {
+  // The Solflare browser-wallet connection was removed deliberately: it
+  // never signed anything (the launch always executes from the temporary
+  // wallet), so its only effect was pre-filling the destination field —
+  // not worth the extra UI surface and user confusion. Scanning the QR /
+  // pasting the address covers the same need. This pin keeps a stale
+  // branch or an old-bundle rebuild from silently reintroducing it.
+  assert.ok(
+    !appJs.includes('getSolflareProvider'),
+    'the removed Solflare provider detection has reappeared in app.js',
   );
   assert.ok(
-    appJs.includes('wallet-standard:app-ready'),
-    'the Solflare Wallet Standard discovery path is missing from app.js',
+    !appJs.includes('getSolflareSigner'),
+    'the removed Solflare signer bridge has reappeared in app.js',
   );
   assert.ok(
-    appJs.includes("standardWalletFeature(provider.wallet, 'standard:events')"),
-    'the Solflare Wallet Standard account-change listener is missing from app.js',
-  );
-  assert.ok(
-    appJs.includes('getSolflareSigner'),
-    'the Solflare signer bridge is missing from app.js',
+    !appJs.includes('solflareWalletPanel'),
+    'the removed Solflare panel wiring has reappeared in app.js',
   );
 });
 

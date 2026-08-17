@@ -1268,7 +1268,16 @@ function buildLaunchReportHtml({ logoDataUrl = null } = {}) {
        know exactly what to check. -->
   ${renderFactRow('Mint authority', tokenInfo.mintAuthorityRenounced ? 'Renounced — supply is permanently capped' : 'NOT renounced')}
   ${renderFactRow('Freeze authority', tokenInfo.freezeAuthorityDisabled ? 'Disabled — holders can never be frozen' : 'NOT disabled')}
-  ${renderFactRow('Metadata update authority', tokenInfo.metadataUpdateAuthorityRevoked ? 'Revoked — name/symbol/logo are permanent' : 'NOT revoked')}
+  ${renderFactRow('Metadata update authority', tokenInfo.metadataUpdateAuthorityRevoked
+    ? 'Revoked — name/symbol/logo are permanent'
+    // Distinguish a deliberate keep (the launcher opted to retain the
+    // ability to update name/logo, and the authority was handed to their
+    // destination wallet) from an unintended failure to revoke. Rendering
+    // both as a bare "NOT revoked" misreads a chosen configuration as a
+    // defect — in a permanent, public document.
+    : (tokenInfo.metadataAuthorityKept
+        ? 'Retained by the launcher — name/symbol/logo can be updated by the creator wallet (deliberate)'
+        : 'NOT revoked'))}
   ${renderFactRow('Token program', 'SPL Token (classic) — no Token-2022 extensions')}
   ` : ''}
 
