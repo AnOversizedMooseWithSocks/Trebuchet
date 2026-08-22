@@ -107,6 +107,11 @@ export function detectLogoImageMime(buffer) {
     buffer[2] === 0xff;
   if (isJpeg) return 'image/jpeg';
 
+  const gifHeader = buffer.length >= 13
+    ? buffer.toString('ascii', 0, 6)
+    : '';
+  if (gifHeader === 'GIF87a' || gifHeader === 'GIF89a') return 'image/gif';
+
   return null;
 }
 
@@ -150,15 +155,24 @@ function jpegImageDimensions(buffer) {
   return null;
 }
 
+function gifImageDimensions(buffer) {
+  if (detectLogoImageMime(buffer) !== 'image/gif') return null;
+  const width = buffer.readUInt16LE(6);
+  const height = buffer.readUInt16LE(8);
+  if (width <= 0 || height <= 0) return null;
+  return { width, height };
+}
+
 export function detectLogoImageDimensions(buffer) {
   const mime = detectLogoImageMime(buffer);
   if (mime === 'image/png') return pngImageDimensions(buffer);
   if (mime === 'image/jpeg') return jpegImageDimensions(buffer);
+  if (mime === 'image/gif') return gifImageDimensions(buffer);
   return null;
 }
 
 export function normalizeLogoImageMime(buffer) {
   const mime = detectLogoImageMime(buffer);
-  if (!mime) throw new Error('Logo must be a PNG or JPG image');
+  if (!mime) throw new Error('Logo must be a PNG, JPG, or GIF image');
   return mime;
 }

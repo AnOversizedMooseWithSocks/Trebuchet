@@ -50,6 +50,7 @@
     "shots:marketing": "node scripts/capture-marketing-assets.mjs",
     "smoke:mainnet:readonly": "node test-token2022-compat.mjs",
     "build": "electron-builder",
+    "build:gif-codecs": "esbuild scripts/gif-codecs-entry.mjs --bundle --format=esm --platform=browser --target=chrome100 --minify --outfile=public/vendor/gif-codecs.mjs && node scripts/build-gif-worker.mjs",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
     "build:linux": "electron-builder --linux",
@@ -108,7 +109,6 @@
     "c/build/**/*"
   ],
   "dependencies": {
-    "@trebuchet/core": "file:packages/core",
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
     "@metaplex-foundation/umi": "^1.5.1",
     "@metaplex-foundation/umi-bundle-defaults": "^1.5.1",
@@ -117,6 +117,7 @@
     "@raydium-io/raydium-sdk-v2": "0.1.144-alpha",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
+    "@trebuchet/core": "file:packages/core",
     "arconnect": "0.4.2",
     "arweave": "^1.15.7",
     "bip39": "^3.1.0",
@@ -125,6 +126,8 @@
     "decimal.js": "^10.4.3",
     "ed25519-hd-key": "^1.3.0",
     "express": "^4.22.2",
+    "gifenc": "^1.0.3",
+    "gifuct-js": "^2.1.2",
     "marked": "^14.1.4",
     "multer": "^2.2.0",
     "qrcode": "^1.5.4"
@@ -136,6 +139,7 @@
     "@types/node": "^20.14.10",
     "electron": "^42.8.1",
     "electron-builder": "^26.15.0",
+    "esbuild": "^0.25.10",
     "pixelmatch": "^7.2.0",
     "playwright": "^1.60.0",
     "pngjs": "^7.0.0"

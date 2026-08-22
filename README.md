@@ -122,8 +122,9 @@ the collapsed diagnostics area; they are not presented as launch phases.
 
 Wallet shows the selected Trebuchet-managed launch wallet, its balances, funding
 address, copy/QR actions, and wallet operations. Oversized PNG/JPEG token logos
-are normalized before they enter the Classic upload envelope; the live plan
-enforces the Classic 100 KB and 1024 px limits.
+are normalized before they enter the Classic upload envelope. Animated GIF
+logos preserve their animation and are compressed locally into the Classic
+100 KB and 1024 px limits enforced by the live plan.
 
 Recovery wallets are not presented as children of the active wallet. They live
 in the central recovery inventory and History workspace, where they can be

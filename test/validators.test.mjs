@@ -77,15 +77,24 @@ test('sniffs uploaded logo image bytes instead of trusting MIME labels', () => {
     0x02, 0x11, 0x00,
     0x03, 0x11, 0x00,
   ]);
+  const gif = Buffer.from([
+    ...Buffer.from('GIF89a', 'ascii'),
+    0x40, 0x00,
+    0x40, 0x00,
+    0x00, 0x00, 0x00,
+  ]);
   const html = Buffer.from('<script>alert(1)</script>');
 
   assert.equal(detectLogoImageMime(png), 'image/png');
   assert.equal(detectLogoImageMime(jpeg), 'image/jpeg');
+  assert.equal(detectLogoImageMime(gif), 'image/gif');
   assert.deepEqual(detectLogoImageDimensions(png), { width: 1, height: 1 });
   assert.deepEqual(detectLogoImageDimensions(jpeg), { width: 64, height: 64 });
+  assert.deepEqual(detectLogoImageDimensions(gif), { width: 64, height: 64 });
+  assert.equal(normalizeLogoImageMime(gif), 'image/gif');
   assert.equal(detectLogoImageDimensions(html), null);
   assert.equal(detectLogoImageMime(html), null);
-  assert.throws(() => normalizeLogoImageMime(html), /PNG or JPG/);
+  assert.throws(() => normalizeLogoImageMime(html), /PNG, JPG, or GIF/);
 });
 
 test('rejects non-buffer and truncated logo image inputs', () => {
@@ -93,4 +102,5 @@ test('rejects non-buffer and truncated logo image inputs', () => {
   assert.equal(detectLogoImageMime('not bytes'), null);
   assert.equal(detectLogoImageMime(Buffer.from([0x89, 0x50, 0x4e, 0x47])), null);
   assert.equal(detectLogoImageMime(Buffer.from([0xff, 0xd8])), null);
+  assert.equal(detectLogoImageMime(Buffer.from('GIF89a', 'ascii')), null);
 });

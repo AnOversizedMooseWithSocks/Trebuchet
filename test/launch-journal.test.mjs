@@ -56,6 +56,48 @@ test('starts a non-secret launch journal idempotently', async (t) => {
   assert.equal(disk[0].events[0].stage, 'wallet_generated');
 });
 
+test('recognizes a safe repaired token when the original metadata event was missed', async (t) => {
+  const configDir = makeTempConfigDir(t);
+  const launchJournal = await importFreshLaunchJournal(configDir);
+  const mint = 'MintSafeRepair111111111111111111111111111111';
+  const repaired = {
+    token: {
+      mint,
+      mintAuthorityRenounced: true,
+      isSafe: true,
+    },
+    events: [{ stage: 'supply_minted', tokenMint: mint }],
+  };
+
+  assert.equal(launchJournal.tokenCreationComplete(repaired, mint), true);
+  assert.equal(
+    launchJournal.tokenCreationComplete({
+      ...repaired,
+      token: { ...repaired.token, isSafe: false },
+    }, mint),
+    false,
+  );
+  assert.equal(
+    launchJournal.tokenCreationComplete({ ...repaired, events: [] }, mint),
+    false,
+  );
+});
+
+test('recognizes the ordinary metadata and supply journal path', async (t) => {
+  const configDir = makeTempConfigDir(t);
+  const launchJournal = await importFreshLaunchJournal(configDir);
+  const mint = 'MintNormal111111111111111111111111111111111';
+  const journal = {
+    token: { mint, mintAuthorityRenounced: true, isSafe: false },
+    events: [
+      { stage: 'metadata_account_created', tokenMint: mint },
+      { stage: 'supply_minted', tokenMint: mint },
+    ],
+  };
+
+  assert.equal(launchJournal.tokenCreationComplete(journal, mint), true);
+});
+
 test('updates token, pool, and transfer state while filtering secrets', async (t) => {
   const configDir = makeTempConfigDir(t);
   const launchJournal = await importFreshLaunchJournal(configDir);

@@ -129,10 +129,10 @@ cluster abstraction and verified devnet program/config addresses.
 
 Logo upload is constrained by:
 
-- renderer normalization for oversized PNG/JPEG inputs;
+- renderer normalization for oversized PNG/JPEG inputs and byte-preserving animated GIF handling;
 - multipart memory storage;
 - server 100 KB file limit;
-- PNG/JPEG MIME allowlist;
+- PNG/JPEG/GIF MIME allowlist;
 - byte-signature sniffing;
 - dimension validation;
 - proxy and CSP controls for displayed remote images.

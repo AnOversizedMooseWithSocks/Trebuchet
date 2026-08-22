@@ -247,7 +247,7 @@ remains authoritative:
 
 - multipart memory storage;
 - 100 KB upload limit;
-- PNG/JPEG MIME allowlist;
+- PNG/JPEG/GIF MIME allowlist;
 - byte sniffing and dimension validation in the token pipeline;
 - Classic plan maximum dimension of 1024 px and minimum dimension of 64 px.
 

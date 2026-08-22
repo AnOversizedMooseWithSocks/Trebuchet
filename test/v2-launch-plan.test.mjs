@@ -57,6 +57,14 @@ function jpegLogoBytes(width, height) {
   ]);
 }
 
+function gifLogoBytes(width, height) {
+  const buffer = Buffer.alloc(13);
+  buffer.write('GIF89a', 0, 'ascii');
+  buffer.writeUInt16LE(width, 6);
+  buffer.writeUInt16LE(height, 8);
+  return buffer;
+}
+
 function logoDataUrl(mimeType, bytes) {
   return `data:${mimeType};base64,${bytes.toString('base64')}`;
 }
@@ -65,6 +73,8 @@ const VALID_PNG_LOGO_BYTES = pngLogoBytes(64, 64);
 const VALID_PNG_LOGO_DATA_URL = logoDataUrl('image/png', VALID_PNG_LOGO_BYTES);
 const VALID_JPEG_LOGO_BYTES = jpegLogoBytes(64, 64);
 const VALID_JPEG_LOGO_DATA_URL = logoDataUrl('image/jpeg', VALID_JPEG_LOGO_BYTES);
+const VALID_GIF_LOGO_BYTES = gifLogoBytes(64, 64);
+const VALID_GIF_LOGO_DATA_URL = logoDataUrl('image/gif', VALID_GIF_LOGO_BYTES);
 
 test('buildV2LaunchPlan returns a normalized local-wallet run contract', () => {
   const input = {
@@ -210,6 +220,30 @@ test('buildV2LaunchPlan returns a normalized local-wallet run contract', () => {
   assert.match(plan.guardrails.map((item) => item.id).join(','), /vanity-ca-options/);
 });
 
+test('buildV2LaunchPlan preserves GIF logo bytes and content type', () => {
+  const plan = buildV2LaunchPlan({
+    walletPublicKey: VALID_ROUND_TRIP_DESTINATION,
+    token: {
+      name: 'Animated Token',
+      symbol: 'GIF',
+      supply: '1000',
+      logo: {
+        name: 'animated.gif',
+        mimeType: 'image/gif',
+        sizeBytes: VALID_GIF_LOGO_BYTES.length,
+        dataUrl: VALID_GIF_LOGO_DATA_URL,
+      },
+    },
+  }, { demoMode: true });
+
+  assert.deepEqual(plan.token.logo, {
+    name: 'animated.gif',
+    mimeType: 'image/gif',
+    sizeBytes: VALID_GIF_LOGO_BYTES.length,
+    dataUrl: VALID_GIF_LOGO_DATA_URL,
+  });
+});
+
 test('removed collection configuration is ignored by the v2 launch contract', () => {
   const input = {
     token: { name: 'MoonKit', symbol: 'MKT', supply: '1000000' },
@@ -348,7 +382,7 @@ test('buildV2LaunchPlan rejects invalid launch config before staging', () => {
         logo: { dataUrl: 'data:text/plain;base64,SGVsbG8=', sizeBytes: 5 },
       },
     }),
-    /Token logo must be a PNG or JPG data URL/,
+    /Token logo must be a PNG, JPG, or GIF data URL/,
   );
   assert.throws(
     () => buildV2LaunchPlan({
@@ -359,7 +393,7 @@ test('buildV2LaunchPlan rejects invalid launch config before staging', () => {
         logo: { dataUrl: 'data:image/webp;base64,AAAAAAA=', sizeBytes: 5 },
       },
     }),
-    /Token logo must be a PNG or JPG data URL/,
+    /Token logo must be a PNG, JPG, or GIF data URL/,
   );
   assert.throws(
     () => buildV2LaunchPlan({
@@ -370,7 +404,7 @@ test('buildV2LaunchPlan rejects invalid launch config before staging', () => {
         logo: { dataUrl: 'data:image/png;base64,aGVsbG8=', sizeBytes: 5 },
       },
     }),
-    /Logo must be a PNG or JPG image/,
+    /Logo must be a PNG, JPG, or GIF image/,
   );
   const tinyPng = logoDataUrl('image/png', pngLogoBytes(1, 1));
   assert.throws(

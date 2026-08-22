@@ -4,7 +4,7 @@ const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selec
 const views = {
   launch: { eyebrow: 'Six guided phases', title: 'Launch a token' },
   wallet: { eyebrow: 'Wallet', title: 'Signer & asset custody' },
-  discovery: { eyebrow: 'Discovery', title: 'Token intelligence' },
+  discovery: { eyebrow: 'Tokens & wallets', title: 'Discovery' },
   history: { eyebrow: 'History', title: 'Execution journal' },
   settings: { eyebrow: 'Settings', title: 'Runtime policy' },
 };
@@ -300,6 +300,8 @@ const state = {
     personalError: null,
     error: null,
     lastInspectedMint: null,
+    paletteByMint: {},
+    palettePending: new Set(),
   },
   launchMode: 'dry-run',
   environmentReady: false,
@@ -326,6 +328,10 @@ const state = {
   simulated: false,
   tokenLogo: null,
   tokenLogoError: null,
+  launchIdentity: {
+    palette: null,
+    posterDataUrl: null,
+  },
   approvalOpen: false,
   activeApprovalId: null,
   transactions: [],
@@ -469,6 +475,7 @@ const state = {
   realExecutionRunning: false,
   fullRunRunning: false,
   fullRunStep: null,
+  launchDetailsExpanded: false,
   lastFullRun: null,
   lastRealExecution: null,
   executionLedger: [],
@@ -710,6 +717,10 @@ function syncGuidedField(input) {
   }
   delete state.guidedErrors[field];
   persistGuidedDraft();
+  if (['name', 'symbol', 'description'].includes(field)) {
+    renderLaunchPreview();
+    renderLaunchIdentity();
+  }
   return true;
 }
 
@@ -806,8 +817,8 @@ function guidedIdentityStep() {
         <label><span>Symbol</span><input data-guided-field="symbol" value="${escapeHtml(token.symbol)}" maxlength="10" autocomplete="off" aria-invalid="${state.guidedErrors.symbol ? 'true' : 'false'}">${guidedError('symbol')}</label>
         <label class="guided-wide"><span>Description <em>optional</em></span><input data-guided-field="description" value="${escapeHtml(token.description)}" maxlength="200" autocomplete="off"></label>
         <button class="guided-logo-button guided-wide" type="button" data-action="guided-select-logo">
-          <span class="guided-logo-mark">${logo?.dataUrl ? `<img src="${escapeHtml(logo.dataUrl)}" alt="">` : '<i class="fa-solid fa-image"></i>'}</span>
-          <span><strong>${logo ? 'Logo attached' : 'Add a token logo'}</strong><small>${logo ? escapeHtml(logo.name || 'Ready') : 'PNG or JPG · optional'}</small></span>
+          <span class="guided-logo-mark">${logo?.dataUrl ? `<img src="${escapeHtml(launchIdentityImageSrc(logo, { animate: false }))}" alt="">` : '<i class="fa-solid fa-image"></i>'}</span>
+          <span><strong>${logo ? 'Logo attached' : 'Add a token logo'}</strong><small>${logo ? escapeHtml(logo.name || 'Ready') : 'PNG, JPG, or GIF · up to 10MB · optional'}</small></span>
           <i class="fa-solid fa-chevron-right"></i>
         </button>
       </div>
@@ -911,7 +922,7 @@ function guidedReviewStep() {
           : 'Review the derived recipe and funding requirement. Nothing goes on-chain until the isolated wallet is funded and you approve the final run.'}</p>
       </div>
       <div class="guided-review-hero">
-        <span class="guided-token-mark">${state.tokenLogo?.dataUrl ? `<img src="${escapeHtml(state.tokenLogo.dataUrl)}" alt="">` : escapeHtml((token.symbol || 'TOK').slice(0, 2))}</span>
+        <span class="guided-token-mark">${state.tokenLogo?.dataUrl ? `<img src="${escapeHtml(launchIdentityImageSrc(state.tokenLogo, { animate: false }))}" alt="">` : escapeHtml((token.symbol || 'TOK').slice(0, 2))}</span>
         <span><strong>${escapeHtml(token.name || 'Untitled')} · ${escapeHtml(token.symbol || 'TOK')}</strong><small>1,000,000,000 supply · $${marketCap.toLocaleString('en-US')} starting value · ${practice ? 'practice recipe' : 'live recipe'}</small></span>
       </div>
       <div class="guided-recipe-list">
@@ -995,6 +1006,10 @@ async function requestGuidedFundingEstimate() {
 function renderGuidedLaunchFlow() {
   document.body.dataset.experienceMode = state.experienceMode;
   document.body.dataset.executionEnvironment = executionEnvironmentId();
+  const settingsEnvironment = $('#launchSettingsEnvironment');
+  const settingsExperience = $('#launchSettingsExperience');
+  if (settingsEnvironment) settingsEnvironment.textContent = executionEnvironmentId() === 'live' ? 'Live' : 'Practice';
+  if (settingsExperience) settingsExperience.textContent = state.experienceMode === 'advanced' ? 'Advanced' : 'Guided';
   $$('.experience-button').forEach((button) => {
     const selected = button.dataset.experience === state.experienceMode;
     button.classList.toggle('is-selected', selected);
@@ -3100,11 +3115,91 @@ function discoveryTrendClass(value) {
   return number > 0 ? 'is-up' : 'is-down';
 }
 
-function discoveryTokenMark(token, className = '') {
+function discoveryTokenImageSource(url) {
+  const value = String(url || '').trim();
+  if (!value) return '';
+  if (/^(data:|blob:|\/)/i.test(value)) return value;
+  return `/api/proxy-image?url=${encodeURIComponent(value)}`;
+}
+
+function discoveryDisplayToken(token = {}) {
+  const saved = (state.discovery.records || []).find((record) => record.mint === token.mint) || {};
+  return {
+    ...saved,
+    ...token,
+    name: token.name || saved.name,
+    symbol: token.symbol || saved.symbol,
+    imageUrl: token.imageUrl || saved.imageUrl,
+  };
+}
+
+function discoveryFallbackPalette(token = {}) {
+  const identity = String(token.mint || token.symbol || token.name || 'trebuchet');
+  let hash = 2166136261;
+  for (const character of identity) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  const hue = (hash >>> 0) % 360;
+  const primary = launchIdentityHslToRgb([hue / 360, 0.72, 0.58]);
+  const accent = launchIdentityHslToRgb([((hue + 42 + ((hash >>> 8) % 82)) % 360) / 360, 0.7, 0.56]);
+  return {
+    primary,
+    accent,
+    primaryHex: launchIdentityRgbHex(primary),
+    accentHex: launchIdentityRgbHex(accent),
+  };
+}
+
+function discoveryTokenPalette(token = {}) {
+  return state.discovery.paletteByMint?.[token.mint] || discoveryFallbackPalette(token);
+}
+
+function discoveryPaletteAttributes(token = {}) {
+  const palette = discoveryTokenPalette(token);
+  const imageUrl = String(token.imageUrl || '').trim();
+  return `data-token-palette="${escapeHtml(token.mint || token.symbol || token.name || '')}"${imageUrl ? ` data-token-image="${escapeHtml(imageUrl)}"` : ''} style="--token-primary:${escapeHtml(palette.primaryHex)};--token-accent:${escapeHtml(palette.accentHex)}"`;
+}
+
+function applyDiscoveryPalette(mint, palette) {
+  $$('[data-token-palette]').forEach((node) => {
+    if (node.dataset.tokenPalette !== mint) return;
+    node.style.setProperty('--token-primary', palette.primaryHex);
+    node.style.setProperty('--token-accent', palette.accentHex);
+  });
+}
+
+function hydrateDiscoveryTokenPalettes() {
+  $$('[data-token-palette]').forEach((node) => {
+    const mint = node.dataset.tokenPalette;
+    const imageUrl = node.dataset.tokenImage;
+    const cached = state.discovery.paletteByMint?.[mint];
+    if (cached) applyDiscoveryPalette(mint, cached);
+    if (!mint || !imageUrl || cached || state.discovery.palettePending.has(mint)) return;
+    state.discovery.palettePending.add(mint);
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      const palette = extractLaunchIdentityArt(image).palette;
+      state.discovery.paletteByMint[mint] = palette;
+      state.discovery.palettePending.delete(mint);
+      applyDiscoveryPalette(mint, palette);
+    };
+    image.onerror = () => state.discovery.palettePending.delete(mint);
+    image.src = discoveryTokenImageSource(imageUrl);
+  });
+  $$('.token-mark img').forEach((image) => {
+    image.addEventListener('error', () => image.remove(), { once: true });
+  });
+}
+
+function discoveryTokenMark(rawToken, className = '') {
+  const token = discoveryDisplayToken(rawToken);
+  const fallback = escapeHtml(String(token?.symbol || token?.name || '--').slice(0, 2).toUpperCase());
   const image = token?.imageUrl
-    ? `<img src="${escapeHtml(token.imageUrl)}" alt="">`
-    : escapeHtml(String(token?.symbol || '--').slice(0, 2));
-  return `<span class="token-mark ${className}">${image}</span>`;
+    ? `<img src="${escapeHtml(discoveryTokenImageSource(token.imageUrl))}" alt="" loading="lazy">`
+    : '';
+  return `<span class="token-mark ${className}" ${discoveryPaletteAttributes(token)}><span class="token-initials">${fallback}</span>${image}</span>`;
 }
 
 function discoveryPriceChart(market) {
@@ -4454,7 +4549,8 @@ function logoSummary(logo = state.tokenLogo) {
     ? ` / ${logo.width}x${logo.height}`
     : '';
   const optimized = logo.compressed ? ' / AUTO-COMPRESSED' : '';
-  return `${logo.name || 'token-logo'} / ${kb}KB${dimensions}${optimized}`;
+  const animated = logo.animated ? ' / ANIMATED' : '';
+  return `${logo.name || 'token-logo'} / ${kb}KB${dimensions}${optimized}${animated}`;
 }
 
 function loadLogoImage(file) {
@@ -4479,6 +4575,168 @@ function loadLogoImage(file) {
     };
     image.src = url;
   });
+}
+
+function launchIdentityRgbHex(rgb = []) {
+  return `#${rgb.slice(0, 3).map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function launchIdentityRelativeLuminance(rgb = []) {
+  const channels = rgb.slice(0, 3).map((value) => {
+    const channel = Math.max(0, Math.min(255, Number(value) || 0)) / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
+}
+
+function launchIdentityMixRgb(from = [], to = [], amount = 0.5) {
+  return from.slice(0, 3).map((value, index) => Math.round(
+    Number(value || 0) + ((Number(to[index]) || 0) - Number(value || 0)) * amount,
+  ));
+}
+
+function launchIdentityRgbToHsl(rgb = []) {
+  const [r, g, b] = rgb.slice(0, 3).map((value) => Math.max(0, Math.min(255, Number(value) || 0)) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) / 2;
+  if (max === min) return [0, 0, lightness];
+  const delta = max - min;
+  const saturation = lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+  let hue;
+  if (max === r) hue = ((g - b) / delta) + (g < b ? 6 : 0);
+  else if (max === g) hue = ((b - r) / delta) + 2;
+  else hue = ((r - g) / delta) + 4;
+  return [hue / 6, saturation, lightness];
+}
+
+function launchIdentityHslToRgb(hsl = []) {
+  let [hue, saturation, lightness] = hsl;
+  hue = ((Number(hue) || 0) % 1 + 1) % 1;
+  saturation = Math.max(0, Math.min(1, Number(saturation) || 0));
+  lightness = Math.max(0, Math.min(1, Number(lightness) || 0));
+  if (saturation === 0) {
+    const gray = Math.round(lightness * 255);
+    return [gray, gray, gray];
+  }
+  const hueToRgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  const q = lightness < 0.5
+    ? lightness * (1 + saturation)
+    : lightness + saturation - (lightness * saturation);
+  const p = 2 * lightness - q;
+  return [
+    Math.round(hueToRgb(p, q, hue + 1 / 3) * 255),
+    Math.round(hueToRgb(p, q, hue) * 255),
+    Math.round(hueToRgb(p, q, hue - 1 / 3) * 255),
+  ];
+}
+
+function defaultLaunchIdentityArt() {
+  const primary = [116, 247, 169];
+  const accent = [104, 207, 255];
+  return {
+    palette: {
+      primary,
+      accent,
+      primaryHex: launchIdentityRgbHex(primary),
+      accentHex: launchIdentityRgbHex(accent),
+      contrast: '#03100a',
+    },
+    posterDataUrl: null,
+  };
+}
+
+function tuneLaunchIdentityColor(rgb = []) {
+  const luminance = launchIdentityRelativeLuminance(rgb);
+  if (luminance < 0.08) return launchIdentityMixRgb(rgb, [255, 255, 255], 0.32);
+  if (luminance > 0.88) return launchIdentityMixRgb(rgb, [0, 0, 0], 0.22);
+  return rgb.map((value) => Math.round(value));
+}
+
+function extractLaunchIdentityArt(image, { includePoster = false } = {}) {
+  const fallback = defaultLaunchIdentityArt();
+  try {
+    const sample = document.createElement('canvas');
+    sample.width = 40;
+    sample.height = 40;
+    const context = sample.getContext('2d', { willReadFrequently: true });
+    if (!context || typeof context.getImageData !== 'function') return fallback;
+    context.drawImage(image, 0, 0, sample.width, sample.height);
+    const pixels = context.getImageData(0, 0, sample.width, sample.height).data;
+    const buckets = new Map();
+    for (let index = 0; index < pixels.length; index += 4) {
+      const alpha = pixels[index + 3];
+      if (alpha < 96) continue;
+      const r = pixels[index];
+      const g = pixels[index + 1];
+      const b = pixels[index + 2];
+      const key = `${Math.round(r / 24)}:${Math.round(g / 24)}:${Math.round(b / 24)}`;
+      const bucket = buckets.get(key) || { count: 0, r: 0, g: 0, b: 0 };
+      bucket.count += 1;
+      bucket.r += r;
+      bucket.g += g;
+      bucket.b += b;
+      buckets.set(key, bucket);
+    }
+    const candidates = [...buckets.values()].map((bucket) => {
+      const rgb = [bucket.r, bucket.g, bucket.b].map((sum) => sum / bucket.count);
+      const [, saturation, lightness] = launchIdentityRgbToHsl(rgb);
+      const middleBias = 1 - Math.min(0.72, Math.abs(lightness - 0.52));
+      return {
+        rgb,
+        count: bucket.count,
+        score: (bucket.count ** 0.72) * (0.42 + saturation * 1.8) * middleBias,
+      };
+    }).sort((a, b) => b.score - a.score);
+    if (!candidates.length) return fallback;
+
+    const primary = tuneLaunchIdentityColor(candidates[0].rgb);
+    const distance = (a, b) => Math.sqrt(a.reduce((sum, value, index) => sum + ((value - b[index]) ** 2), 0));
+    const accentCandidate = candidates.slice(1)
+      .filter((candidate) => distance(candidate.rgb, primary) >= 72)
+      .sort((a, b) => (b.score * distance(b.rgb, primary)) - (a.score * distance(a.rgb, primary)))[0];
+    const primaryHsl = launchIdentityRgbToHsl(primary);
+    const accent = tuneLaunchIdentityColor(accentCandidate?.rgb || launchIdentityHslToRgb([
+      primaryHsl[0] + 0.12,
+      Math.max(0.55, primaryHsl[1]),
+      Math.max(0.44, Math.min(0.68, primaryHsl[2])),
+    ]));
+    const contrast = launchIdentityRelativeLuminance(primary) > 0.44 ? '#03100a' : '#f7fbf9';
+    let posterDataUrl = null;
+    if (includePoster) {
+      const poster = document.createElement('canvas');
+      const size = 192;
+      poster.width = size;
+      poster.height = size;
+      const posterContext = poster.getContext('2d');
+      const sourceWidth = Number(image.naturalWidth || image.width || 1);
+      const sourceHeight = Number(image.naturalHeight || image.height || 1);
+      const scale = Math.max(size / sourceWidth, size / sourceHeight);
+      const width = sourceWidth * scale;
+      const height = sourceHeight * scale;
+      posterContext?.drawImage(image, (size - width) / 2, (size - height) / 2, width, height);
+      if (typeof poster.toDataURL === 'function') posterDataUrl = poster.toDataURL('image/png');
+    }
+    return {
+      palette: {
+        primary,
+        accent,
+        primaryHex: launchIdentityRgbHex(primary),
+        accentHex: launchIdentityRgbHex(accent),
+        contrast,
+      },
+      posterDataUrl,
+    };
+  } catch (_) {
+    return fallback;
+  }
 }
 
 function logoCanvasBlob(image, width, height, mimeType, quality) {
@@ -4555,9 +4813,9 @@ async function compressLogoFile(file, source) {
 
 async function validateLogoFile(file) {
   if (!file) return null;
-  const allowedTypes = new Set(['image/png', 'image/jpeg']);
+  const allowedTypes = new Set(['image/png', 'image/jpeg', 'image/gif']);
   if (!allowedTypes.has(file.type)) {
-    throw new Error('Logo must be a PNG or JPG image');
+    throw new Error('Logo must be a PNG, JPG, or GIF image');
   }
   if (file.size <= 0 || file.size > LOGO_SOURCE_MAX_BYTES) {
     const mb = Math.max(1, Math.ceil(Number(file.size || 0) / (1024 * 1024)));
@@ -4566,6 +4824,7 @@ async function validateLogoFile(file) {
 
   const source = await loadLogoImage(file);
   try {
+    const identity = extractLaunchIdentityArt(source.image, { includePoster: file.type === 'image/gif' });
     if (source.width > LOGO_SOURCE_MAX_DIMENSION || source.height > LOGO_SOURCE_MAX_DIMENSION) {
       throw new Error(`Logo dimensions must be ${LOGO_SOURCE_MAX_DIMENSION}x${LOGO_SOURCE_MAX_DIMENSION}px or smaller before compression`);
     }
@@ -4582,9 +4841,27 @@ async function validateLogoFile(file) {
         height: source.height,
         compressed: false,
         originalSizeBytes: file.size,
+        identity,
       };
     }
-    return await compressLogoFile(file, source);
+    if (file.type === 'image/gif') {
+      const optimizer = globalThis.TrebuchetGifOptimizer?.optimizeAnimatedGif;
+      if (typeof optimizer !== 'function') {
+        throw new Error('Animated GIF compression is unavailable; reload Trebuchet and try again');
+      }
+      return {
+        ...await optimizer(file, {
+          maxBytes: CLASSIC_LOGO_MAX_BYTES,
+          maxDimension: CLASSIC_LOGO_MAX_DIMENSION,
+          minDimension: CLASSIC_LOGO_MIN_DIMENSION,
+        }),
+        identity,
+      };
+    }
+    return {
+      ...await compressLogoFile(file, source),
+      identity,
+    };
   } finally {
     source.release();
   }
@@ -4657,6 +4934,9 @@ function readFileAsText(file, label = 'File') {
 
 async function selectTokenLogo(file) {
   try {
+    if (file?.type === 'image/gif' && file.size > CLASSIC_LOGO_MAX_BYTES) {
+      notify('Optimizing animated GIF locally…');
+    }
     const prepared = await validateLogoFile(file);
     if (!prepared) return;
     const safeFile = prepared.file;
@@ -4669,15 +4949,26 @@ async function selectTokenLogo(file) {
       height: prepared.height,
       compressed: prepared.compressed,
       originalSizeBytes: prepared.originalSizeBytes,
+      frameCount: prepared.frameCount,
+      originalFrameCount: prepared.originalFrameCount,
+      animated: safeFile.type === 'image/gif',
       dataUrl,
     };
+    state.launchIdentity = prepared.identity || defaultLaunchIdentityArt();
     state.tokenLogoError = null;
     invalidateClassicOutputs();
     refreshClassicPreview({ includePoolEditor: true });
     renderGuidedLaunchFlow();
-    notify(prepared.compressed ? 'Token logo auto-compressed and attached' : 'Token logo attached');
+    if (prepared.compressed && safeFile.type === 'image/gif') {
+      const beforeMb = (Number(prepared.originalSizeBytes || 0) / (1024 * 1024)).toFixed(1);
+      const afterKb = Math.max(1, Math.ceil(safeFile.size / 1024));
+      notify(`Animated GIF compressed from ${beforeMb}MB to ${afterKb}KB and attached`);
+    } else {
+      notify(prepared.compressed ? 'Token logo auto-compressed and attached' : 'Token logo attached');
+    }
   } catch (error) {
     state.tokenLogo = null;
+    state.launchIdentity = { palette: null, posterDataUrl: null };
     state.tokenLogoError = error.message || 'Token logo failed validation';
     const input = document.getElementById('tokenLogoFile');
     if (input) input.value = '';
@@ -4690,6 +4981,7 @@ async function selectTokenLogo(file) {
 
 function clearTokenLogo() {
   state.tokenLogo = null;
+  state.launchIdentity = { palette: null, posterDataUrl: null };
   state.tokenLogoError = null;
   const input = document.getElementById('tokenLogoFile');
   if (input) input.value = '';
@@ -5795,6 +6087,7 @@ function setLaunchWorkspace(workspace, { focus = false } = {}) {
     // Local storage is optional in file previews and restricted browser contexts.
   }
   renderLaunchWorkspace();
+  renderLaunchIdentity();
   const viewport = $('#launchWorkspaceViewport');
   if (viewport) viewport.scrollTop = 0;
   if (focus) {
@@ -5835,6 +6128,246 @@ function renderGlobalStrip() {
   `).join('');
 }
 
+function launchIdentityReducedMotion() {
+  try {
+    return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function launchIdentityImageSrc(logo = state.tokenLogo, { animate = false } = {}) {
+  if (!logo?.dataUrl) return '';
+  if (logo.animated && (!animate || launchIdentityReducedMotion())) {
+    return state.launchIdentity?.posterDataUrl || logo.dataUrl;
+  }
+  return logo.dataUrl;
+}
+
+function applyLaunchIdentityPalette(palette = null) {
+  const style = document.body.style;
+  const properties = [
+    '--identity-primary',
+    '--identity-primary-rgb',
+    '--identity-accent',
+    '--identity-accent-rgb',
+    '--identity-contrast',
+  ];
+  if (!palette?.primary || !palette?.accent) {
+    properties.forEach((property) => style.removeProperty(property));
+    return;
+  }
+  style.setProperty('--identity-primary', palette.primaryHex || launchIdentityRgbHex(palette.primary));
+  style.setProperty('--identity-primary-rgb', palette.primary.join(' '));
+  style.setProperty('--identity-accent', palette.accentHex || launchIdentityRgbHex(palette.accent));
+  style.setProperty('--identity-accent-rgb', palette.accent.join(' '));
+  style.setProperty('--identity-contrast', palette.contrast || '#03100a');
+}
+
+function launchIdentityModel() {
+  const config = currentLaunchConfig();
+  const proof = currentLaunchProof();
+  const logo = config.token.logo;
+  const name = String(proof?.token?.name || config.token.name || '').trim() || 'Untitled token';
+  const symbol = String(proof?.token?.symbol || config.token.symbol || 'TOK').trim().toUpperCase();
+  const mint = String(
+    proof?.token?.mint
+    || state.lastDemoLaunchRun?.token?.tokenMint
+    || state.lastDemoLaunchRun?.token?.mint
+    || '',
+  ).trim();
+  const workspaceIndex = Math.max(0, launchWorkspaces.findIndex((item) => item.id === state.launchWorkspace));
+  const signaturePercent = signatureStats().percent;
+  const sweepComplete = transferHasWalletEmptyFinalSweepEvidence(proof?.transfer);
+  const liquidityComplete = Boolean(
+    isReadinessPhaseComplete('liquidity')
+    || proof?.liquidity?.lockedPositionCount > 0
+    || state.lastDemoLaunchRun?.liquidity?.success,
+  );
+  const tokenComplete = Boolean(mint || isReadinessPhaseComplete('token'));
+  const progress = sweepComplete
+    ? 100
+    : Math.max(
+      logo ? 8 : 0,
+      Math.round(((workspaceIndex + 0.3) / launchWorkspaces.length) * 100),
+      signaturePercent,
+    );
+  const status = sweepComplete
+    ? 'Launch complete'
+    : liquidityComplete
+      ? 'Liquidity locked'
+      : tokenComplete
+        ? 'Token minted'
+        : state.launchPlan
+          ? 'Run armed'
+          : logo
+            ? 'Identity attached'
+            : 'Awaiting identity';
+  const phase = launchWorkspaces[workspaceIndex] || launchWorkspaces[0];
+  return { config, proof, logo, name, symbol, mint, progress, status, phase, workspaceIndex };
+}
+
+function launchOperationIsActive() {
+  const lpStatus = String(state.liveOps.lp?.status || '').toLowerCase();
+  const airdropStatus = String(state.liveOps.airdrop?.status || '').toLowerCase();
+  return Boolean(
+    state.fullRunRunning
+    || state.realExecutionRunning
+    || state.demoLaunchRunning
+    || state.reportPublishing
+    || state.airdropRunning
+    || state.quoteAcquire.running
+    || state.executionChecking
+    || ['running', 'active'].includes(lpStatus)
+    || ['running', 'active'].includes(airdropStatus)
+  );
+}
+
+function renderLiveLaunchMonitor() {
+  const monitor = $('#liveLaunchMonitor');
+  if (!monitor) return;
+  const active = state.activeView === 'launch'
+    && state.experienceMode === 'advanced'
+    && launchOperationIsActive();
+  if (!active) {
+    monitor.hidden = true;
+    monitor.innerHTML = '';
+    document.body.dataset.launchFocus = 'idle';
+    state.launchDetailsExpanded = false;
+    return;
+  }
+
+  const context = runProgressContext();
+  const model = launchIdentityModel();
+  const activeRow = context.rows.find((row) => row.id === context.activeId)
+    || context.rows.find((row) => row.state !== 'signed')
+    || context.rows[context.rows.length - 1]
+    || null;
+  const blocked = activeRow?.state === 'blocked';
+  const currentAction = String(
+    state.fullRunStep
+    || activeRow?.label
+    || context.headingLabel
+    || 'Advancing launch',
+  ).trim();
+  const currentDetail = String(
+    activeRow?.effects?.[0]
+    || (blocked ? 'Trebuchet needs your attention before it can continue.' : 'Trebuchet is recording each confirmed launch checkpoint.'),
+  ).trim();
+  const logoSrc = launchIdentityImageSrc(model.logo, { animate: true });
+  const progress = Math.max(0, Math.min(100, Number(context.percent) || 0));
+  const expanded = state.launchDetailsExpanded === true;
+  document.body.dataset.launchFocus = expanded ? 'details' : 'active';
+  monitor.hidden = false;
+  monitor.className = `live-launch-monitor ${blocked ? 'is-blocked' : 'is-running'}`;
+  monitor.innerHTML = `
+    <div class="live-launch-token">
+      ${logoSrc
+    ? `<span class="live-launch-coin"><img src="${escapeHtml(logoSrc)}" alt="${escapeHtml(`${model.name} logo`)}"></span>`
+    : '<span class="live-launch-coin is-placeholder" aria-hidden="true"><i class="fa-solid fa-coins"></i></span>'}
+      <span>
+        <small>${blocked ? 'Launch needs attention' : 'Live launch'}</small>
+        <strong>${escapeHtml(model.name)} <em>$${escapeHtml(model.symbol)}</em></strong>
+      </span>
+    </div>
+    <div class="live-launch-now">
+      <span class="live-launch-pulse" aria-hidden="true"></span>
+      <span>
+        <small>${blocked ? 'Stopped here' : 'Happening now'}</small>
+        <strong>${escapeHtml(currentAction)}</strong>
+        <em>${escapeHtml(currentDetail)}</em>
+      </span>
+    </div>
+    <div class="live-launch-progress">
+      <span><small>Launch progress</small><strong>${progress}%</strong></span>
+      <span class="live-launch-progress-track" role="progressbar" aria-label="Launch progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}">
+        <i style="width: ${progress}%"></i>
+      </span>
+      <small>${context.signed} of ${context.total} checkpoints complete</small>
+    </div>
+    <button class="live-launch-details-button" type="button" data-action="toggle-launch-details" aria-expanded="${expanded}">
+      <span>${expanded ? 'Focus on current action' : 'Show launch details'}</span>
+      <i class="fa-solid fa-chevron-${expanded ? 'up' : 'down'}" aria-hidden="true"></i>
+    </button>
+  `;
+}
+
+function renderLaunchIdentity() {
+  const model = launchIdentityModel();
+  const active = Boolean(model.logo?.dataUrl);
+  const dock = $('#launchIdentityDock');
+  const sidebar = $('#launchIdentitySidebar');
+  const chip = $('#launchIdentityChip');
+  document.body.dataset.launchIdentity = active ? 'active' : 'empty';
+  if (!active) {
+    applyLaunchIdentityPalette(null);
+    [dock, sidebar, chip].forEach((element) => {
+      if (!element) return;
+      element.hidden = true;
+      element.innerHTML = '';
+    });
+    return;
+  }
+
+  const palette = state.launchIdentity?.palette || defaultLaunchIdentityArt().palette;
+  applyLaunchIdentityPalette(palette);
+  const heroSrc = launchIdentityImageSrc(model.logo, { animate: true });
+  const stillSrc = launchIdentityImageSrc(model.logo, { animate: false });
+  const animated = Boolean(model.logo.animated && !launchIdentityReducedMotion());
+  const hero = state.experienceMode === 'guided'
+    && state.launchWorkspace === 'configure'
+    && state.guidedStep === 1;
+  const mintLabel = model.mint ? shortAddress(model.mint) : 'Mint address pending';
+  const phaseDetail = `${model.phase.title} / ${model.status}`;
+
+  if (dock) {
+    dock.hidden = false;
+    dock.className = `launch-identity-dock ${hero ? 'is-hero' : 'is-compact'} ${animated ? 'is-animated' : ''}`;
+    dock.style.setProperty('--identity-progress', `${Math.max(0, Math.min(100, model.progress)) * 3.6}deg`);
+    dock.innerHTML = `
+      <div class="launch-identity-visual">
+        <span class="launch-identity-progress-ring" aria-hidden="true"></span>
+        <span class="launch-identity-coin"><img src="${escapeHtml(heroSrc)}" alt="${escapeHtml(`${model.name} logo`)}"></span>
+        ${animated ? '<span class="launch-identity-motion"><i class="fa-solid fa-wave-square"></i> Live artwork</span>' : ''}
+      </div>
+      <div class="launch-identity-copy">
+        <span class="eyebrow">Active launch identity</span>
+        <h2>${escapeHtml(model.name)} <em>$${escapeHtml(model.symbol)}</em></h2>
+        <p>${escapeHtml(phaseDetail)}</p>
+        <div class="launch-identity-facts">
+          <span><small>Identity</small><strong>${escapeHtml(model.status)}</strong></span>
+          <span><small>Contract</small><strong>${escapeHtml(mintLabel)}</strong></span>
+          <span><small>Progress</small><strong>${model.progress}%</strong></span>
+        </div>
+      </div>
+      <div class="launch-identity-palette" aria-label="Palette extracted from token artwork">
+        <span class="identity-swatch identity-swatch-primary"></span>
+        <span class="identity-swatch identity-swatch-accent"></span>
+        <small>Palette from artwork</small>
+      </div>
+    `;
+  }
+
+  if (sidebar) {
+    sidebar.hidden = false;
+    sidebar.innerHTML = `
+      <span class="launch-identity-mini-coin"><img src="${escapeHtml(stillSrc)}" alt=""></span>
+      <span><small>Active launch</small><strong>${escapeHtml(model.symbol)}</strong><em>${escapeHtml(model.status)}</em></span>
+      <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i>
+    `;
+    sidebar.setAttribute('aria-label', `Open ${model.name} launch`);
+  }
+
+  if (chip) {
+    chip.hidden = false;
+    chip.innerHTML = `
+      <span class="launch-identity-chip-coin"><img src="${escapeHtml(heroSrc)}" alt=""></span>
+      <span><small>Launching</small><strong>$${escapeHtml(model.symbol)}</strong></span>
+    `;
+    chip.setAttribute('aria-label', `Open ${model.name} launch`);
+  }
+}
+
 function renderLaunchPreview() {
   const name = $('#tokenName').value.trim() || 'Untitled';
   const symbol = ($('#tokenSymbol').value.trim() || 'TOK').toUpperCase();
@@ -5850,7 +6383,7 @@ function renderLaunchPreview() {
   const assetMark = $('#assetMark');
   assetMark.classList.toggle('has-logo', Boolean(logo?.dataUrl));
   assetMark.innerHTML = logo?.dataUrl
-    ? `<img src="${escapeHtml(logo.dataUrl)}" alt="">`
+    ? `<img src="${escapeHtml(launchIdentityImageSrc(logo, { animate: false }))}" alt="">`
     : escapeHtml(symbol.slice(0, 2));
   $('#launchName').textContent = `${name} token launch`;
   $('#launchStatus').textContent = state.transactions.length ? 'Staged' : state.simulated ? 'Simulated' : 'Draft';
@@ -5886,7 +6419,7 @@ function renderTokenLogoPreview() {
   target.className = `token-logo-preview ${logo ? 'has-logo' : ''} ${error ? 'danger' : ''}`;
   target.innerHTML = `
     <span class="token-logo-thumb">
-      ${logo?.dataUrl ? `<img src="${escapeHtml(logo.dataUrl)}" alt="">` : '<i class="fa-solid fa-image"></i>'}
+      ${logo?.dataUrl ? `<img src="${escapeHtml(launchIdentityImageSrc(logo, { animate: false }))}" alt="">` : '<i class="fa-solid fa-image"></i>'}
     </span>
     <span>
       <small>${escapeHtml(error ? 'Logo rejected' : logo ? 'Logo attached' : 'Token logo')}</small>
@@ -6205,8 +6738,14 @@ function renderChartDeck() {
       ? { label: 'Live', className: '' }
       : tokenomicsBadge;
   const signaturePercent = signatureStats().percent;
-  const slices = buildV2TokenomicsItems(config, results).map((item) => ({
+  const identityPalette = state.launchIdentity?.palette;
+  const slices = buildV2TokenomicsItems(config, results).map((item, index) => ({
     ...item,
+    color: index === 0 && config.token.logo?.dataUrl
+      ? identityPalette?.primaryHex || item.color
+      : index === 1 && config.token.logo?.dataUrl
+        ? identityPalette?.accentHex || item.color
+        : item.color,
     value: clampPercent(item.percent),
     amount: supply * ((Number(item.percent) || 0) / 100),
   }));
@@ -6231,6 +6770,9 @@ function renderChartDeck() {
     size: 112,
     centerLabel: `${Math.round(placedPercent)}%`,
     centerDetail: 'placed',
+    logoSrc: config.token.logo?.dataUrl
+      ? launchIdentityImageSrc(config.token.logo, { animate: false })
+      : null,
   });
   $('#tokenomicsLegend').innerHTML = slices.map((item) => `
     <div class="legend-row">
@@ -13331,7 +13873,7 @@ function renderClassicBridge() {
   const readinessDetail = quoteSafety.blockers[0]?.detail
     || blockers[0]?.detail
     || readinessNextDetail
-    || (state.apiStatus === 'connected' ? 'Run the preflight check to identify the next safe launch action.' : 'Open through the local Trebuchet app to check execution.');
+    || (state.apiStatus === 'connected' ? 'Check the next safe action.' : 'Open the local Trebuchet app to continue.');
   const demoRunLabel = state.demoLaunchRunning
     ? 'Running demo'
     : state.lastDemoLaunchRun
@@ -13364,8 +13906,14 @@ function renderClassicBridge() {
     isReadinessPhaseComplete('liquidity')
     || (poolCount > 0 && launchProofPoolIds(currentLaunchProof()).length >= poolCount)
   );
-  const metadataRevealPending = readiness?.completion?.metadataRevealPending === true
-    || proofToken.sealedMetadataPending === true;
+  const metadataRevealPending = readiness?.nextEndpoint === '/api/reveal-sealed-metadata'
+    || (
+      liquidityComplete
+      && (
+        readiness?.completion?.metadataRevealPending === true
+        || proofToken.sealedMetadataPending === true
+      )
+    );
   const finalSweepComplete = transferHasWalletEmptyFinalSweepEvidence(currentLaunchProof()?.transfer);
   const restoredPlanNotice = state.restoredLaunchJournalId && !finalSweepComplete ? `
     <aside class="recovered-plan-notice" role="status">
@@ -13445,8 +13993,22 @@ function renderClassicBridge() {
       </div>
     </section>
   `;
-  const readinessPanel = ({ title, detail, canRun, runLabel, complete, nextWorkspace, endpoint }) => {
+  const readinessPanel = ({
+    title,
+    detail,
+    canRun,
+    runLabel,
+    complete,
+    nextWorkspace,
+    endpoint,
+    primary = false,
+    finalizationIssue = null,
+  }) => {
     const recoveringToken = endpoint === '/api/finish-token-creation';
+    const finalSweepAction = endpoint === '/api/transfer-assets';
+    const finalSweepProofMissing = finalSweepAction
+      && Boolean(finalizationIssue)
+      && /report|dossier|proof/i.test(String(finalizationIssue));
     const recoveryDoesNotNeedFreshEstimate = [
       '/api/finish-token-creation',
       '/api/resume-launch',
@@ -13464,11 +14026,13 @@ function renderClassicBridge() {
       && readiness?.nextEndpoint === endpoint
       && blockers.length === 0
       && quoteSafety.blockers.length === 0;
-    const needsRunEnvelope = nextOperationReady && !armedRunEnvelopeId;
+    const needsRunEnvelope = nextOperationReady && !armedRunEnvelopeId && !finalizationIssue;
     const panelEyebrow = complete
       ? 'Phase complete'
       : needsFunding
         ? 'Next step'
+        : finalizationIssue
+          ? 'One required step'
         : needsRunEnvelope
           ? 'Final confirmation'
           : canRun
@@ -13478,22 +14042,32 @@ function renderClassicBridge() {
       ? title
       : needsFunding
         ? 'Fund the launch wallet'
+        : finalSweepProofMissing
+          ? 'Save local launch proof'
+          : finalizationIssue
+            ? 'Resolve the final-sweep requirement'
         : needsRunEnvelope
-          ? recoveringToken ? 'Finish interrupted token safely' : 'Review and arm this launch'
+          ? finalSweepAction
+            ? 'Authorize final sweep'
+            : recoveringToken ? 'Finish interrupted token safely' : 'Review and arm this launch'
           : readiness?.nextAction || title;
     const panelDetail = complete
       ? detail
       : needsFunding
-        ? 'Estimating calculated the requirement but did not move funds. Phase 3 shows the amount, address, and balance check.'
+        ? 'Open Fund for the amount, address, and balance check.'
+        : finalizationIssue
+          ? String(finalizationIssue)
         : needsRunEnvelope
-          ? recoveringToken
-            ? 'An on-chain mint already exists. Review the recovery operations once; then Finish token safely becomes available here. No second mint will be created.'
-            : 'Funding is verified. Review the decoded operations and maximum spend once; then Create token becomes available here.'
+          ? finalSweepAction
+            ? 'Confirm the return wallet and arm the final sweep.'
+            : recoveringToken
+            ? 'Review the recovery once. Trebuchet will finish the existing mint, not create another.'
+            : 'Review the operations and maximum spend once.'
         : readinessDetail;
-    const panelBadge = complete ? 'Done' : needsFunding ? 'Required' : needsRunEnvelope ? 'Action required' : effectiveReadinessMeta.label;
-    const panelClass = complete ? '' : needsFunding || needsRunEnvelope ? 'warn' : effectiveReadinessMeta.className;
+    const panelBadge = complete ? 'Done' : needsFunding || finalizationIssue ? 'Required' : needsRunEnvelope ? 'Action required' : effectiveReadinessMeta.label;
+    const panelClass = complete ? '' : needsFunding || finalizationIssue || needsRunEnvelope ? 'warn' : effectiveReadinessMeta.className;
     return `
-    <div class="execution-readiness ${escapeHtml(panelClass)}">
+    <div class="execution-readiness ${escapeHtml(panelClass)} ${primary ? 'is-primary-action' : ''}">
       <div class="readiness-main">
         <span>
           <span class="eyebrow">${escapeHtml(panelEyebrow)}</span>
@@ -13507,10 +14081,14 @@ function renderClassicBridge() {
           ? `<button class="primary-button compact" type="button" data-launch-workspace="${escapeHtml(nextWorkspace)}"><span>Continue</span><i class="fa-solid fa-arrow-right"></i></button>`
           : state.demoActive
             ? `<button class="primary-button compact" type="button" data-action="run-demo-launch" ${state.demoLaunchRunning ? 'disabled' : ''}><span>${escapeHtml(demoRunLabel)}</span><i class="fa-solid fa-flask"></i></button>`
+            : finalSweepProofMissing
+              ? '<button class="primary-button compact" type="button" data-action="download-v2-dossier"><span>Save local dossier</span><i class="fa-solid fa-download"></i></button>'
+              : finalizationIssue
+                ? `<button class="primary-button compact" type="button" data-action="check-readiness" ${state.executionChecking ? 'disabled' : ''}><span>${state.executionChecking ? 'Checking' : 'Check requirement again'}</span><i class="fa-solid fa-rotate"></i></button>`
             : canRun
               ? `<button class="primary-button compact" type="button" data-action="execute-next-run" ${state.realExecutionRunning || state.fullRunRunning ? 'disabled' : ''}><span>${escapeHtml(state.realExecutionRunning ? 'Running' : runLabel)}</span><i class="fa-solid fa-arrow-right"></i></button>`
               : needsRunEnvelope
-                ? `<button class="primary-button compact" type="button" data-action="review-and-arm-run"><span>${recoveringToken ? 'Review &amp; arm recovery' : 'Review &amp; arm launch'}</span><i class="fa-solid fa-shield-halved"></i></button>`
+                ? `<button class="primary-button compact" type="button" data-action="review-and-arm-run"><span>${finalSweepAction ? 'Review &amp; arm final sweep' : recoveringToken ? 'Review &amp; arm recovery' : 'Review &amp; arm launch'}</span><i class="fa-solid fa-shield-halved"></i></button>`
               : fundingReady || recoveryDoesNotNeedFreshEstimate
                 ? `<button class="primary-button compact" type="button" data-action="check-readiness" ${state.executionChecking ? 'disabled' : ''}><span>${state.executionChecking ? 'Checking' : 'Check again'}</span><i class="fa-solid fa-rotate"></i></button>`
                 : '<button class="primary-button compact" type="button" data-launch-workspace="fund"><span>Fund launch wallet</span><i class="fa-solid fa-arrow-left"></i></button>'}
@@ -13523,12 +14101,11 @@ function renderClassicBridge() {
     ${restoredPlanNotice}
     <section class="classic-workspace-section launch-phase-workspace" data-classic-workspace="wallet">
       <section class="launch-step-guide" aria-labelledby="walletStepTitle">
-        <span class="launch-step-kicker">Phase 1 of 6</span>
         <div>
-          <h2 id="walletStepTitle">Choose a temporary launch wallet</h2>
-          <p>Trebuchet signs from an isolated local wallet, checkpoints every completed action, and returns all remaining assets to your destination in the final phase.</p>
+          <h2 id="walletStepTitle">Launch wallet</h2>
+          <p>A temporary signer for this launch.</p>
         </div>
-        <aside><i class="fa-solid fa-shield-halved" aria-hidden="true"></i><span><strong>Your personal wallet never signs the launch.</strong> It only funds this address and receives the final sweep.</span></aside>
+        <aside><i class="fa-solid fa-shield-halved" aria-hidden="true"></i><span>Your wallet only funds and receives the final sweep.</span></aside>
       </section>
       <button class="launch-wallet-choice ${walletReady ? 'is-ready' : 'needs-action'}" type="button" data-action="unlock-wallet-and-continue" aria-label="${walletReady ? 'Continue with' : 'Unlock'} ${escapeHtml(walletPublicKey ? selectedWallet.name : 'a launch wallet')}">
         <span class="launch-wallet-choice-icon"><i class="fa-solid ${walletPublicKey ? 'fa-key' : 'fa-wallet'}"></i></span>
@@ -13539,49 +14116,41 @@ function renderClassicBridge() {
         </span>
         <span class="risk-badge ${walletReady ? '' : 'warn'}">${walletReady ? 'Continue' : walletPublicKey ? 'Unlock' : 'Required'}</span>
       </button>
-      <div class="launch-guidance-list">
-        <article><i class="fa-solid fa-lock"></i><span><strong>Encrypted on this Mac</strong><small>The Recovery PIN protects the launch secret.</small></span></article>
-        <article><i class="fa-solid fa-rotate-left"></i><span><strong>Safe to resume</strong><small>The launch journal records every durable checkpoint.</small></span></article>
-        <article><i class="fa-solid fa-arrow-right-arrow-left"></i><span><strong>Single-use signer</strong><small>Funding arrives here; leftovers and Fee Keys leave in Phase 6.</small></span></article>
-      </div>
-      <div class="launch-phase-actions launch-phase-actions-split">
-        <div>
+      <details class="drawer phase-options">
+        <summary><span>Wallet options</span><strong>Copy · lock · manage</strong></summary>
+        <div class="launch-phase-actions">
           ${walletPublicKey
             ? `<button class="secondary-button" type="button" data-action="copy-wallet-address"><i class="fa-solid fa-copy"></i><span>Copy address</span></button>
-               <button class="secondary-button" type="button" data-action="${walletReady ? 'toggle-wallet' : 'unlock-wallet-and-continue'}"><i class="fa-solid ${walletReady ? 'fa-lock' : 'fa-unlock'}"></i><span>${walletReady ? 'Lock wallet' : 'Unlock & continue'}</span></button>`
+               <button class="secondary-button" type="button" data-action="${walletReady ? 'toggle-wallet' : 'unlock-wallet-and-continue'}"><i class="fa-solid ${walletReady ? 'fa-lock' : 'fa-unlock'}"></i><span>${walletReady ? 'Lock wallet' : 'Unlock'}</span></button>`
             : '<button class="primary-button" type="button" data-action="generate-wallet"><i class="fa-solid fa-plus"></i><span>Create launch wallet</span></button>'}
           <button class="secondary-button" type="button" data-view="wallet"><i class="fa-solid fa-wallet"></i><span>Manage wallets</span></button>
         </div>
-        <button class="primary-button" type="button" data-launch-workspace="configure" ${walletReady ? '' : 'disabled'}><span>${walletReady ? 'Continue to token & pools' : 'Unlock wallet first'}</span><i class="fa-solid fa-arrow-right"></i></button>
-      </div>
+      </details>
     </section>
     <section class="classic-workspace-section classic-workspace-fund" data-classic-workspace="fund">
       <section class="launch-step-guide" aria-labelledby="fundStepTitle">
-        <span class="launch-step-kicker">Phase 3 of 6</span>
         <div>
-          <h2 id="fundStepTitle">Fund the launch wallet</h2>
-          <p>Estimate the requirement, send the assets, then verify the balance. Estimating never moves funds.</p>
+          <h2 id="fundStepTitle">Fund</h2>
+          <p>Set the return wallet, estimate, send, then verify.</p>
         </div>
-        <aside><i class="fa-solid ${fundingReady ? 'fa-circle-check' : 'fa-arrow-down'}" aria-hidden="true"></i><span><strong>${escapeHtml(fundingReady ? 'Wallet verified' : 'Complete this step before token creation')}</strong></span></aside>
+        <aside><i class="fa-solid ${fundingReady ? 'fa-circle-check' : 'fa-arrow-down'}" aria-hidden="true"></i><span>${escapeHtml(fundingReady ? 'Funding verified.' : 'No funds move during estimation.')}</span></aside>
       </section>
-      ${fundingPanel}
-      ${renderFundingWalletHint({ compact: true })}
+      ${finishDestinationReady ? fundingPanel : renderFundingWalletHint({ compact: true })}
       ${estimate && (routeCount || manualQuoteCount) ? `<details class="drawer funding-extra"><summary><span>Additional token funding</span><strong>${routeCount + manualQuoteCount} item${routeCount + manualQuoteCount === 1 ? '' : 's'}</strong></summary>${renderQuoteAcquirePanel()}</details>` : ''}
       <div class="launch-phase-actions launch-phase-actions-split">
-        <button class="secondary-button" type="button" data-launch-workspace="configure"><i class="fa-solid fa-arrow-left"></i><span>Edit token &amp; pools</span></button>
-        <button class="primary-button" type="button" data-launch-workspace="mint" ${fundingReady ? '' : 'disabled'}><span>${fundingReady ? 'Continue to create token' : 'Verify funding to continue'}</span><i class="fa-solid fa-arrow-right"></i></button>
+        <button class="text-button" type="button" data-launch-workspace="configure"><i class="fa-solid fa-arrow-left"></i><span>Token &amp; pools</span></button>
+        ${fundingReady ? '<button class="primary-button" type="button" data-launch-workspace="mint"><span>Continue to create token</span><i class="fa-solid fa-arrow-right"></i></button>' : ''}
       </div>
     </section>
     <section class="classic-workspace-section classic-workspace-execute" data-classic-workspace="mint">
       <section class="launch-step-guide irreversible" aria-labelledby="mintStepTitle">
-        <span class="launch-step-kicker">Phase 4 of 6 · first on-chain action</span>
         <div>
-          <h2 id="mintStepTitle">${config.token.sealedLaunch ? 'Create a fixed-supply sealed token' : 'Create the token and renounce control'}</h2>
+          <h2 id="mintStepTitle">${config.token.sealedLaunch ? 'Create sealed token' : 'Create token'}</h2>
           <p>${config.token.sealedLaunch
-            ? 'Trebuchet commits the final identity, mints the complete supply, and revokes mint and freeze control. The public name and image appear only after Phase 5 locks liquidity.'
-            : 'Review the permanent facts below. Trebuchet mints the complete supply, attaches metadata, then revokes mint, freeze, and metadata-update authorities.'}</p>
+            ? 'Commits identity, mints supply, then revokes control.'
+            : 'Mints supply, attaches metadata, then revokes control.'}</p>
         </div>
-        <aside><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span><strong>${config.token.sealedLaunch ? 'Identity is committed now.' : 'This cannot be edited afterward.'}</strong> Correct mistakes in Phase 2 before running this phase.</span></aside>
+        <aside><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span><strong>Permanent.</strong> Edit mistakes in Token &amp; pools.</span></aside>
       </section>
       <div class="launch-fact-grid">
         <span><small>Name</small><strong>${escapeHtml(config.token.name || 'Untitled')}</strong></span>
@@ -13597,17 +14166,17 @@ function renderClassicBridge() {
         complete: tokenComplete,
         nextWorkspace: 'liquidity',
         endpoint: mintEndpoint,
+        primary: true,
       })}
       ${fundingReady ? '<div class="launch-phase-secondary"><button class="text-button" type="button" data-launch-workspace="fund"><i class="fa-solid fa-arrow-left"></i> Review funding</button></div>' : ''}
     </section>
     <section class="classic-workspace-section classic-workspace-execute" data-classic-workspace="liquidity">
       <section class="launch-step-guide irreversible" aria-labelledby="liquidityStepTitle">
-        <span class="launch-step-kicker">Phase 5 of 6 · market creation</span>
         <div>
-          <h2 id="liquidityStepTitle">Create pools, open positions, and lock liquidity</h2>
-          <p>Trebuchet creates each planned market, opens main, ladder, support, and bootstrap positions, then locks them through Burn &amp; Earn and records every Fee Key.</p>
+          <h2 id="liquidityStepTitle">Create &amp; lock liquidity</h2>
+          <p>Creates the saved pools and locks every position.</p>
         </div>
-        <aside><i class="fa-solid fa-lock" aria-hidden="true"></i><span><strong>Liquidity locks are permanent.</strong> The journal resumes only missing work if the app or RPC is interrupted.</span></aside>
+        <aside><i class="fa-solid fa-lock" aria-hidden="true"></i><span><strong>Permanent.</strong> Interrupted runs resume missing work only.</span></aside>
       </section>
       <div class="launch-fact-grid">
         <span><small>Pools</small><strong>${poolCount}</strong></span>
@@ -13625,6 +14194,7 @@ function renderClassicBridge() {
         complete: liquidityComplete && !metadataRevealPending,
         nextWorkspace: 'finish',
         endpoint: metadataRevealPending ? '/api/reveal-sealed-metadata' : readiness?.nextEndpoint === '/api/resume-launch' ? '/api/resume-launch' : '/api/create-lp',
+        primary: true,
       })}
       <details class="drawer phase-tree-drawer">
         <summary><span>Position-by-position progress</span><strong>${poolCount} pool${poolCount === 1 ? '' : 's'} / ${sliceCount} slice${sliceCount === 1 ? '' : 's'}</strong></summary>
@@ -13634,15 +14204,14 @@ function renderClassicBridge() {
     </section>
     <section class="classic-workspace-section classic-workspace-verify" data-classic-workspace="finish">
       <section class="launch-step-guide ${finalSweepComplete ? 'is-complete' : ''}" aria-labelledby="finishStepTitle">
-        <span class="launch-step-kicker">${finalSweepComplete ? 'Launch complete' : 'Phase 6 of 6'}</span>
         <div>
-          <h2 id="finishStepTitle">${finalSweepComplete ? 'Assets swept and proof recorded' : 'Distribute, sweep, and save proof'}</h2>
-          <p>${finalSweepComplete ? 'The destination received the remaining assets and the launch wallet is verified empty.' : 'Deliver any configured airdrop, send Fee Keys and remaining assets to the destination wallet, verify the launch wallet is empty, and save the final dossier.'}</p>
+          <h2 id="finishStepTitle">${finalSweepComplete ? 'Launch complete' : 'Finish launch'}</h2>
+          <p>${finalSweepComplete ? 'Assets swept and launch wallet verified empty.' : 'Distribute, sweep remaining assets, and save proof.'}</p>
         </div>
-        <aside><i class="fa-solid ${finalSweepComplete ? 'fa-check' : finishDestinationReady ? 'fa-flag-checkered' : 'fa-wallet'}" aria-hidden="true"></i><span><strong>${finalSweepComplete ? 'Final sweep verified.' : !finishDestinationReady ? 'Set a return wallet to finish.' : finishCanRun ? 'Ready for final sweep.' : 'Check the one remaining requirement below.'}</strong>${finalSweepComplete ? ' The final dossier and proof are ready below.' : ' Recovery remains available in History until every asset is accounted for.'}</span></aside>
+        <aside><i class="fa-solid ${finalSweepComplete ? 'fa-check' : finishDestinationReady ? 'fa-flag-checkered' : 'fa-wallet'}" aria-hidden="true"></i><span>${finalSweepComplete ? 'Proof is ready.' : !finishDestinationReady ? 'Set a return wallet.' : finishCanRun ? 'Ready for final sweep.' : 'Resolve the requirement below.'}</span></aside>
       </section>
       ${!finalSweepComplete && !finishDestinationReady ? renderFundingWalletHint({ compact: true, action: 'set-finish-return-wallet' }) : ''}
-      ${!finalSweepComplete ? readinessPanel({
+      ${!finalSweepComplete && finishDestinationReady ? readinessPanel({
         title: 'Finish distribution and sweep',
         detail: 'The destination is checked again before Trebuchet transfers Fee Keys, airdrops, token balances, and SOL.',
         canRun: finishCanRun,
@@ -13650,8 +14219,13 @@ function renderClassicBridge() {
         complete: false,
         nextWorkspace: 'finish',
         endpoint: '/api/transfer-assets',
+        primary: true,
+        finalizationIssue: executeNextTransferFinalizationIssue(readiness, config),
       }) : ''}
-      ${renderFinalizationPanel()}
+      <details class="drawer launch-proof-details" ${finalSweepComplete ? 'open' : ''}>
+        <summary><span>${finalSweepComplete ? 'Launch proof' : 'Proof status'}</span><strong>${finalSweepComplete ? 'Ready' : 'Waiting'}</strong></summary>
+        ${renderFinalizationPanel()}
+      </details>
       ${!finalSweepComplete ? `<details class="drawer launch-recovery-details">
         <summary><span>Interrupted launch or refund</span><strong>Open recovery actions</strong></summary>
         ${renderCancelRefundPanel(config)}
@@ -14773,8 +15347,8 @@ function tokenConfigStatus(config = currentLaunchConfig()) {
     const sizeBytes = Number(logo.sizeBytes ?? logo.size);
     const width = Number(logo.width);
     const height = Number(logo.height);
-    if (mime && !['image/png', 'image/jpeg'].includes(mime)) {
-      issues.push('Token logo must be a PNG or JPG image.');
+    if (mime && !['image/png', 'image/jpeg', 'image/gif'].includes(mime)) {
+      issues.push('Token logo must be a PNG, JPG, or GIF image.');
     }
     if (Number.isFinite(sizeBytes) && (sizeBytes <= 0 || sizeBytes > CLASSIC_LOGO_MAX_BYTES)) {
       issues.push('Token logo must be 100KB or smaller.');
@@ -15697,6 +16271,24 @@ function renderParityPanel() {
           ? 'Complete the sweep and save the dossier. Release-comparison checks are secondary.'
           : 'Continue the six launch phases. Release-comparison checks stay collapsed until you need them.';
 
+  // Release-comparison evidence is useful only after the operational launch
+  // is complete. Showing its warnings during Phase 6 made optional retirement
+  // checks look like unsatisfied launch blockers and pushed the actual sweep
+  // authorization below the fold.
+  if (!finalSweepComplete) {
+    $('#parityPanel').innerHTML = `
+      <div class="parity-summary launch-audit-deferred">
+        <span>
+          <strong>${escapeHtml(operationalTitle)}</strong>
+          <small>${escapeHtml(operationalDetail)}</small>
+        </span>
+        ${state.launchWorkspace === 'finish'
+          ? '<button class="secondary-button compact" type="button" data-launch-workspace="finish"><span>Return to final sweep</span><i class="fa-solid fa-arrow-up"></i></button>'
+          : '<span class="risk-badge">Non-blocking audit hidden</span>'}
+      </div>`;
+    return;
+  }
+
   $('#parityPanel').innerHTML = `
     <div class="parity-summary">
       <strong>${escapeHtml(operationalTitle)}</strong>
@@ -15704,7 +16296,7 @@ function renderParityPanel() {
     </div>
     <details class="drawer release-proof-details">
       <summary>
-        <span>Release proof audit</span>
+        <span>Optional release proof audit</span>
         <strong>${fieldVerification.passCount}/${fieldVerification.itemCount} core checks · ${missingCount + previewCount} open</strong>
       </summary>
       <article class="parity-row parity-gate ${retirementGate.state}">
@@ -16014,31 +16606,27 @@ function personalTokenName(token) {
 function personalTokenDetail(token, type, knownByMint) {
   if (type === 'known') {
     const walletCount = Number(token.walletCount) || 0;
-    return `${walletCount} tracked wallet${walletCount === 1 ? '' : 's'} · ${formatDiscoveryPrice(token.priceUsd)}`;
+    return `${walletCount} wallet${walletCount === 1 ? '' : 's'} · ${formatDiscoveryPrice(token.priceUsd)}`;
   }
   const holderCount = Number(token.holderCount) || 0;
   const seedCount = Number(token.seedCount) || 0;
-  const firstSeed = knownByMint.get(token.paths?.[0]?.seedMint);
-  const via = firstSeed ? ` · via ${personalTokenName(firstSeed)}` : '';
-  return `${holderCount} holder${holderCount === 1 ? '' : 's'} across ${seedCount} known token${seedCount === 1 ? '' : 's'}${via}`;
+  return `${holderCount} holder${holderCount === 1 ? '' : 's'} · ${seedCount} connection${seedCount === 1 ? '' : 's'}`;
 }
 
 function personalTokenCards(tokens, type, knownByMint) {
-  return tokens.map((token) => {
+  return tokens.map((rawToken) => {
+    const token = discoveryDisplayToken(rawToken);
     const label = personalTokenName(token);
     const brandStatus = token.brand?.classification || null;
     return `
-      <button class="personal-token-card" type="button" data-action="inspect-personal-token" data-token="${escapeHtml(token.mint)}">
-        <span class="personal-token-mark">
-          ${token.imageUrl ? `<img src="${escapeHtml(token.imageUrl)}" alt="">` : escapeHtml(String(label || '?').slice(0, 2).toUpperCase())}
-        </span>
+      <button class="personal-token-card" type="button" data-action="inspect-personal-token" data-token="${escapeHtml(token.mint)}" ${discoveryPaletteAttributes(token)}>
+        ${discoveryTokenMark(token, 'personal-token-mark')}
         <span class="personal-token-copy">
           <strong>${escapeHtml(label)} ${token.name && token.name !== token.symbol ? `<span class="muted">${escapeHtml(token.name)}</span>` : ''}</strong>
           <small>${escapeHtml(personalTokenDetail(token, type, knownByMint))}</small>
         </span>
-        <span class="personal-token-origin ${brandStatus ? discoveryStatusClass(brandStatus) : ''}">${escapeHtml(brandStatus || (type === 'candidate' ? 'Network' : 'Wallet'))}</span>
         ${type === 'candidate'
-          ? `<span class="network-score" title="Network relevance: a preliminary score based on shared holders, seed reach, and portfolio rank"><strong>${Math.max(0, Math.min(100, Number(token.networkScore) || 0))}</strong><small>relevance</small></span>`
+          ? `<span class="network-score ${brandStatus ? discoveryStatusClass(brandStatus) : ''}" title="${escapeHtml(brandStatus ? `${brandStatus} · ` : '')}Relevance ${Math.max(0, Math.min(100, Number(token.networkScore) || 0))}/100"><strong>${Math.max(0, Math.min(100, Number(token.networkScore) || 0))}</strong></span>`
           : '<span class="network-score is-known" title="Held by a tracked wallet"><i class="fa-solid fa-wallet"></i></span>'}
       </button>
     `;
@@ -16088,7 +16676,7 @@ function renderPersonalDiscovery() {
       || enabledWatchOnlyCount + enabledManagedCount === 0;
     scanButton.innerHTML = state.discovery.scanning
       ? '<i class="fa-solid fa-spinner fa-spin"></i><span>Scanning</span>'
-      : '<i class="fa-solid fa-rotate"></i><span>Refresh tokens</span>';
+      : '<i class="fa-solid fa-rotate"></i><span>Refresh</span>';
   }
   if (addButton) {
     addButton.disabled = !connected || state.discovery.walletBusy || state.discovery.scanning;
@@ -16102,7 +16690,7 @@ function renderPersonalDiscovery() {
     <section class="discovery-wallet-group">
       <header>
         <span><i class="fa-solid fa-eye"></i> Watched wallets</span>
-        <small>${watchOnlyWallets.length} tracked · no limit</small>
+        <small>${watchOnlyWallets.length}</small>
       </header>
       <div class="discovery-wallet-chip-list">
         ${watchOnlyWallets.length
@@ -16119,7 +16707,7 @@ function renderPersonalDiscovery() {
       <details class="managed-discovery-wallets">
         <summary>
           <span><i class="fa-solid fa-key"></i> ${managedWallets.length} Trebuchet wallet${managedWallets.length === 1 ? '' : 's'}</span>
-          <small>Automatic · included without reducing tracked-wallet capacity</small>
+          <small>Automatic</small>
         </summary>
         <div class="discovery-wallet-chip-list">${visibleManagedWallets.map(discoveryWalletChip).join('')}</div>
         ${managedWallets.length > visibleManagedWallets.length ? `
@@ -16129,7 +16717,7 @@ function renderPersonalDiscovery() {
         ` : ''}
       </details>
     ` : ''}
-    <p class="discovery-scan-budget">${enabledWatchOnlyCount} watched + ${enabledManagedCount} Trebuchet-managed wallet${enabledManagedCount === 1 ? '' : 's'} queued. Every enabled wallet is scanned with ${scanConcurrency} concurrent lookups; neither group has an artificial limit.</p>
+    <p class="discovery-scan-budget">${enabledWatchOnlyCount + enabledManagedCount} enabled · ${scanConcurrency} at a time</p>
   `;
 
   const progressLabel = personalDiscoveryProgressLabel();
@@ -16140,18 +16728,17 @@ function renderPersonalDiscovery() {
     ...rawScanWarnings.filter((warning) => !/Scanned \d+ of \d+ enabled wallets/i.test(String(warning))),
   ];
   const tokenCount = knownTokens.length + candidates.length;
+  if ($('#personalDiscoveryTokenCount')) $('#personalDiscoveryTokenCount').textContent = `${tokenCount}`;
   const scanSummary = snapshot
-    ? `${tokenCount} token${tokenCount === 1 ? '' : 's'} · ${candidates.length} from the holder network · updated ${formatAge(snapshot.completedAt)}`
+    ? `${candidates.length} network · ${knownTokens.length} held · ${formatAge(snapshot.completedAt)}`
     : null;
   const status = state.discovery.personalError
     || progressLabel
     || (snapshot
-      ? scanWarnings.length
-        ? `${scanSummary} · ${scanWarnings.length} scan notice${scanWarnings.length === 1 ? '' : 's'}`
-        : scanSummary
+      ? scanSummary
       : enabledWatchOnlyCount + enabledManagedCount > 0
-        ? 'Refresh tokens to build the feed.'
-        : 'Track or create a wallet to begin.');
+        ? 'Refresh to find tokens.'
+        : 'Add a wallet first.');
   const progress = state.discovery.job?.progress || {};
   const progressTotal = Math.max(0, Number(progress.total) || 0);
   const progressCurrent = Math.max(0, Math.min(progressTotal, Number(progress.current) || 0));
@@ -16169,7 +16756,8 @@ function renderPersonalDiscovery() {
   });
 
   if (!snapshot) {
-    $('#personalTokenNetwork').innerHTML = '<div class="discovery-feed-empty">Refresh to build the token feed.</div>';
+    if ($('#personalDiscoveryTokenCount')) $('#personalDiscoveryTokenCount').textContent = '0';
+    $('#personalTokenNetwork').innerHTML = '<div class="discovery-feed-empty">Refresh to find tokens.</div>';
     return;
   }
   const feed = [
@@ -16191,20 +16779,11 @@ function renderPersonalDiscovery() {
     return rightRelevance - leftRelevance
       || (Number(right.token.holderCount) || 0) - (Number(left.token.holderCount) || 0);
   });
-  const sortLabel = state.discovery.sort === 'connections'
-    ? 'wallet connections'
-    : state.discovery.sort === 'name'
-      ? 'name'
-      : 'network relevance';
   $('#personalTokenNetwork').innerHTML = `
-    <div class="token-feed-summary">
-      <span><strong>${tokenCount} tokens</strong><small>${candidates.length} network · ${knownTokens.length} held</small></span>
-      <small>Sorted by ${sortLabel}</small>
-    </div>
     <div class="personal-token-feed" role="list" aria-label="Discovered tokens">
       ${sortedFeed.length
         ? sortedFeed.map(({ token, type }) => personalTokenCards([token], type, knownByMint)).join('')
-        : '<span class="discovery-feed-empty">No fungible tokens found in the enabled wallet network.</span>'}
+        : '<span class="discovery-feed-empty">No tokens found.</span>'}
     </div>
   `;
 }
@@ -16242,10 +16821,10 @@ function renderDiscovery() {
   const shieldCritical = Number(shield?.criticalAlertCount || 0);
   const watcherCandidates = Number(shield?.watcherCandidateCount || 0);
   $('#discoverySourceBanner').innerHTML = `
-    <span class="risk-badge ${!connected ? 'warn' : shieldCritical ? 'danger' : ''}">${!connected ? 'Offline' : shieldCritical ? `${shieldCritical} critical` : 'Brand Shield live'}</span>
+    <span class="risk-badge ${!connected ? 'warn' : shieldCritical ? 'danger' : ''}">${!connected ? 'Offline' : shieldCritical ? `${shieldCritical} critical` : 'Brand Shield'}</span>
     <span>${connected
-      ? `${Number(shield?.officialLaunchCount || 0)} official launches · ${shieldAlerts} risk alerts · ${watcherCandidates} repeated-holder signals · wallet graph · Solana RPC chain facts · GeckoTerminal market history`
-      : 'Connect through the local Trebuchet app to analyze Solana tokens.'}</span>
+      ? `${Number(shield?.officialLaunchCount || 0)} verified · ${shieldAlerts} alerts · ${watcherCandidates} signals`
+      : 'Local API unavailable.'}</span>
   `;
 
   if (queryInput && queryInput.value !== state.discovery.query) queryInput.value = state.discovery.query;
@@ -16256,7 +16835,7 @@ function renderDiscovery() {
       ? '<i class="fa-solid fa-spinner fa-spin"></i><span>Analyzing</span>'
       : '<i class="fa-solid fa-magnifying-glass-chart"></i><span>Analyze token</span>';
   }
-  $('#discoveryRegistryCount').textContent = `${state.discovery.records.length} saved`;
+  $('#discoveryRegistryCount').textContent = `${state.discovery.records.length}`;
   document.querySelectorAll('[data-discovery-filter]').forEach((button) => {
     button.classList.toggle('is-active', button.dataset.discoveryFilter === state.discovery.filter);
   });
@@ -16270,26 +16849,24 @@ function renderDiscovery() {
     const volume24hUsd = token.market?.volume24hUsd ?? token.metrics?.volume24hUsd;
     const provenance = discoveryLocalProvenance(token);
     return `
-      <button class="discovery-row ${token.id === state.selectedDiscoveryId ? 'is-active' : ''}" type="button" data-action="select-discovery" data-token="${escapeHtml(token.id)}">
+      <button class="discovery-row ${token.id === state.selectedDiscoveryId ? 'is-active' : ''}" type="button" data-action="select-discovery" data-token="${escapeHtml(token.id)}" ${discoveryPaletteAttributes(token)}>
         ${discoveryTokenMark(token)}
         <span class="discovery-copy">
           <h3>${escapeHtml(token.name)} <span class="muted">${escapeHtml(token.symbol)}</span></h3>
           <span class="market-line">
             <strong>${formatDiscoveryPrice(token.priceUsd)}</strong>
             <span class="${discoveryTrendClass(change24h)}">${formatDiscoveryPercent(change24h, '24h —')}</span>
-            <span>Liquidity ${formatDiscoveryUsd(liquidityUsd)}</span>
-            <span>Volume ${formatDiscoveryUsd(volume24hUsd)}</span>
-            ${provenance.proof || provenance.journal ? '<span class="has-provenance">Local proof</span>' : ''}
+            <span>${formatDiscoveryUsd(liquidityUsd)} liquidity</span>
+            <span>${formatDiscoveryUsd(volume24hUsd)} volume</span>
+            ${provenance.proof || provenance.journal ? '<span class="has-provenance" title="Local launch proof">✓</span>' : ''}
           </span>
         </span>
         <span class="score-block">
           <strong>${token.score}</strong>
-          <small>evidence</small>
           <span class="meter"><span style="width:${token.score}%"></span></span>
         </span>
         <span class="source-block">
           <span class="risk-badge ${discoveryStatusClass(token.status)}">${escapeHtml(token.status)}</span>
-          <span>${escapeHtml(token.confidence)} confidence</span>
           <span>${formatAge(token.inspectedAt)}</span>
         </span>
       </button>
@@ -16297,10 +16874,10 @@ function renderDiscovery() {
   }).join('') : `
     <div class="discovery-empty">
       <i class="fa-solid fa-satellite-dish"></i>
-      <strong>${state.discovery.records.length ? 'No saved tokens match this filter' : 'Analyze your first token'}</strong>
+      <strong>${state.discovery.records.length ? 'No matches' : 'No saved analysis'}</strong>
       <span>${state.discovery.records.length
-        ? 'Change the search or evidence filter.'
-        : 'Paste a Solana mint to load price history, liquidity, holders, and authority data.'}</span>
+        ? 'Change the filter.'
+        : 'Inspect a mint above.'}</span>
     </div>
   `;
 
@@ -16314,20 +16891,21 @@ function renderDiscovery() {
     $('#evidencePanel').innerHTML = `
       <div class="discovery-detail-empty">
         <i class="fa-solid fa-compass"></i>
-        <strong>Your discovery overview</strong>
+        <strong>Select a token</strong>
         <span>${knownCount + networkCount
-          ? `${knownCount + networkCount} tokens are in the current feed. Select one to load its market and chain report.`
+          ? `${knownCount + networkCount} in the feed.`
           : trackedCount
-            ? `Refresh tokens to build a feed from ${trackedCount} tracked wallet${trackedCount === 1 ? '' : 's'}.`
-            : 'Track or create a wallet, then refresh tokens.'}</span>
+            ? `Refresh ${trackedCount} wallet${trackedCount === 1 ? '' : 's'}.`
+            : 'Add a wallet first.'}</span>
         <div class="discovery-overview-stats">
           <span><small>Held</small><strong>${knownCount}</strong></span>
           <span><small>Network</small><strong>${networkCount}</strong></span>
           <span><small>Tracked wallets</small><strong>${trackedCount}</strong></span>
         </div>
-        <button class="primary-button compact" type="button" data-action="${trackedCount ? 'scan-personal-discovery' : 'open-wallet-tracking'}">${trackedCount ? 'Refresh token feed' : 'Track wallets'}</button>
+        <button class="primary-button compact" type="button" data-action="${trackedCount ? 'scan-personal-discovery' : 'open-wallet-tracking'}">${trackedCount ? 'Refresh' : 'Add wallet'}</button>
       </div>
     `;
+    hydrateDiscoveryTokenPalettes();
     return;
   }
 
@@ -16351,7 +16929,6 @@ function renderDiscovery() {
   const sells = Number(transactions.sells);
   const tradeCount = (Number.isFinite(buys) ? buys : 0) + (Number.isFinite(sells) ? sells : 0);
   const marketChart = discoveryPriceChart(market);
-  const dexName = String(market?.pool?.dex || 'DEX pool').replaceAll('_', ' ');
   const inspectionSource = String(selected.source || 'Configured RPC')
     .replace(/\s*\+\s*local Trebuchet journals$/i, '');
   const warningSummaries = (selected.warnings || []).map(discoveryWarningSummary);
@@ -16381,64 +16958,50 @@ function renderDiscovery() {
   ].filter(Boolean).join('');
 
   $('#evidencePanel').innerHTML = `
-    <div class="evidence-head">
+    <div class="evidence-head" ${discoveryPaletteAttributes(selected)}>
       ${discoveryTokenMark(selected)}
       <span class="evidence-identity">
-        <small>Selected asset</small>
         <h3>${escapeHtml(selected.name)} <span>${escapeHtml(selected.symbol)}</span></h3>
-        <code title="${escapeHtml(selected.mint)}">${escapeHtml(shortAddress(selected.mint))}</code>
+        <span class="evidence-identity-meta">
+          <code title="${escapeHtml(selected.mint)}">${escapeHtml(shortAddress(selected.mint))}</code>
+          ${brand ? `<span class="risk-badge ${brandRiskClass}" title="${escapeHtml(brandDetail)}"><i class="fa-solid ${brand.official ? 'fa-shield-halved' : 'fa-shield'}"></i>${escapeHtml(brand.classification)}</span>` : ''}
+        </span>
       </span>
       <span class="evidence-price">
         <strong>${formatDiscoveryPrice(marketPrice)}</strong>
         <small class="${discoveryTrendClass(change24h)}">${formatDiscoveryPercent(change24h, '24h —')}</small>
       </span>
     </div>
-    ${brand ? `
-      <div class="brand-shield-alert ${brandRiskClass}">
-        <i class="fa-solid ${brand.official ? 'fa-shield-halved' : ['Counterfeit', 'Liquidity withdrawn'].includes(brand.classification) ? 'fa-triangle-exclamation' : 'fa-shield'}"></i>
-        <span><small>Brand Shield</small><strong>${escapeHtml(brand.classification)}</strong><p>${escapeHtml(brandDetail)}</p></span>
-        ${brand.matchedMint ? `<code title="Matched official mint">Matches ${escapeHtml(shortAddress(brand.matchedMint))}</code>` : ''}
-      </div>
-    ` : ''}
     <section class="market-card" aria-label="Token market history">
       <div class="market-card-head">
-        <span><small>Price history</small><strong>7 days · 4 hour candles</strong></span>
-        <span class="${discoveryTrendClass(marketTrend)}">${formatDiscoveryPercent(change7d, 'No 7D change')}</span>
+        <span><small>${market ? 'GeckoTerminal' : 'Price'}</small><strong>7 days</strong></span>
+        <span class="${discoveryTrendClass(marketTrend)}">${formatDiscoveryPercent(change7d)}</span>
       </div>
       ${marketChart || `
         <div class="market-chart-empty">
           <i class="fa-solid fa-chart-area"></i>
-          <span><strong>No pool history indexed</strong><small>The chain audit remains available below.</small></span>
+          <span><strong>No market history</strong></span>
         </div>
       `}
       ${marketChart ? `
         <div class="market-chart-range">
-          <span><small>7D low</small><strong>${formatDiscoveryPrice(market?.history?.lowUsd)}</strong></span>
-          <span><small>Latest candle</small><strong>${formatAge(market?.history?.asOf)}</strong></span>
-          <span><small>7D high</small><strong>${formatDiscoveryPrice(market?.history?.highUsd)}</strong></span>
+          <span><small>Low</small><strong>${formatDiscoveryPrice(market?.history?.lowUsd)}</strong></span>
+          <span><small>Updated</small><strong>${formatAge(market?.history?.asOf)}</strong></span>
+          <span><small>High</small><strong>${formatDiscoveryPrice(market?.history?.highUsd)}</strong></span>
         </div>
       ` : ''}
     </section>
     <div class="market-stats">
       <span><small>Liquidity</small><strong>${formatDiscoveryUsd(market?.liquidityUsd)}</strong></span>
-      <span><small>24H volume</small><strong>${formatDiscoveryUsd(market?.volume24hUsd)}</strong></span>
+      <span><small>Volume</small><strong>${formatDiscoveryUsd(market?.volume24hUsd)}</strong></span>
       <span><small>${market?.marketCapUsd != null ? 'Market cap' : 'FDV'}</small><strong>${formatDiscoveryUsd(market?.marketCapUsd ?? market?.fdvUsd)}</strong></span>
-      <span><small>24H trades</small><strong>${tradeCount || '—'}</strong></span>
-    </div>
-    <div class="market-source">
-      <i class="fa-solid fa-wave-square"></i>
-      <span><strong>${market ? 'GeckoTerminal' : 'Market feed not indexed'}</strong><small>${market?.pool?.address
-        ? `${escapeHtml(dexName)} · ${escapeHtml(shortAddress(market.pool.address))}`
-        : 'Refresh later for price, liquidity, and pool history.'}</small></span>
-      <span class="risk-badge ${market ? '' : 'warn'}">${market ? 'Live market' : 'No pool'}</span>
+      <span><small>Trades</small><strong>${tradeCount || '—'}</strong></span>
     </div>
     <div class="detail-section-label">
-      <span>Chain audit</span>
-      <small>Solana RPC</small>
+      <span>Chain</span>
+      <small>${selected.score} · ${escapeHtml(selected.status)}</small>
     </div>
     <div class="evidence-summary-strip">
-      <span><small>Evidence</small><strong>${selected.score} · ${escapeHtml(selected.status)}</strong></span>
-      <span><small>Confidence</small><strong>${escapeHtml(selected.confidence)}</strong></span>
       <span><small>Supply</small><strong>${escapeHtml(supply)}</strong></span>
       <span><small>Top 10</small><strong>${escapeHtml(topTenValue)}</strong></span>
     </div>
@@ -16451,25 +17014,20 @@ function renderDiscovery() {
       `).join('')}
     </div>
     <div class="evidence-mint-line">
-      <small>Mint address</small>
+      <small>Mint</small>
       <code title="${escapeHtml(selected.mint)}">${escapeHtml(selected.mint)}</code>
     </div>
     <div class="discovery-actions">
       <button class="secondary-button compact" type="button" data-action="refresh-discovery" data-token="${escapeHtml(selected.mint)}" ${state.discovery.inspecting ? 'disabled' : ''}>
-        <i class="fa-solid fa-rotate"></i><span>Refresh data</span>
+        <i class="fa-solid fa-rotate"></i><span>Refresh</span>
       </button>
       <button class="secondary-button compact" type="button" data-action="copy-discovery-mint" data-token="${escapeHtml(selected.mint)}">
-        <i class="fa-solid fa-copy"></i><span>Copy mint</span>
-      </button>
-      <button class="secondary-button compact danger-button" type="button" data-action="remove-discovery" data-token="${escapeHtml(selected.mint)}">
-        <i class="fa-solid fa-trash"></i><span>Remove</span>
+        <i class="fa-solid fa-copy"></i><span>Copy</span>
       </button>
     </div>
-    <div class="detail-section-label">
-      <span>Sources &amp; notes</span>
-      <small>${escapeHtml(selected.confidence)} confidence</small>
-    </div>
-    <div class="discovery-audit">
+    <details class="discovery-more">
+      <summary><span>Details</span>${warningSummaries.length ? `<small>${warningSummaries.length} warning${warningSummaries.length === 1 ? '' : 's'}</small>` : ''}</summary>
+      <div class="discovery-audit">
       <div class="audit-line">
         <span class="evidence-dot pass"></span>
         <span><strong>${escapeHtml(inspectionSource)}</strong><small>Inspected ${formatAge(selected.inspectedAt)}</small></span>
@@ -16491,14 +17049,18 @@ function renderDiscovery() {
         </details>
       `).join('')}
       <details class="discovery-notes" ${selected.notes ? 'open' : ''}>
-        <summary><span>Operator notes</span><small>${selected.notes ? 'Saved locally' : 'Add context'}</small></summary>
+        <summary><span>Notes</span><small>${selected.notes ? 'Saved' : 'Add'}</small></summary>
         <label class="discovery-notes-editor">
           <textarea id="discoveryNotesInput" rows="2" maxlength="500" placeholder="Questions or verification context…">${escapeHtml(selected.notes || '')}</textarea>
-          <small>Stored only in this browser profile.</small>
         </label>
       </details>
-    </div>
+      <button class="secondary-button compact danger-button" type="button" data-action="remove-discovery" data-token="${escapeHtml(selected.mint)}">
+        <i class="fa-solid fa-trash"></i><span>Remove saved analysis</span>
+      </button>
+      </div>
+    </details>
   `;
+  hydrateDiscoveryTokenPalettes();
 }
 function approvalTransaction() {
   if (state.activeApprovalId) {
@@ -16538,27 +17100,27 @@ function approvalHtml() {
   const recoveryEndpoint = recoveryAuthorizationEndpoint();
   const recoverySpec = {
     '/api/finish-token-creation': {
-      eyebrow: 'Recovery authorization',
-      title: 'Authorize token repair',
-      detail: 'The mint already exists. This authorizes only the missing metadata, account, and authority-safety work.',
+      eyebrow: 'One saved step',
+      title: 'Finish token',
+      detail: 'Complete only the missing token work.',
       button: 'Arm token repair',
     },
     '/api/resume-launch': {
-      eyebrow: 'Recovery authorization',
-      title: 'Authorize liquidity recovery',
-      detail: 'Recorded pools and positions are reused. This authorizes only the missing journal checkpoints.',
+      eyebrow: 'One saved step',
+      title: 'Finish liquidity',
+      detail: 'Reuse the recorded pools and finish only what is missing.',
       button: 'Arm liquidity recovery',
     },
     '/api/reveal-sealed-metadata': {
-      eyebrow: 'Identity reveal authorization',
-      title: 'Reveal and lock token identity',
-      detail: 'Liquidity is already locked. This publishes the committed identity, verifies the launch creator, and permanently retires metadata control.',
+      eyebrow: 'One saved step',
+      title: 'Reveal identity',
+      detail: 'Publish the committed identity and retire metadata control.',
       button: 'Arm identity reveal',
     },
     '/api/transfer-assets': {
-      eyebrow: 'Final recovery authorization',
-      title: 'Authorize final sweep',
-      detail: 'Liquidity is already complete. This authorizes only distribution, return-wallet sweep, and terminal proof.',
+      eyebrow: 'Final saved step',
+      title: 'Finish launch',
+      detail: 'Save proof, distribute assets, and sweep the launch wallet.',
       button: 'Arm final sweep',
     },
   }[recoveryEndpoint] || null;
@@ -16584,18 +17146,14 @@ function approvalHtml() {
       <span class="risk-badge ${riskClass(tx.risk)}">${pendingRows.length} ${recoverySpec ? 'action' : 'ops'}</span>
     </div>
     <div class="approval-body">
-      <div class="kv-row"><span>Origin</span><strong>makesometokens.com</strong></div>
-      <div class="kv-row"><span>Signing wallet</span><strong>${escapeHtml(current.name)}</strong></div>
+      <div class="kv-row"><span>Wallet</span><strong>${escapeHtml(current.name)}</strong></div>
       <div class="kv-row"><span>Network</span><strong>${escapeHtml(authoritativeNetworkLabel())}</strong></div>
-      <div class="kv-row"><span>${recoverySpec ? 'New funding estimate' : 'Funding estimate'}</span><strong>${recoverySpec ? 'Not required' : currentEstimate.available ? fmtSol(currentEstimate.value) : 'Run estimator first'}</strong></div>
-      <div class="kv-row approval-pin-row"><span>Recovery PIN</span><strong>${walletIsUnlocked() ? 'Unlocked' : 'Unlock required'}</strong></div>
-      <div class="kv-row"><span>Scope</span><strong>${recoverySpec ? 'One remaining action' : 'Complete launch plan'}</strong></div>
-      <div class="kv-row"><span>Simulation</span><strong>Decoded</strong></div>
-      <div class="kv-row"><span>Source</span><strong>${escapeHtml(recoverySpec ? 'Saved recovery journal' : tx.source || 'static-preview')}</strong></div>
-      ${recoverySpec ? `<p class="approval-scope-note"><i class="fa-solid fa-shield-halved"></i> ${escapeHtml(recoverySpec.detail)} Arming itself sends no transaction.</p>` : ''}
-      ${!recoverySpec && armingTokenCreation ? `<p><i class="fa-solid fa-shield-halved"></i> Arming does not send a transaction. It unlocks the ${finishingInterruptedToken ? 'Finish token safely' : 'Create token'} action in Phase 4.</p>` : ''}
-      ${pendingRows.slice(0, 4).map((item) => `<p><i class="fa-solid fa-check"></i> ${escapeHtml(item.label)}</p>`).join('')}
-      ${pendingRows.length > 4 ? `<p><i class="fa-solid fa-ellipsis"></i> ${pendingRows.length - 4} more local operation${pendingRows.length - 4 === 1 ? '' : 's'}</p>` : ''}
+      ${recoverySpec
+        ? `<div class="kv-row approval-pin-row"><span>PIN</span><strong>${walletIsUnlocked() ? 'Ready' : 'Unlock required'}</strong></div>`
+        : `<div class="kv-row"><span>Estimate</span><strong>${currentEstimate.available ? fmtSol(currentEstimate.value) : 'Required'}</strong></div>`}
+      <p class="approval-scope-note"><i class="fa-solid fa-shield-halved"></i> ${escapeHtml(recoverySpec?.detail || 'Arm the reviewed plan.')} Arming sends nothing.</p>
+      ${!recoverySpec ? pendingRows.slice(0, 2).map((item) => `<p><i class="fa-solid fa-check"></i> ${escapeHtml(item.label)}</p>`).join('') : ''}
+      ${!recoverySpec && pendingRows.length > 2 ? `<p><i class="fa-solid fa-ellipsis"></i> ${pendingRows.length - 2} more</p>` : ''}
     </div>
     <div class="approval-actions">
       <button class="secondary-button" type="button" data-action="close-approval">Cancel</button>
@@ -17610,6 +18168,8 @@ function renderHistoryPanes() {
 function renderAll() {
   renderCustodySignal();
   renderLaunchPreview();
+  renderLaunchIdentity();
+  renderLiveLaunchMonitor();
   renderLaunchBudgetRecommendation();
   renderTokenLogoPreview();
   renderGuidedLaunchFlow();
@@ -17959,6 +18519,7 @@ function invalidateClassicOutputs() {
 
 function refreshClassicPreview({ includePoolEditor = false } = {}) {
   renderLaunchPreview();
+  renderLaunchIdentity();
   renderLaunchBudgetRecommendation();
   renderTokenLogoPreview();
   renderChartDeck();
@@ -21815,6 +22376,7 @@ async function pollLiveOps() {
   renderLiveOpsPanel();
   renderSignaturePanel();
   renderGlobalStrip();
+  renderLiveLaunchMonitor();
   if (classicBridgeDirty) renderClassicBridge();
 }
 
@@ -22112,6 +22674,16 @@ function handleClick(event) {
   if (!actionTarget) return;
 
   const { action } = actionTarget.dataset;
+  if (action === 'open-launch-identity') {
+    setView('launch');
+    renderLaunchIdentity();
+    return;
+  }
+  if (action === 'toggle-launch-details') {
+    state.launchDetailsExpanded = !state.launchDetailsExpanded;
+    renderLiveLaunchMonitor();
+    return;
+  }
   if (action === 'select-launch-budget') {
     applyLaunchBudgetRecommendation(actionTarget.dataset.budget);
     return;

@@ -11,6 +11,7 @@ const html = read('public/v2/index.html');
 const css = read('public/v2/styles.css');
 const js = read('public/v2/app.js');
 const apiClientJs = read('public/v2/api-client.js');
+const gifOptimizerJs = read('public/gif-optimizer.js');
 const serverJs = read('server.js');
 const viewportSmokeJs = read('test/v2-viewport-smoke.mjs');
 const v2BrowserE2eJs = read('test/e2e/v2-flows.mjs');
@@ -1988,32 +1989,35 @@ test('v2 is the Electron default with an explicit tested Classic fallback', () =
 test('v2 Discovery combines a personal wallet graph with live evidence and no social mechanics', () => {
   const combined = `${html}\n${css}\n${js}`;
 
-  assert.match(combined, /Wallets → on-chain/);
-  assert.match(combined, /Token discovery/);
+  assert.match(js, /discovery: \{ eyebrow: 'Tokens & wallets', title: 'Discovery' \}/);
+  assert.doesNotMatch(html, /<h2>Discovery<\/h2>/);
+  assert.doesNotMatch(html, /Wallets → on-chain|Token discovery|Manual evidence registry/);
   assert.match(combined, /data-discovery-pane="tokens"[\s\S]*?<strong>Tokens<\/strong>/);
   assert.match(combined, /data-discovery-pane="wallets"[\s\S]*?<strong>Wallets<\/strong>/);
   assert.doesNotMatch(combined, /Make this feed yours|discoveryPersonalizeBanner/);
-  assert.match(combined, /Wallets you choose to follow/);
+  assert.match(combined, /Tracked wallets/);
   assert.match(combined, /Watched wallets/);
-  assert.match(combined, /no limit/i);
-  assert.match(combined, /Every enabled wallet is scanned/);
-  assert.match(combined, /included without reducing tracked-wallet capacity/);
   assert.match(serverJs, /const trackedWallets = discoveryStore\.listWallets\(\)[\s\S]*?wallet\.enabled !== false/);
   assert.match(combined, /managed-discovery-wallets/);
-  assert.match(combined, /Refresh tokens/);
+  assert.match(html, /personalDiscoveryTokenCount/);
+  assert.match(html, /<span>Refresh<\/span>/);
   assert.match(combined, /personal-token-feed/);
   assert.match(css, /\.discovery-pane-tabs\s*\{[\s\S]*?min-height: 34px/);
   assert.match(css, /\.discovery-pane-tab\s*\{[\s\S]*?min-height: 34px/);
-  assert.match(combined, /Sorted by \$\{sortLabel\}/);
-  assert.match(combined, /Network relevance/);
+  assert.doesNotMatch(js, /Sorted by \$\{sortLabel\}/);
   assert.match(combined, /networkScore/);
+  assert.match(js, /discoveryPaletteAttributes/);
+  assert.match(js, /extractLaunchIdentityArt\(image\)\.palette/);
+  assert.match(js, /\/api\/proxy-image\?url=/);
+  assert.match(css, /--token-primary/);
   assert.match(combined, /data-action="inspect-personal-token"/);
   assert.match(combined, /data-action="toggle-discovery-wallet"/);
   assert.match(combined, /inspectDiscoveryToken/);
-  assert.match(combined, /Solana RPC chain facts/);
-  assert.match(combined, /GeckoTerminal market history/);
-  assert.match(combined, /Price history/);
-  assert.match(combined, /24H volume/);
+  assert.match(html, /discovery-utility-panel discovery-manual-tools/);
+  assert.match(html, /discovery-utility-panel discovery-saved-tools/);
+  assert.match(combined, /GeckoTerminal/);
+  assert.match(combined, /7 days/);
+  assert.match(combined, /<small>Volume<\/small>/);
   assert.match(combined, /Liquidity/);
   assert.match(combined, /Top 10/);
   assert.match(combined, /local launch journal/i);
@@ -2024,9 +2028,9 @@ test('v2 Discovery combines a personal wallet graph with live evidence and no so
   assert.match(js, /Concentration check delayed/);
   assert.match(js, /No local launch artifacts linked/);
   assert.match(js, /discovery-warning-line/);
+  assert.match(js, /discovery-more/);
   assert.match(js, /evidence-summary-strip/);
   assert.match(js, /evidence-facts/);
-  assert.match(js, /Stored only in this browser profile/);
   assert.doesNotMatch(html, /standardsStrip/);
   assert.doesNotMatch(html, /selectedChatTitle|id="chatPanel"/);
   assert.match(js, /selected\.metrics\?\.topTenPercent == null/);
@@ -2108,7 +2112,7 @@ test('v2 launch page presents an agentic control panel instead of instruction wa
   assert.match(combined, /Import mnemonic, base58, or JSON local wallets/);
   assert.match(html, /id="tokenLogoFile"/);
   assert.match(html, /id="tokenLogoPreview"/);
-  assert.match(html, /accept="image\/png,image\/jpeg"/);
+  assert.match(html, /accept="image\/png,image\/jpeg,image\/gif"/);
   assert.match(combined, /wallet-detail-panel/);
   assert.match(combined, /recoveryWizard/);
   assert.match(combined, /recoveryWalletWorkspace/);
@@ -2208,25 +2212,24 @@ test('v2 launch page organizes the complete launch into six focused phases', () 
   assert.match(html, /id="reportPreview"/);
   assert.match(html, /Liquidity and distribution recipe/);
   assert.doesNotMatch(html, /Classic parity controls/);
-  assert.match(combined, /Phase 1 of 6/);
-  assert.match(combined, /Phase 2 of 6/);
-  assert.match(combined, /Phase 3 of 6/);
-  assert.match(combined, /Phase 4 of 6/);
-  assert.match(combined, /Phase 5 of 6/);
-  assert.match(combined, /Phase 6 of 6/);
-  assert.match(combined, /Choose a temporary launch wallet/);
-  assert.match(combined, /Fund the launch wallet/);
-  assert.match(combined, /Estimating never moves funds/);
+  assert.match(html, /class="launch-toolbar"/);
+  assert.match(html, /class="launch-settings-drawer"/);
+  assert.match(html, /id="launchSettingsEnvironment"/);
+  assert.match(html, /id="launchSettingsExperience"/);
+  assert.match(combined, /Launch wallet/);
+  assert.match(combined, /Set the return wallet, estimate, send, then verify/);
   assert.match(combined, /I funded it · check balance/);
-  assert.match(combined, /Verify funding to continue/);
-  assert.match(combined, /Estimating calculated the requirement but did not move funds/);
+  assert.match(combined, /finishDestinationReady \? fundingPanel : renderFundingWalletHint/);
+  assert.match(combined, /class="drawer phase-options"/);
+  assert.doesNotMatch(js, /class="launch-guidance-list"/);
+  assert.doesNotMatch(js, /Verify funding to continue/);
   assert.match(css, /\.funding-task\s*\{/);
-  assert.match(css, /data-experience-mode="advanced"[^\n]*\.launch-choice-bar/);
+  assert.match(css, /\.launch-settings-drawer\[open\] \.launch-choice-bar/);
   assert.doesNotMatch(js, /Check prerequisites/);
   assert.doesNotMatch(js, /Classic execution payloads ready/);
-  assert.match(combined, /Create the token and renounce control/);
-  assert.match(combined, /Create pools, open positions, and lock liquidity/);
-  assert.match(combined, /Distribute, sweep, and save proof/);
+  assert.match(combined, /Create sealed token/);
+  assert.match(combined, /Create &amp; lock liquidity/);
+  assert.match(combined, /Finish launch/);
   assert.match(html, /id="tokenSupply" type="text" value="1,000,000,000" inputmode="numeric" max="10000000000"/);
   assert.match(html, /id="mainPoolPercent"/);
   assert.match(html, /id="sliceShares"/);
@@ -2560,6 +2563,9 @@ test('v2 launch page organizes the complete launch into six focused phases', () 
   assert.match(js, /renderTokenLogoPreview/);
   assert.match(js, /selectTokenLogo/);
   assert.match(js, /validateLogoFile/);
+  assert.match(js, /extractLaunchIdentityArt/);
+  assert.match(js, /renderLaunchIdentity/);
+  assert.match(js, /launchIdentityImageSrc/);
   assert.match(js, /compressLogoFile/);
   assert.match(js, /logoCanvasBlob/);
   assert.match(js, /CLASSIC_LOGO_MAX_BYTES/);
@@ -2567,14 +2573,34 @@ test('v2 launch page organizes the complete launch into six focused phases', () 
   assert.match(js, /LOGO_SOURCE_MAX_BYTES/);
   assert.match(js, /AUTO-COMPRESSED/);
   assert.match(js, /Token logo auto-compressed and attached/);
-  assert.match(js, /Logo must be a PNG or JPG image/);
-  assert.match(html, /id="tokenLogoFile" type="file" accept="image\/png,image\/jpeg"/);
+  assert.match(js, /Logo must be a PNG, JPG, or GIF image/);
+  assert.match(html, /id="tokenLogoFile" type="file" accept="image\/png,image\/jpeg,image\/gif"/);
   assert.match(html, /Token logo \/ auto-compress/);
   assert.match(html, /class="logo-upload-control" for="tokenLogoFile"/);
   assert.match(html, /class="logo-upload-command"/);
-  assert.match(html, /PNG\/JPG · ≤10MB/);
+  assert.match(html, /PNG\/JPG\/GIF · source ≤10MB · auto-compressed/);
+  assert.match(html, /gif-optimizer\.js\?v=3/);
+  assert.match(gifOptimizerJs, /optimizeAnimatedGif/);
+  assert.match(gifOptimizerJs, /decompressFrames/);
+  assert.match(gifOptimizerJs, /GIFEncoder/);
+  assert.match(gifOptimizerJs, /compressionAttempts/);
+  assert.match(html, /id="launchIdentityDock"/);
+  assert.match(html, /id="liveLaunchMonitor"/);
+  assert.match(html, /id="launchIdentitySidebar"/);
+  assert.match(html, /id="launchIdentityChip"/);
   assert.match(css, /\.logo-upload-control/);
   assert.match(css, /\.logo-upload-command/);
+  assert.match(css, /data-launch-identity="active"/);
+  assert.match(css, /\.launch-identity-dock/);
+  assert.match(css, /\.launch-identity-progress-ring/);
+  assert.match(css, /\.live-launch-monitor/);
+  assert.match(css, /data-launch-focus="active"/);
+  assert.doesNotMatch(js, /launchIdentityPhaseRail/);
+  assert.doesNotMatch(css, /\.launch-identity-phases/);
+  assert.match(js, /function launchOperationIsActive\(\)/);
+  assert.match(js, /function renderLiveLaunchMonitor\(\)/);
+  assert.match(js, /action === 'toggle-launch-details'/);
+  assert.match(css, /\.primary-button:not\(\.custody-action\)/);
   assert.match(js, /enhanceNumberSteppers/);
   assert.match(js, /stepNumberInput/);
   assert.match(js, /dataset\.action = 'step-number'/);
@@ -2905,6 +2931,24 @@ test('v2 auto-compresses oversized logos into the Classic upload envelope', asyn
       revokeObjectURL: () => {},
     },
   };
+  const gifOptimizerCalls = [];
+  sandbox.TrebuchetGifOptimizer = {
+    optimizeAnimatedGif: async (file, options) => {
+      gifOptimizerCalls.push({ file, options });
+      return {
+        file: new FakeFile([{ size: 92 * 1024 }], file.name, {
+          type: 'image/gif',
+          lastModified: file.lastModified,
+        }),
+        width: 192,
+        height: 192,
+        compressed: true,
+        originalSizeBytes: file.size,
+        frameCount: 12,
+        originalFrameCount: 48,
+      };
+    },
+  };
   sandbox.Image = class {
     set src(_value) {
       this.naturalWidth = sandbox.nextImageWidth;
@@ -2960,6 +3004,30 @@ test('v2 auto-compresses oversized logos into the Classic upload envelope', asyn
   assert.equal(untouched.file, alreadySafe);
   assert.equal(untouched.width, 512);
   assert.equal(untouched.height, 512);
+  assert.deepEqual(Array.from(untouched.identity.palette.primary), [116, 247, 169]);
+  assert.deepEqual(Array.from(untouched.identity.palette.accent), [104, 207, 255]);
+
+  sandbox.nextImageWidth = 256;
+  sandbox.nextImageHeight = 256;
+  const safeAnimatedGif = new FakeFile([{ size: 48 * 1024 }], 'animated.gif', {
+    type: 'image/gif',
+  });
+  const untouchedGif = await sandbox.validateLogoFile(safeAnimatedGif);
+  assert.equal(untouchedGif.compressed, false);
+  assert.equal(untouchedGif.file, safeAnimatedGif);
+
+  const oversizedAnimatedGif = new FakeFile([{ size: 150 * 1024 }], 'too-large.gif', {
+    type: 'image/gif',
+  });
+  const optimizedGif = await sandbox.validateLogoFile(oversizedAnimatedGif);
+  assert.equal(optimizedGif.compressed, true);
+  assert.equal(optimizedGif.file.type, 'image/gif');
+  assert.ok(optimizedGif.file.size <= sandbox.CLASSIC_LOGO_MAX_BYTES);
+  assert.equal(optimizedGif.frameCount, 12);
+  assert.equal(optimizedGif.originalFrameCount, 48);
+  assert.equal(gifOptimizerCalls.length, 1);
+  assert.equal(gifOptimizerCalls[0].file, oversizedAnimatedGif);
+  assert.equal(gifOptimizerCalls[0].options.maxBytes, sandbox.CLASSIC_LOGO_MAX_BYTES);
 });
 
 test('v2 launch-plan fingerprints match the server builder for staged config', () => {
@@ -6461,13 +6529,28 @@ test('v2 Phase 4 exposes the missing arm step before Create token', () => {
   assert.ok(reviewStart >= 0 && reviewEnd > reviewStart, 'run-envelope review helper should be extractable');
   assert.match(bridgeSource, /needsRunEnvelope/);
   assert.match(bridgeSource, /Review and arm this launch/);
+  assert.match(bridgeSource, /Authorize final sweep/);
+  assert.match(bridgeSource, /Review &amp; arm final sweep/);
+  assert.match(bridgeSource, /Save local launch proof/);
+  assert.match(bridgeSource, /Save local dossier/);
+  assert.match(bridgeSource, /executeNextTransferFinalizationIssue\(readiness, config\)/);
+  assert.match(bridgeSource, /is-primary-action/);
   assert.match(bridgeSource, /data-action="review-and-arm-run"/);
-  assert.match(bridgeSource, /then Create token becomes available here/);
+  assert.match(bridgeSource, /Review the operations and maximum spend once/);
   assert.match(bridgeSource, /data-action="execute-next-run"[\s\S]*?runLabel/);
   assert.doesNotMatch(bridgeSource, /\|\| readiness\?\.nextEndpoint\s*\|\|/);
   assert.match(reviewSource, /stageTransactions\(\{ openApproval: true, announce: false \}\)/);
   assert.match(js, /action === 'review-and-arm-run'[\s\S]*?reviewAndArmRun\(\)/);
   assert.match(js, /Local run armed; execute only after readiness passes\. Next: \$\{nextOperation\}\./);
+});
+
+test('v2 hides release-comparison warnings until the operational launch is complete', () => {
+  assert.match(js, /if \(!finalSweepComplete\) \{/);
+  assert.match(js, /Non-blocking audit hidden/);
+  assert.match(js, /Return to final sweep/);
+  assert.match(js, /Optional release proof audit/);
+  assert.match(css, /\.execution-readiness\.is-primary-action/);
+  assert.match(css, /\.launch-audit-deferred/);
 });
 
 test('v2 terminal recovery collapses into the completed proof panel', () => {
@@ -6479,7 +6562,7 @@ test('v2 terminal recovery collapses into the completed proof panel', () => {
   assert.match(bridgeSource, /state\.restoredLaunchJournalId && !finalSweepComplete/);
   assert.match(bridgeSource, /classicBridge\.classList\.toggle\('has-recovery-notice'/);
   assert.match(bridgeSource, /classicBridge\.classList\.toggle\('is-terminal-launch', finalSweepComplete\)/);
-  assert.match(bridgeSource, /Assets swept and proof recorded/);
+  assert.match(bridgeSource, /Assets swept and launch wallet verified empty/);
   assert.match(bridgeSource, /!finalSweepComplete \? `<details class="drawer launch-recovery-details"/);
   assert.match(css, /#classicBridge\.is-terminal-launch \.classic-workspace-verify\s*\{[\s\S]*?grid-template-rows: auto minmax\(0, 1fr\)/);
   assert.match(css, /\.recovered-plan-notice\s*\{[\s\S]*?max-height: 44px/);
@@ -6487,6 +6570,7 @@ test('v2 terminal recovery collapses into the completed proof panel', () => {
 });
 
 test('v2 interrupted mints finish safely before liquidity resumes', () => {
+  assert.match(serverJs, /launchJournal\.tokenCreationComplete\(journal, tokenMint\)/);
   assert.match(serverJs, /const tokenNeedsFinish = Boolean\(tokenMint && !tokenCreationComplete\)/);
   assert.match(serverJs, /tokenNeedsFinish,/);
   assert.match(serverJs, /endpoint === '\/api\/finish-token-creation'/);
@@ -6498,6 +6582,17 @@ test('v2 interrupted mints finish safely before liquidity resumes', () => {
   assert.match(serverJs, /async function rejectIfTokenIncompleteForLiquidity/);
   assert.equal((serverJs.match(/rejectIfTokenIncompleteForLiquidity\(res/g) || []).length, 4);
   assert.match(serverJs, /code: 'TOKEN_CREATION_INCOMPLETE'/);
+});
+
+test('v2 sealed identity reveal cannot replace liquidity creation before pools exist', () => {
+  const bridgeStart = js.indexOf('function renderClassicBridge()');
+  const bridgeEnd = js.indexOf('\nfunction activityLogEntries', bridgeStart);
+  const bridgeSource = js.slice(bridgeStart, bridgeEnd);
+
+  assert.ok(bridgeStart >= 0 && bridgeEnd > bridgeStart, 'Classic bridge should be extractable');
+  assert.match(bridgeSource, /readiness\?\.nextEndpoint === '\/api\/reveal-sealed-metadata'/);
+  assert.match(bridgeSource, /liquidityComplete[\s\S]*?proofToken\.sealedMetadataPending === true/);
+  assert.match(bridgeSource, /metadataRevealPending \? 'Reveal & lock identity'[\s\S]*?: readiness\?\.nextEndpoint === '\/api\/resume-launch' \? 'Resume missing work' : 'Create liquidity'/);
 });
 
 test('v2 Vanity CA candidates use a compact terminal list and Signal grade colors', () => {
@@ -6581,13 +6676,15 @@ test('v2 primary views share framed terminal workspaces and tabbed History panes
 
 test('v2 prototype keeps assets local and JavaScript unobtrusive', () => {
   assert.match(html, /vendor\/fontawesome\/css\/all\.min\.css/);
-  assert.match(html, /styles\.css\?v=80/);
+  assert.match(html, /styles\.css\?v=82/);
   assert.match(html, /runtime-state\.js\?v=1/);
   assert.match(html, /api-client\.js\?v=37/);
-  assert.match(html, /app\.js\?v=171/);
-  assert.doesNotMatch(html, /app\.js\?v=171" type="module"/);
+  assert.match(html, /gif-optimizer\.js\?v=3/);
+  assert.match(html, /app\.js\?v=173/);
+  assert.doesNotMatch(html, /app\.js\?v=173" type="module"/);
   assert.ok(html.indexOf('runtime-state.js') < html.indexOf('api-client.js'), 'Runtime state must load before API client');
   assert.ok(html.indexOf('api-client.js') < html.indexOf('app.js'), 'API client must load before app.js');
+  assert.ok(html.indexOf('gif-optimizer.js') < html.indexOf('app.js'), 'GIF optimizer must load before app.js');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|https?:\/\//);
   assert.doesNotMatch(`${html}\n${js}\n${apiClientJs}`, /\bon(?:click|load|error)=["']/i);
   assert.doesNotMatch(`${html}\n${js}\n${apiClientJs}`, /javascript:/i);
@@ -11163,9 +11260,10 @@ test('completed liquidity recovery opens Finish without replaying resume or fund
   assert.match(js, /function recoveryAuthorizationEndpoint\(\)/);
   assert.match(js, /function stageRecoveryAuthorization/);
   assert.match(js, /const fundingEstimate = recoveryEndpoint \? null/);
-  assert.match(js, /New funding estimate/);
-  assert.match(js, /Not required/);
-  assert.match(js, /Authorize final sweep/);
+  assert.match(js, /title: 'Finish launch'/);
+  assert.match(js, /Final saved step/);
+  assert.match(js, /Arming sends nothing/);
+  assert.doesNotMatch(js, /New funding estimate/);
 });
 
 test('local dossier is an explicit final-sweep proof alternative', () => {

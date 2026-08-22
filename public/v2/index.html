@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TREBUCHET · makesometokens</title>
   <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="./styles.css?v=80">
+  <link rel="stylesheet" href="./styles.css?v=82">
 </head>
 <body data-experience-mode="guided" data-execution-environment="loading" data-custody-signal="loading">
   <div class="app-shell">
@@ -41,6 +41,8 @@
         </button>
       </nav>
 
+      <button class="launch-identity-sidebar" id="launchIdentitySidebar" type="button" data-action="open-launch-identity" aria-label="Open active launch identity" hidden></button>
+
       <div class="sidebar-footer">
         <span class="eyebrow">Network</span>
         <button class="network-button" type="button" id="networkButton" aria-label="Open authoritative RPC settings">
@@ -73,6 +75,7 @@
           <h1 id="viewTitle">Launch a token</h1>
         </div>
         <div class="topbar-actions">
+          <button class="launch-identity-chip" id="launchIdentityChip" type="button" data-action="open-launch-identity" aria-label="Open active launch identity" hidden></button>
           <button class="icon-button" type="button" id="themeButton" aria-label="Toggle contrast">
             <i class="fa-solid fa-circle-half-stroke"></i>
           </button>
@@ -96,10 +99,13 @@
               <span class="badge" id="launchStatus">Draft</span>
             </div>
 
-            <details class="cockpit-board launch-summary-drawer" aria-label="Launch summary">
+            <section class="live-launch-monitor" id="liveLaunchMonitor" aria-live="polite" hidden></section>
+
+            <div class="launch-toolbar" aria-label="Launch tools">
+            <details class="cockpit-board launch-summary-drawer" aria-label="Launch plan">
               <summary>
-                <span><i class="fa-solid fa-chart-pie" aria-hidden="true"></i><strong>Launch summary</strong></span>
-                <small>Token supply, liquidity shape, funding and next action</small>
+                <span><i class="fa-solid fa-chart-pie" aria-hidden="true"></i><strong>Plan</strong></span>
+                <small>Supply · liquidity · cost</small>
               </summary>
               <section class="agent-console" aria-label="Trebuchet launch agent">
                 <div class="agent-status">
@@ -183,6 +189,43 @@
               </aside>
             </details>
 
+            <details class="launch-settings-drawer">
+              <summary>
+                <span><i class="fa-solid fa-sliders" aria-hidden="true"></i><strong>Launch settings</strong></span>
+                <small><span id="launchSettingsEnvironment">Practice</span> · <span id="launchSettingsExperience">Guided</span></small>
+              </summary>
+
+              <div class="launch-choice-bar" aria-label="Launch choices">
+                <div class="launch-choice-group">
+                  <span class="launch-choice-label">Environment</span>
+                  <div class="environment-row" role="tablist" aria-label="Execution environment">
+                    <button class="environment-button" type="button" role="tab" aria-selected="false" data-action="select-environment" data-environment="practice">
+                      <i class="fa-solid fa-flask" aria-hidden="true"></i>
+                      <span><strong>Practice</strong><small>Local simulation · 0 SOL</small></span>
+                    </button>
+                    <button class="environment-button" type="button" role="tab" aria-selected="false" data-action="select-environment" data-environment="live">
+                      <i class="fa-solid fa-satellite-dish" aria-hidden="true"></i>
+                      <span><strong>Live</strong><small>On-chain · guarded</small></span>
+                    </button>
+                  </div>
+                </div>
+                <div class="launch-choice-group">
+                  <span class="launch-choice-label">Experience</span>
+                  <div class="experience-row launch-experience-switch" role="tablist" aria-label="Launch experience">
+                    <button class="experience-button is-selected" type="button" role="tab" aria-selected="true" data-action="select-experience" data-experience="guided">
+                      <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+                      <span><strong>Guided</strong><small>Simple step by step</small></span>
+                    </button>
+                    <button class="experience-button" type="button" role="tab" aria-selected="false" data-action="select-experience" data-experience="advanced">
+                      <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+                      <span><strong>Advanced</strong><small>Every launch control</small></span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </details>
+            </div>
+
             <nav class="launch-workspace-tabs" id="launchWorkspaceTabs" role="tablist" aria-label="Six launch phases">
               <button class="launch-workspace-tab is-selected" id="launchWorkspaceTabWallet" type="button" role="tab" aria-selected="true" aria-controls="launchWorkspaceViewport" data-launch-workspace="wallet">
                 <i class="fa-solid fa-wallet" aria-hidden="true"></i>
@@ -210,36 +253,8 @@
               </button>
             </nav>
 
-            <div class="launch-choice-bar" aria-label="Launch choices">
-              <div class="launch-choice-group">
-                <span class="launch-choice-label">Environment</span>
-                <div class="environment-row" role="tablist" aria-label="Execution environment">
-                  <button class="environment-button" type="button" role="tab" aria-selected="false" data-action="select-environment" data-environment="practice">
-                    <i class="fa-solid fa-flask" aria-hidden="true"></i>
-                    <span><strong>Practice</strong><small>Local simulation · 0 SOL</small></span>
-                  </button>
-                  <button class="environment-button" type="button" role="tab" aria-selected="false" data-action="select-environment" data-environment="live">
-                    <i class="fa-solid fa-satellite-dish" aria-hidden="true"></i>
-                    <span><strong>Live</strong><small>On-chain · guarded</small></span>
-                  </button>
-                </div>
-              </div>
-              <div class="launch-choice-group">
-                <span class="launch-choice-label">Experience</span>
-                <div class="experience-row launch-experience-switch" role="tablist" aria-label="Launch experience">
-                  <button class="experience-button is-selected" type="button" role="tab" aria-selected="true" data-action="select-experience" data-experience="guided">
-                    <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
-                    <span><strong>Guided</strong><small>Simple step by step</small></span>
-                  </button>
-                  <button class="experience-button" type="button" role="tab" aria-selected="false" data-action="select-experience" data-experience="advanced">
-                    <i class="fa-solid fa-sliders" aria-hidden="true"></i>
-                    <span><strong>Advanced</strong><small>Every launch control</small></span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
             <div class="launch-workspace-viewport" id="launchWorkspaceViewport" role="tabpanel" tabindex="0" aria-live="polite">
+            <section class="launch-identity-dock" id="launchIdentityDock" aria-label="Active token launch identity" hidden></section>
             <section class="setup-dock" data-launch-pane="configure" aria-label="Launch setup dock">
               <div class="setup-dock-head">
                 <span>
@@ -255,15 +270,13 @@
 
               <div class="advanced-launch-controls" id="advancedLaunchControls">
               <section class="launch-step-guide configure-step-guide" aria-labelledby="configureStepTitle">
-                <span class="launch-step-kicker">Phase 2 of 6</span>
                 <div>
-                  <h2 id="configureStepTitle">Design the token and its markets</h2>
-                  <p>Set the permanent token identity, decide how supply enters liquidity, and choose where Fee Keys and remaining assets go.</p>
+                  <h2 id="configureStepTitle">Token &amp; pools</h2>
+                  <p>Set the permanent identity and liquidity budget.</p>
                 </div>
                 <aside>
                   <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
-                  <span><strong>Next:</strong> review the plan before funding.</span>
-                  <button class="pill-button" type="button" data-action="review-plan">Review plan</button>
+                  <span>Review permanent details before funding.</span>
                 </aside>
               </section>
               <div class="launch-workbench compact-workbench">
@@ -287,9 +300,9 @@
                   <div class="logo-input-row">
                     <span class="logo-input-label">Token logo / auto-compress</span>
                     <label class="logo-upload-control" for="tokenLogoFile">
-                      <input id="tokenLogoFile" type="file" accept="image/png,image/jpeg">
+                      <input id="tokenLogoFile" type="file" accept="image/png,image/jpeg,image/gif">
                       <span class="logo-upload-command"><i class="fa-solid fa-arrow-up-from-bracket"></i> Select image</span>
-                      <span class="logo-upload-meta">PNG/JPG · ≤10MB</span>
+                      <span class="logo-upload-meta">PNG/JPG/GIF · source ≤10MB · auto-compressed</span>
                     </label>
                   </div>
                   <div class="token-logo-preview" id="tokenLogoPreview"></div>
@@ -316,9 +329,8 @@
                   <input id="launchSol" type="hidden" value="1">
                   <div class="launch-budget-head">
                     <span>
-                      <span class="eyebrow">Trebuchet strategy</span>
-                      <h3 id="launchBudgetTitle">Choose a liquidity budget</h3>
-                      <p>Set the SOL intended for liquidity. Network fees and rent are estimated separately in the next phase.</p>
+                      <h3 id="launchBudgetTitle">Liquidity budget</h3>
+                      <p>Network fees are estimated next.</p>
                     </span>
                     <label class="launch-budget-input" for="liquidityBudgetSol">
                       <span>Liquidity budget</span>
@@ -479,9 +491,9 @@
                 </div>
               </details>
               <div class="launch-phase-actions launch-phase-actions-split configure-phase-actions">
-                <button class="secondary-button" type="button" data-launch-workspace="wallet"><i class="fa-solid fa-arrow-left"></i><span>Back to wallet</span></button>
+                <button class="text-button" type="button" data-launch-workspace="wallet"><i class="fa-solid fa-arrow-left"></i><span>Wallet</span></button>
                 <div>
-                  <button class="secondary-button" type="button" data-action="review-plan"><i class="fa-solid fa-list-check"></i><span>Review launch plan</span></button>
+                  <button class="secondary-button" type="button" data-action="review-plan"><i class="fa-solid fa-list-check"></i><span>Review plan</span></button>
                   <button class="primary-button" type="button" data-launch-workspace="fund"><span>Continue to funding</span><i class="fa-solid fa-arrow-right"></i></button>
                 </div>
               </div>
@@ -582,13 +594,6 @@
       <section class="view" id="view-discovery" aria-labelledby="viewTitle">
         <div class="discovery-grid">
           <section class="surface surface-main">
-            <div class="section-heading">
-              <div>
-                <span class="eyebrow">Wallets → on-chain</span>
-                <h2>Token discovery</h2>
-              </div>
-              <span class="badge" id="discoveryRegistryCount">0 saved</span>
-            </div>
             <nav class="discovery-pane-tabs" role="tablist" aria-label="Discovery workspace">
               <button class="discovery-pane-tab is-selected" id="discoveryTabTokens" type="button" role="tab" aria-selected="true" aria-controls="discoveryPanelTokens" data-discovery-pane="tokens">
                 <i class="fa-solid fa-chart-line" aria-hidden="true"></i>
@@ -602,64 +607,59 @@
             <section class="discovery-pane is-active" id="discoveryPanelTokens" data-discovery-pane-panel="tokens" role="tabpanel" aria-labelledby="discoveryTabTokens">
             <section class="personal-discovery-panel token-discovery-panel" aria-labelledby="personalDiscoveryTitle">
               <div class="personal-discovery-head">
-                <span>
-                  <small>Wallet graph</small>
-                  <strong id="personalDiscoveryTitle">Discovered tokens</strong>
+                <span class="personal-discovery-title">
+                  <strong id="personalDiscoveryTitle">Tokens</strong>
+                  <small id="personalDiscoveryTokenCount">0</small>
                 </span>
+                <label class="visually-hidden" for="personalDiscoverySort">Sort tokens</label>
+                <select id="personalDiscoverySort" aria-label="Sort tokens">
+                  <option value="relevance">Relevance</option>
+                  <option value="connections">Connections</option>
+                  <option value="name">Name</option>
+                </select>
                 <button class="primary-button compact" id="personalDiscoveryScanButton" type="button" data-action="scan-personal-discovery">
-                  <i class="fa-solid fa-diagram-project"></i>
-                  <span>Refresh tokens</span>
+                  <i class="fa-solid fa-rotate"></i>
+                  <span>Refresh</span>
                 </button>
               </div>
               <div class="personal-discovery-status" id="personalDiscoveryStatus" aria-live="polite"></div>
-              <div class="token-feed-controls">
-                <label for="personalDiscoverySort">Sort tokens</label>
-                <select id="personalDiscoverySort">
-                  <option value="relevance">Network relevance</option>
-                  <option value="connections">Wallet connections</option>
-                  <option value="name">Name</option>
-                </select>
-              </div>
               <div class="personal-token-network" id="personalTokenNetwork"></div>
             </section>
-            <div class="detail-section-label discovery-manual-label">
-              <span>Inspect any token</span>
-              <small>Manual evidence registry</small>
-            </div>
-            <form class="discovery-inspect-bar" id="discoveryInspectForm">
-              <label class="visually-hidden" for="discoveryMintInput">Token mint</label>
-              <input id="discoveryMintInput" name="mint" type="text" placeholder="Paste a Solana token mint" autocomplete="off" spellcheck="false">
-              <button class="primary-button" id="discoveryInspectButton" type="submit">
-                <i class="fa-solid fa-magnifying-glass-chart"></i>
-                <span>Analyze token</span>
-              </button>
-            </form>
+            <details class="discovery-utility-panel discovery-manual-tools">
+              <summary><i class="fa-solid fa-magnifying-glass"></i><span>Inspect mint</span></summary>
+              <form class="discovery-inspect-bar" id="discoveryInspectForm">
+                <label class="visually-hidden" for="discoveryMintInput">Token mint</label>
+                <input id="discoveryMintInput" name="mint" type="text" placeholder="Solana mint" autocomplete="off" spellcheck="false">
+                <button class="primary-button" id="discoveryInspectButton" type="submit">
+                  <i class="fa-solid fa-magnifying-glass-chart"></i>
+                  <span>Inspect</span>
+                </button>
+              </form>
+            </details>
             <div class="discovery-error" id="discoveryError" aria-live="polite"></div>
-            <div class="discovery-source-banner" id="discoverySourceBanner"></div>
-            <div class="discovery-toolbar">
-              <label>
-                <i class="fa-solid fa-magnifying-glass"></i>
-                <input id="discoverySearchInput" type="search" placeholder="Filter saved tokens" autocomplete="off">
-              </label>
-              <div class="filter-row" aria-label="Evidence status filter">
-                <button class="pill-button is-active" type="button" data-discovery-filter="all">All</button>
-                <button class="pill-button" type="button" data-discovery-filter="official">Official</button>
-                <button class="pill-button" type="button" data-discovery-filter="review">Review</button>
-                <button class="pill-button" type="button" data-discovery-filter="risk">Risk</button>
+            <details class="discovery-utility-panel discovery-saved-tools">
+              <summary><i class="fa-solid fa-box-archive"></i><span>Saved</span><span class="badge" id="discoveryRegistryCount">0</span></summary>
+              <div class="discovery-source-banner" id="discoverySourceBanner"></div>
+              <div class="discovery-toolbar">
+                <label>
+                  <i class="fa-solid fa-magnifying-glass"></i>
+                  <input id="discoverySearchInput" type="search" placeholder="Filter" autocomplete="off">
+                </label>
+                <div class="filter-row" aria-label="Evidence status filter">
+                  <button class="pill-button is-active" type="button" data-discovery-filter="all">All</button>
+                  <button class="pill-button" type="button" data-discovery-filter="official">Official</button>
+                  <button class="pill-button" type="button" data-discovery-filter="review">Review</button>
+                  <button class="pill-button" type="button" data-discovery-filter="risk">Risk</button>
+                </div>
               </div>
-            </div>
-            <div class="discovery-table" id="discoveryTable"></div>
+              <div class="discovery-table" id="discoveryTable"></div>
+            </details>
             </section>
             <section class="discovery-pane" id="discoveryPanelWallets" data-discovery-pane-panel="wallets" role="tabpanel" aria-labelledby="discoveryTabWallets" hidden>
             <section class="personal-discovery-panel wallet-tracking-panel" aria-labelledby="walletTrackingTitle">
               <div class="personal-discovery-head">
-                <span>
-                  <small>Private seed network</small>
-                  <strong id="walletTrackingTitle">Wallets you choose to follow</strong>
-                </span>
-                <span class="risk-badge">No wallet limit</span>
+                <strong id="walletTrackingTitle">Tracked wallets</strong>
               </div>
-              <p class="personal-discovery-explainer">Add as many public wallet addresses as you need. Trebuchet processes the full enabled queue in small concurrent batches and keeps progress visible.</p>
               <form class="discovery-wallet-form" id="discoveryWalletForm">
                 <label class="visually-hidden" for="discoveryWalletInput">Wallet address</label>
                 <input id="discoveryWalletInput" name="publicKey" type="text" placeholder="Add a wallet address" autocomplete="off" spellcheck="false">
@@ -808,6 +808,7 @@
 
   <script src="./runtime-state.js?v=1"></script>
   <script src="./api-client.js?v=37"></script>
-  <script src="./app.js?v=171"></script>
+  <script src="../gif-optimizer.js?v=3"></script>
+  <script src="./app.js?v=173"></script>
 </body>
 </html>

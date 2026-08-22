@@ -51,7 +51,7 @@ const PUBLIC_RPC_HOSTS = new Set([
   'solana.public-rpc.com',
 ]);
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const LOGO_DATA_URL_RE = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/;
+const LOGO_DATA_URL_RE = /^data:(image\/(?:png|jpeg|gif));base64,([A-Za-z0-9+/=]+)$/;
 const MAX_LOGO_BYTES = 100 * 1024;
 const MIN_LOGO_DIMENSION = 64;
 const MAX_LOGO_DIMENSION = 1024;
@@ -658,7 +658,7 @@ function normalizeTokenLogo(input = null) {
   if (!input || typeof input !== 'object') return null;
   const dataUrl = String(input.dataUrl || '').trim();
   const match = dataUrl.match(LOGO_DATA_URL_RE);
-  if (!match) throw new Error('Token logo must be a PNG or JPG data URL');
+  if (!match) throw new Error('Token logo must be a PNG, JPG, or GIF data URL');
   const decoded = Buffer.from(match[2], 'base64');
   const sizeBytes = decoded.length;
   if (sizeBytes <= 0 || sizeBytes > MAX_LOGO_BYTES) {

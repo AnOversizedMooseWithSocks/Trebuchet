@@ -2722,13 +2722,7 @@ function v2ExecutionContextFromJournal(walletPublicKey, body = {}) {
   const lpComplete = lpResults.length > 0 && !journal?.lp?.failedPhase;
   const terminalTransfer = journal?.transfer || body.transfer || null;
   const tokenMint = journal?.token?.mint || body.tokenMint || null;
-  const tokenEvents = Array.isArray(journal?.events) ? journal.events : [];
-  const tokenCreationComplete = Boolean(
-    tokenMint
-    && journal?.token?.mintAuthorityRenounced === true
-    && tokenEvents.some((event) => event?.stage === 'metadata_account_created')
-    && tokenEvents.some((event) => event?.stage === 'supply_minted')
-  );
+  const tokenCreationComplete = launchJournal.tokenCreationComplete(journal, tokenMint);
   const tokenNeedsFinish = Boolean(tokenMint && !tokenCreationComplete);
   return {
     tokenMint,
@@ -5084,7 +5078,7 @@ function uploadLogo(req, res, next) {
   });
 }
 
-const V2_LOGO_DATA_URL_RE = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/;
+const V2_LOGO_DATA_URL_RE = /^data:(image\/(?:png|jpeg|gif));base64,([A-Za-z0-9+/=]+)$/;
 const V2_MAX_LOGO_BYTES = 100 * 1024;
 const CLASSIC_LOGO_MIN_DIMENSION = 64;
 const CLASSIC_LOGO_MAX_DIMENSION = 1024;
@@ -5121,7 +5115,7 @@ function logoBase64FromCreateTokenRequest(req) {
   if (!dataUrl) return null;
 
   const match = dataUrl.match(V2_LOGO_DATA_URL_RE);
-  if (!match) throw new Error('Token logo must be a PNG or JPG data URL');
+  if (!match) throw new Error('Token logo must be a PNG, JPG, or GIF data URL');
   const decoded = Buffer.from(match[2], 'base64');
   if (decoded.length > V2_MAX_LOGO_BYTES) throw new Error('Token logo must be 100KB or smaller');
   const detectedMime = normalizeLogoImageMime(decoded);

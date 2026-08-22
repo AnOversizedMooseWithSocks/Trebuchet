@@ -21,6 +21,14 @@ test('converts logo data URLs to Umi generic files with content-type tags', () =
   assert.deepEqual(logo.tags, [{ name: 'Content-Type', value: 'image/png' }]);
 });
 
+test('preserves animated GIF bytes and content type for metadata upload', () => {
+  const bytes = Buffer.from('GIF89a-animation-bytes', 'ascii');
+  const logo = logoDataUrlToGenericFile(`data:image/gif;base64,${bytes.toString('base64')}`);
+
+  assert.deepEqual(logo.buffer, bytes);
+  assert.deepEqual(logo.tags, [{ name: 'Content-Type', value: 'image/gif' }]);
+});
+
 test('builds token metadata json from resolved image URI', () => {
   assert.deepEqual(tokenMetadataJson({
     name: 'Test Token',

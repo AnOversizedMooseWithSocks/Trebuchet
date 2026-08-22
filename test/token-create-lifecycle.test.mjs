@@ -110,6 +110,25 @@ test('sealed metadata reveal verifies both the placeholder and final identity ha
   }), /does not match the sealed identity commitment/);
 });
 
+test('sealed metadata reveal waits for finalized RPC posture without resending', async () => {
+  let reads = 0;
+  const state = await tokenService.waitForSealedMetadataPosture(async () => {
+    reads += 1;
+    return reads < 3
+      ? { uri: 'https://example.test/placeholder.json', updateAuthority: 'LaunchWallet' }
+      : { uri: 'https://example.test/final.json', updateAuthority: '11111111111111111111111111111111' };
+  }, {
+    metadataUri: 'https://example.test/final.json',
+    updateAuthority: '11111111111111111111111111111111',
+    attempts: 4,
+    delayMs: 0,
+  });
+
+  assert.equal(reads, 3);
+  assert.equal(state.uri, 'https://example.test/final.json');
+  assert.equal(state.updateAuthority, '11111111111111111111111111111111');
+});
+
 test('createTokenWithMetaplex: partial failure (metadata upload throws) is recoverable and does not over-report', async () => {
   // Inject a connection + umi that never touch the network. Make the uploader
   // throw to simulate an Irys outage at the very first on-chain-irreversible-

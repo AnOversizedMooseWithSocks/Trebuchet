@@ -1510,7 +1510,10 @@ export async function revealSealedTokenMetadata({
     });
   }
 
-  const after = await inspect();
+  const after = await waitForSealedMetadataPosture(inspect, {
+    metadataUri,
+    updateAuthority: SYSTEM_PROGRAM_ADDRESS,
+  });
   if (after.uri !== metadataUri || after.updateAuthority !== SYSTEM_PROGRAM_ADDRESS) {
     throw new Error('Final metadata reveal landed without the expected immutable authority posture.');
   }
@@ -1528,6 +1531,36 @@ export async function revealSealedTokenMetadata({
   };
   progress({ stage: 'metadata_revealed', ...result });
   return result;
+}
+
+// A finalized transaction can still be followed by a short-lived stale RPC
+// account read. Poll only the already-written metadata posture; never resend
+// an update while waiting for propagation.
+export async function waitForSealedMetadataPosture(inspect, {
+  metadataUri,
+  updateAuthority,
+  attempts = 6,
+  delayMs = 750,
+} = {}) {
+  let lastState = null;
+  let lastError = null;
+  const totalAttempts = Math.max(1, Math.floor(Number(attempts) || 1));
+  for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
+    try {
+      lastState = await inspect();
+      lastError = null;
+      if (lastState?.uri === metadataUri && lastState?.updateAuthority === updateAuthority) {
+        return lastState;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt + 1 < totalAttempts && Number(delayMs) > 0) {
+      await new Promise((resolve) => setTimeout(resolve, Number(delayMs)));
+    }
+  }
+  if (lastError && !lastState) throw lastError;
+  return lastState || {};
 }
 
 export function verifySealedMetadataCommitment({

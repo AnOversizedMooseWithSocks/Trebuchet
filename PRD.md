@@ -143,7 +143,7 @@ scrolling.
 ### 2. Token and distribution
 
 - Validate name, symbol, description, whole-token supply, and logo.
-- Accept PNG/JPEG logos and normalize oversized inputs before the Classic
+- Accept PNG/JPEG/GIF logos, preserve GIF animation, and normalize oversized PNG/JPEG inputs before the Classic
   execution envelope.
 - Configure SOL/quote pools, fee tiers, slices, ladders, support,
   preallocation, exact airdrop rows, and Fee Key recipients.
