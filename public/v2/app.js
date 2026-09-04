@@ -7398,6 +7398,15 @@ function currentLaunchProof() {
   return state.launchProof || state.executionReadiness?.proof || proofFromDemoRun();
 }
 
+// Single source of truth for "is this proof from a simulated run?".
+// proofFromDemoRun() stamps `source` and `stage` but never `demo`, so any check
+// that reads only `proof.demo` mislabels a Practice-mode run as live proof.
+function isDemoLaunchProof(proof) {
+  return proof?.source === 'demo-run'
+    || proof?.demo === true
+    || proof?.stage === 'demo_completed';
+}
+
 function proofTokenMint(proof) {
   return String(proof?.token?.mint || proof?.tokenMint || '').trim();
 }
@@ -15407,7 +15416,7 @@ function buildClassicRetirementGate(proof = currentLaunchProof(), audit = null, 
     && reportArtifactRecord
     && reportArtifactMatchesTerminalSweep(reportArtifactRecord, proof)
   );
-  const isDemoProof = proof?.source === 'demo-run' || proof?.demo === true || proof?.stage === 'demo_completed';
+  const isDemoProof = isDemoLaunchProof(proof);
   const comparisonIsV2Artifact = comparison?.artifactSource === 'trebuchet-v2';
   const comparisonMatchesProof = classicComparisonMatchesProof(comparison, proof, config);
   const comparisonEvidence = classicComparisonRequiredEvidence(comparison, proof, config);
@@ -16406,27 +16415,31 @@ function renderWallet() {
   const proofMint = proof?.token?.mint || proof?.mint || null;
   const proofPools = launchProofPoolIds(proof);
   const proofReportUri = proof?.report?.jsonUri || proof?.reportPublish?.jsonUri || null;
+  // A simulated run produces no chain evidence, so none of its artifacts may
+  // claim 'Verified' — that word is reserved for proof-layer evidence.
+  const proofIsDemo = isDemoLaunchProof(proof);
+  const proofAssetState = proofIsDemo ? 'Demo' : 'Verified';
   const proofAssets = proof ? [
     proofMint ? {
       kind: 'token',
-      type: 'Token proof',
+      type: proofIsDemo ? 'Token (practice)' : 'Token proof',
       name: proof?.token?.symbol || shortAddress(proofMint),
       detail: proofMint,
-      state: proof?.demo ? 'Demo' : 'Verified',
+      state: proofAssetState,
     } : null,
     proofPools.length ? {
       kind: 'liquidity',
-      type: 'Liquidity proof',
+      type: proofIsDemo ? 'Liquidity (practice)' : 'Liquidity proof',
       name: `${proofPools.length} recorded pool${proofPools.length === 1 ? '' : 's'}`,
       detail: proofPools.map(shortAddress).join(', '),
-      state: 'Verified',
+      state: proofAssetState,
     } : null,
     proofReportUri ? {
       kind: 'report',
-      type: 'Launch report',
-      name: 'Published report artifact',
+      type: proofIsDemo ? 'Launch report (practice)' : 'Launch report',
+      name: proofIsDemo ? 'Simulated report artifact' : 'Published report artifact',
       detail: proofReportUri,
-      state: 'Verified',
+      state: proofAssetState,
     } : null,
   ].filter(Boolean) : [];
   $('#accountList').innerHTML = walletRows.map((item) => {
@@ -16583,8 +16596,8 @@ function renderWallet() {
 
   $('#assetTable').innerHTML = proofAssets.length ? `
     <div class="wallet-proof-heading">
-      <small>Verified launch assets</small>
-      <strong>Proof inventory</strong>
+      <small>${proofIsDemo ? 'Practice-run assets (no chain evidence)' : 'Verified launch assets'}</small>
+      <strong>${proofIsDemo ? 'Simulated inventory' : 'Proof inventory'}</strong>
     </div>
     ${proofAssets.map((item) => `
       <article class="asset-row">

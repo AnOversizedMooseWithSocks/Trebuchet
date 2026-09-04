@@ -1008,8 +1008,13 @@ function loadClassicRetirementGateHarness() {
     renderV2TokenomicsDonutSvg: () => '',
     liquidityDepthRows: () => [],
   };
+  // Pull the real helper out of app.js rather than restating it here; a copy
+  // would reintroduce the duplicate-definition drift this helper exists to end.
+  const demoProofHelper = js.match(/function isDemoLaunchProof\([\s\S]*?\n\}/)?.[0];
+  if (!demoProofHelper) throw new Error('isDemoLaunchProof not found in public/v2/app.js');
   vm.runInNewContext(
     [
+      demoProofHelper,
       js.slice(demoConfigStart, demoConfigEnd),
       js.slice(txEvidenceStart, txEvidenceEnd),
       js.slice(reportStart, reportEnd),
