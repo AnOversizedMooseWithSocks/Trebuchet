@@ -2908,7 +2908,7 @@ test('server exposes the v2 launch-plan contract as an authenticated API route',
   assert.match(serverSource, /viewport-smoke-proof\.json/);
   assert.match(serverSource, /const artifactVersion = parsed\?\.artifactVersion \?\? null/);
   assert.match(serverSource, /const kind = parsed\?\.kind \|\| null/);
-  assert.match(serverSource, /const V2_VIEWPORT_SMOKE_REQUIRED_CHECKS = \[/);
+  assert.match(serverSource, /import \{ V2_VIEWPORT_SMOKE_REQUIRED_CHECKS \} from '\.\/viewportSmokeContract\.js'/);
   assert.match(serverSource, /function missingViewportSmokeChecks/);
   assert.match(serverSource, /function viewportSmokeRequiredChecksMatch/);
   assert.match(serverSource, /checks\[check\] !== true/);

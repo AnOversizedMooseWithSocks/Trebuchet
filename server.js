@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { V2_VIEWPORT_SMOKE_REQUIRED_CHECKS } from './viewportSmokeContract.js';
 import dnsPromises from 'node:dns/promises';
 import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
@@ -780,15 +781,7 @@ app.use(express.json({ limit: '5mb' }));
 const publicDir = resolvePublicDir(__dirname);
 const V2_VIEWPORT_SMOKE_PROOF_FILE = 'viewport-smoke-proof.json';
 const V2_VIEWPORT_SMOKE_PROOF_ASSETS = ['index.html', 'styles.css', 'api-client.js', 'app.js'];
-const V2_VIEWPORT_SMOKE_REQUIRED_CHECKS = [
-  'launchVisible',
-  'horizontalOverflow',
-  'tokenomicsChart',
-  'liquidityChart',
-  'fundingMeter',
-  'parityPanel',
-  'firstViewportFit',
-];
+
 
 function sha256FileHex(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');

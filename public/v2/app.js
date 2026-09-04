@@ -230,6 +230,9 @@ const CLASSIC_REPORT_COMPARISON_ROW_LIMIT = 80;
 const CLASSIC_ARTIFACT_IMPORT_LIMIT = 1000000;
 const V2_HTML_PROOF_AIRDROP_SAMPLE_LIMIT = 100;
 const V2_VIEWPORT_SMOKE_REQUIRED_ASSETS = Object.freeze(['index.html', 'styles.css', 'api-client.js', 'app.js']);
+// Mirror of ../../viewportSmokeContract.js. This file is a classic browser
+// script and cannot import it, so test/viewport-smoke-contract.test.mjs
+// asserts the two stay identical.
 const V2_VIEWPORT_SMOKE_REQUIRED_CHECKS = Object.freeze([
   'launchVisible',
   'horizontalOverflow',
@@ -238,6 +241,9 @@ const V2_VIEWPORT_SMOKE_REQUIRED_CHECKS = Object.freeze([
   'fundingMeter',
   'parityPanel',
   'firstViewportFit',
+  'terminalPanelFit',
+  'discoveryTokenViewport',
+  'keyboardWalkthrough',
 ]);
 const DEFAULT_CLMM_FEE_TIERS = Object.freeze([
   { index: 4, tradeFeeRate: 100, tickSpacing: 1 },

@@ -9,6 +9,8 @@ const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf
 
 const html = read('public/v2/index.html');
 const css = read('public/v2/styles.css');
+import { V2_VIEWPORT_SMOKE_REQUIRED_CHECKS } from '../viewportSmokeContract.js';
+
 const js = read('public/v2/app.js');
 const apiClientJs = read('public/v2/api-client.js');
 const gifOptimizerJs = read('public/gif-optimizer.js');
@@ -2376,7 +2378,7 @@ test('v2 launch page organizes the complete launch into six focused phases', () 
   assert.match(apiClientJs, /normalizeViewportSmokeProof/);
   assert.match(apiClientJs, /viewportSmoke,/);
   assert.match(viewportSmokeJs, /viewport-smoke-proof\.json/);
-  assert.match(viewportSmokeJs, /const requiredChecks = \[/);
+  assert.match(viewportSmokeJs, /const requiredChecks = V2_VIEWPORT_SMOKE_REQUIRED_CHECKS;/);
   assert.match(viewportSmokeJs, /requiredChecks,/);
   assert.match(viewportSmokeJs, /crypto\.createHash\('sha256'\)/);
   assert.match(viewportSmokeJs, /await fs\.rm\(proofPath, \{ force: true \}\)/);
@@ -7117,15 +7119,11 @@ test('v2 retirement gate only passes completed live proof compared to Classic', 
     metadataUpdateAuthorityRevoked: true,
     metadataImmutable: true,
   };
-  const replacementViewportChecks = {
-    launchVisible: true,
-    horizontalOverflow: true,
-    tokenomicsChart: true,
-    liquidityChart: true,
-    fundingMeter: true,
-    parityPanel: true,
-    firstViewportFit: true,
-  };
+  // Derived from the shared contract: a hand-listed fixture silently stops
+  // representing a passing proof the moment a new required check is added.
+  const replacementViewportChecks = Object.fromEntries(
+    V2_VIEWPORT_SMOKE_REQUIRED_CHECKS.map((check) => [check, true]),
+  );
   const validViewportSmoke = {
     artifactVersion: 1,
     kind: 'trebuchet-v2-viewport-smoke',

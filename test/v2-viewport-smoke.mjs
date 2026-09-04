@@ -7,27 +7,26 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { chromium } from 'playwright';
 
+import { V2_VIEWPORT_SMOKE_REQUIRED_CHECKS } from '../viewportSmokeContract.js';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const v2Dir = path.join(root, 'public', 'v2');
 const v2Url = pathToFileURL(path.join(v2Dir, 'index.html')).href;
 const proofPath = path.join(v2Dir, 'viewport-smoke-proof.json');
 const assetFiles = ['index.html', 'styles.css', 'api-client.js', 'app.js'];
-const requiredChecks = [
-  'launchVisible',
-  'horizontalOverflow',
-  'tokenomicsChart',
-  'liquidityChart',
-  'fundingMeter',
-  'parityPanel',
-  'firstViewportFit',
-  'terminalPanelFit',
-  'discoveryTokenViewport',
+const requiredChecks = V2_VIEWPORT_SMOKE_REQUIRED_CHECKS;
+
+// Three desktop widths per the review matrix: wide, normal, and the cramped
+// window that hides most real layout defects — plus mobile. A cramped-window
+// fix is not complete until the wider tiers have been checked too.
+const viewports = [
+  { name: 'desktop', tier: 'wide', width: 1440, height: 900 },
+  { name: 'normal', tier: 'normal', width: 1100, height: 720 },
+  { name: 'cramped', tier: 'cramped', width: 900, height: 650 },
+  { name: 'mobile', tier: 'mobile', width: 390, height: 844 },
 ];
 
-const viewports = [
-  { name: 'desktop', width: 1440, height: 900 },
-  { name: 'mobile', width: 390, height: 844 },
-];
+const isDesktopClass = (viewport) => viewport.tier !== 'mobile';
 
 function assertRectVisible(rect, selector, viewport) {
   assert.ok(rect, `${viewport.name}: ${selector} missing`);
@@ -65,7 +64,8 @@ async function smokeViewport(browser, viewport) {
     await page.waitForSelector('#view-launch.is-active', { timeout: 10_000 });
     await page.waitForFunction(
       () => document.querySelector('#tokenomicsChart svg')
-        && document.querySelector('#parityPanel article'),
+        && (document.querySelector('#parityPanel article')
+          || document.querySelector('#parityPanel .parity-summary')),
       null,
       { timeout: 10_000 },
     );
@@ -190,6 +190,7 @@ async function smokeViewport(browser, viewport) {
         workspace: rect(workspace),
         shell: rect(shell),
         workspaceOverflowY: workspace ? getComputedStyle(workspace).overflowY : null,
+        docScrollHeight: document.documentElement.scrollHeight,
       };
     });
     assert.equal(collapsedMetrics.open, false, `${viewport.name}: launch summary should start collapsed`);
@@ -221,6 +222,7 @@ async function smokeViewport(browser, viewport) {
         depthNodeCount: document.querySelectorAll('#liquidityChart *').length,
         fundingRowCount: document.querySelectorAll('#fundingMeter .funding-row').length,
         parityRowCount: document.querySelectorAll('#parityPanel article').length,
+        parityDeferred: Boolean(document.querySelector('#parityPanel .launch-audit-deferred')),
         chartDeckClientWidth: document.querySelector('#chartDeck')?.clientWidth ?? 0,
         chartDeckScrollWidth: document.querySelector('#chartDeck')?.scrollWidth ?? 0,
         rects: {
@@ -269,27 +271,54 @@ async function smokeViewport(browser, viewport) {
     assert.ok(metrics.chartSvgCount >= 1, `${viewport.name}: tokenomics chart did not render`);
     assert.ok(metrics.depthNodeCount > 0, `${viewport.name}: liquidity chart did not render`);
     assert.ok(metrics.fundingRowCount >= 3, `${viewport.name}: funding meter did not render`);
-    assert.ok(metrics.parityRowCount >= 3, `${viewport.name}: parity panel did not render`);
+    // Before a launch exists the panel correctly renders its deferred summary;
+    // afterwards it renders parity rows. Either is a render, neither is empty.
+    const parityPanel = metrics.parityRowCount >= 3 || metrics.parityDeferred;
+    assert.ok(parityPanel, `${viewport.name}: parity panel rendered neither rows nor its deferred summary`);
     for (const [workspace, workspaceState] of Object.entries(workspaceStates)) {
       assert.equal(workspaceState.bodyWorkspace, workspace, `${viewport.name}: ${workspace} did not become active`);
       assert.equal(workspaceState.selected, true, `${viewport.name}: ${workspace} tab is not selected`);
       assert.ok(workspaceState.visiblePaneCount > 0, `${viewport.name}: ${workspace} has no visible workspace pane`);
       assert.equal(workspaceState.classicSectionVisible, true, `${viewport.name}: ${workspace} content is hidden`);
     }
-    const firstViewportFit = viewport.name === 'desktop'
-      ? collapsedMetrics.workspace.top < collapsedMetrics.clientHeight
-        && collapsedMetrics.workspaceOverflowY === 'auto'
+    // Which element owns vertical scrolling is a deliberate, width-dependent
+    // decision: above the 900px breakpoint the workspace panel scrolls
+    // internally so the shell stays put; at or below it the page scrolls.
+    // Pin both, so neither can flip silently.
+    const expectedScrollOwner = viewport.tier === 'wide' || viewport.tier === 'normal'
+      ? 'panel'
+      : 'page';
+    const actualScrollOwner = collapsedMetrics.workspaceOverflowY === 'auto' ? 'panel' : 'page';
+    assert.equal(
+      actualScrollOwner,
+      expectedScrollOwner,
+      `${viewport.name}: expected the ${expectedScrollOwner} to own vertical scrolling, got the ${actualScrollOwner}`,
+    );
+
+    const workspaceStartsInFirstViewport = collapsedMetrics.workspace.top < collapsedMetrics.clientHeight;
+    const firstViewportFit = isDesktopClass(viewport)
+      ? workspaceStartsInFirstViewport
+        // When the page owns scrolling the panel may exceed the window, but the
+        // document must actually be able to reveal all of it — not clip it.
+        && (actualScrollOwner === 'panel'
+          || collapsedMetrics.docScrollHeight + 1 >= collapsedMetrics.workspace.bottom)
       : collapsedMetrics.cockpit.bottom <= viewport.height + 1;
     assert.ok(
       firstViewportFit,
-      `${viewport.name}: launch workspace does not fit its intended viewport`,
+      `${viewport.name}: launch workspace does not fit its intended viewport ${JSON.stringify({
+        workspaceTop: collapsedMetrics.workspace.top,
+        workspaceBottom: collapsedMetrics.workspace.bottom,
+        clientHeight: collapsedMetrics.clientHeight,
+        docScrollHeight: collapsedMetrics.docScrollHeight,
+        actualScrollOwner,
+      })}`,
     );
 
     for (const selector of ['launchShell', 'cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'workspaceTabs', 'workspaceViewport', 'setupDock']) {
       assertRectSized(metrics.rects[selector], selector, viewport);
     }
 
-    const initiallyVisibleSelectors = viewport.name === 'mobile'
+    const initiallyVisibleSelectors = viewport.tier === 'mobile'
       ? ['cockpit', 'chartDeck', 'tokenomicsChart', 'workspaceTabs', 'setupDock']
       : ['cockpit', 'chartDeck', 'tokenomicsChart', 'liquidityChart', 'fundingMeter', 'workspaceTabs'];
     for (const selector of initiallyVisibleSelectors) {
@@ -299,7 +328,7 @@ async function smokeViewport(browser, viewport) {
       assert.ok(metrics.rects.workspaceViewport.top < viewport.height, 'desktop: active phase panel starts below the viewport');
       assert.ok(metrics.rects.setupDock.top < viewport.height, 'desktop: configure panel starts below the viewport');
     }
-    if (viewport.name === 'mobile') {
+    if (viewport.tier === 'mobile') {
       assert.ok(
         metrics.chartDeckScrollWidth <= metrics.chartDeckClientWidth + 1,
         'mobile: expanded launch summary should not require horizontal scrolling',
@@ -376,6 +405,59 @@ async function smokeViewport(browser, viewport) {
       && discoveryMetrics.duplicateWalletActions === 0
     );
     assert.ok(discoveryTokenViewport, `${viewport.name}: Discovery navigation still crowds the token feed: ${JSON.stringify(discoveryMetrics)}`);
+
+    // Keyboard walkthrough. This is release evidence, not a smoke nicety: the
+    // proof artifact below fails closed when any of these is false or absent,
+    // so an inaccessible build cannot ship with a passing manifest.
+    await page.click('.nav-item[data-view="launch"]');
+    await page.waitForFunction(() => document.body.dataset.activeView === 'launch');
+    await page.evaluate(() => document.body.focus());
+
+    const focusables = [];
+    for (let step = 0; step < 24; step += 1) {
+      await page.keyboard.press('Tab');
+      const focused = await page.evaluate(() => {
+        const el = document.activeElement;
+        if (!el || el === document.body) return null;
+        const style = getComputedStyle(el);
+        const focusStyle = getComputedStyle(el, null);
+        const rect = el.getBoundingClientRect();
+        return {
+          tag: el.tagName,
+          label: (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 40),
+          visible: rect.width > 0 && rect.height > 0,
+          insideViewport: rect.right <= window.innerWidth + 1 && rect.left >= -1,
+          hasAccessibleName: Boolean(
+            (el.getAttribute('aria-label') || '').trim()
+            || (el.textContent || '').trim()
+            || (el.getAttribute('title') || '').trim()
+            || (el.labels && el.labels.length > 0),
+          ),
+          focusIndicator: focusStyle.outlineStyle !== 'none'
+            || Number.parseFloat(focusStyle.outlineWidth || '0') > 0
+            || style.boxShadow !== 'none',
+        };
+      });
+      if (focused) focusables.push(focused);
+    }
+
+    const reachable = focusables.filter((entry) => entry.visible);
+    const keyboardChecks = {
+      // Tab reaches a real set of controls rather than dead-ending immediately.
+      tabReachesControls: reachable.length >= 3,
+      // Nothing focusable sits outside the viewport at this width.
+      focusStaysInViewport: reachable.every((entry) => entry.insideViewport),
+      // Every focused control shows where focus is.
+      focusIsVisible: reachable.every((entry) => entry.focusIndicator),
+      // Icon-only controls still announce themselves.
+      focusablesAreLabelled: reachable.every((entry) => entry.hasAccessibleName),
+    };
+    const keyboardWalkthrough = Object.values(keyboardChecks).every(Boolean);
+    assert.ok(
+      keyboardWalkthrough,
+      `${viewport.name}: keyboard walkthrough failed ${JSON.stringify({ keyboardChecks, sample: reachable.slice(0, 6) })}`,
+    );
+
     return {
       name: viewport.name,
       width: viewport.width,
@@ -387,11 +469,14 @@ async function smokeViewport(browser, viewport) {
         tokenomicsChart: metrics.chartSvgCount >= 1,
         liquidityChart: metrics.depthNodeCount > 0,
         fundingMeter: metrics.fundingRowCount >= 3,
-        parityPanel: metrics.parityRowCount >= 3,
+        parityPanel,
         firstViewportFit,
         terminalPanelFit,
         discoveryTokenViewport,
+        keyboardWalkthrough,
       },
+      keyboardChecks,
+      scrollOwner: actualScrollOwner,
     };
   } finally {
     await page.close();
