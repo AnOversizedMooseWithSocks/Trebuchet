@@ -15,9 +15,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { chromium } from 'playwright';
+import { Keypair } from '@solana/web3.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const configDir = mkdtempSync(path.join(tmpdir(), 'trebuchet-v2-e2e-'));
+const returnWalletAddress = Keypair.generate().publicKey.toBase58();
 const port = await new Promise((resolve, reject) => {
   const socket = net.createServer();
   socket.unref();
@@ -191,7 +193,7 @@ try {
   await page.click('.launch-wallet-choice');
   await page.waitForFunction(() => document.body.dataset.launchWorkspace === 'configure');
   assert.equal(await page.isVisible('#advancedLaunchControls .configure-step-guide'), true);
-  assert.match(await page.locator('#advancedLaunchControls .configure-step-guide').innerText(), /Phase 2 of 6/i);
+  assert.match(await page.locator('#configureStepTitle').innerText(), /Token & pools/i);
   assert.deepEqual(await page.evaluate(() => (
     [...document.querySelectorAll('[data-classic-workspace]')]
       .filter((panel) => !panel.hidden)
@@ -200,17 +202,9 @@ try {
 
   await page.click('#advancedLaunchControls button[data-launch-workspace="fund"]');
   await page.waitForFunction(() => document.body.dataset.launchWorkspace === 'fund');
-  await page.click('[data-action="estimate-funding"]');
-  await page.waitForSelector('.classic-workspace-fund .funding-task-address', { timeout: 30_000 });
-  await page.evaluate(() => renderClassicBridge());
-  assert.deepEqual(await page.evaluate(() => (
-    [...document.querySelectorAll('[data-classic-workspace]')]
-      .filter((panel) => !panel.hidden)
-      .map((panel) => panel.dataset.classicWorkspace)
-  )), ['fund'], 'An async funding refresh exposed multiple launch phases');
-  assert.match(await page.locator('.classic-workspace-fund').innerText(), /Phase 3 of 6/i);
-  assert.match(await page.locator('.classic-workspace-fund .funding-task').innerText(), /did not move funds/i);
-  assert.equal(await page.isDisabled('.classic-workspace-fund button[data-launch-workspace="mint"]'), true);
+  assert.match(await page.locator('#fundStepTitle').innerText(), /^Fund$/i);
+  assert.equal(await page.locator('.classic-workspace-fund [data-action="estimate-funding"]').count(), 0);
+  assert.equal(await page.locator('.classic-workspace-fund button[data-launch-workspace="mint"]').count(), 0);
   assert.match(await page.locator('.classic-workspace-fund .funding-wallet-hint').innerText(), /Return wallet not set/i);
   assert.match(await page.locator('.classic-workspace-fund .funding-wallet-hint').innerText(), /Set return wallet/i);
 
@@ -225,6 +219,29 @@ try {
 
   await page.fill('#sweepDestination', fundingAddress);
   await page.dispatchEvent('#sweepDestination', 'change');
+  await page.click('#advancedLaunchControls button[data-launch-workspace="fund"]');
+  await page.waitForFunction(() => document.body.dataset.launchWorkspace === 'fund');
+  assert.equal(
+    await page.locator('.classic-workspace-fund [data-action="estimate-funding"]').count(),
+    0,
+    'Funding should require a return wallet distinct from the launch wallet',
+  );
+  await page.click('.classic-workspace-fund [data-action="edit-return-wallet"]');
+  await page.waitForFunction(() => document.activeElement?.id === 'sweepDestination');
+  await page.fill('#sweepDestination', returnWalletAddress);
+  await page.dispatchEvent('#sweepDestination', 'change');
+  await page.click('#advancedLaunchControls button[data-launch-workspace="fund"]');
+  await page.waitForFunction(() => document.body.dataset.launchWorkspace === 'fund');
+  await page.click('.classic-workspace-fund [data-action="estimate-funding"]');
+  await page.waitForSelector('.classic-workspace-fund .funding-task-address', { timeout: 30_000 });
+  await page.evaluate(() => renderClassicBridge());
+  assert.deepEqual(await page.evaluate(() => (
+    [...document.querySelectorAll('[data-classic-workspace]')]
+      .filter((panel) => !panel.hidden)
+      .map((panel) => panel.dataset.classicWorkspace)
+  )), ['fund'], 'An async funding refresh exposed multiple launch phases');
+  assert.match(await page.locator('.classic-workspace-fund .funding-task').innerText(), /did not move funds/i);
+  assert.equal(await page.locator('.classic-workspace-fund button[data-launch-workspace="mint"]').count(), 0);
   await page.evaluate(() => {
     const config = currentLaunchConfig();
     const walletPublicKey = selectedLaunchWalletPublicKey();
@@ -271,7 +288,7 @@ try {
   await mintWorkspace.locator('[data-action="review-and-arm-run"]').click();
   await page.waitForSelector('#approvalFloating.is-open');
   assert.match(await page.locator('#approvalFloating').innerText(), /Review before creating/i);
-  assert.match(await page.locator('#approvalFloating').innerText(), /Arming does not send a transaction/i);
+  assert.match(await page.locator('#approvalFloating').innerText(), /Arming sends nothing/i);
   assert.match(await page.locator('#approvalFloating').innerText(), /Arm & return to Create token/i);
   await page.click('[data-action="close-approval"]');
   await page.evaluate(() => {
@@ -304,7 +321,7 @@ try {
     renderAll();
   });
   assert.match(await mintWorkspace.innerText(), /Finish interrupted token/i);
-  assert.match(await mintWorkspace.innerText(), /Finish token safely/i);
+  assert.match(await mintWorkspace.innerText(), /Finish interrupted token safely/i);
   assert.doesNotMatch(await mintWorkspace.innerText(), /Resume missing work/i);
 
   await page.evaluate(() => {
@@ -317,7 +334,10 @@ try {
     renderAll();
   });
 
-  await page.click('[data-action="select-experience"][data-experience="guided"]');
+  await page.click('.launch-settings-drawer > summary');
+  await page.locator(
+    '[data-action="select-experience"][data-experience="guided"]:visible',
+  ).first().click();
   await page.click('[data-action="guided-next"]');
   await page.fill('[data-guided-field="name"]', 'First Launch');
   await page.fill('[data-guided-field="symbol"]', 'FIRST');
