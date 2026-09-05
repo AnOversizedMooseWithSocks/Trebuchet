@@ -38,10 +38,12 @@ test('dependency risk controls document audit residuals and PR checklist', () =>
   const pkg = JSON.parse(read('package.json'));
   const template = read('.github/pull_request_template.md');
 
-  assert.equal(pkg.overrides.tmp, '^0.2.6');
+  assert.equal(pkg.overrides.tmp, '^0.2.7');
   assert.match(security, /SDK compatibility matrix/);
   assert.match(security, /npm audit --audit-level=high/);
   assert.match(security, /@metaplex-foundation\/umi-uploader-irys/);
+  assert.match(security, /GHSA-3GC7-FJRX-P6MG/);
+  assert.equal(pkg.scripts['check:audit'], 'node scripts/audit-policy.mjs');
   assert.match(template, /Dependency Risk/);
 });
 

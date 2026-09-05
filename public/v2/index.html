@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TREBUCHET · makesometokens</title>
+  <link rel="stylesheet" href="../vendor/fontawesome/css/all.min.css">
+  <link rel="stylesheet" href="./styles.css?v=82">
+</head>
+<body data-experience-mode="guided" data-execution-environment="loading" data-custody-signal="loading">
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <a class="brand" href="#launch" data-nav="launch" aria-label="Trebuchet launch view">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>
+          <strong>T R E B U C H E T</strong>
+          <small>makesometokens.com</small>
+        </span>
+      </a>
+
+      <nav class="nav-list" id="primaryNav" aria-label="Primary">
+        <button class="nav-item is-active" type="button" data-view="launch" data-key="01">
+          <i class="fa-solid fa-crosshairs"></i>
+          <span>Launch</span>
+        </button>
+        <button class="nav-item" type="button" data-view="wallet" data-key="02">
+          <i class="fa-solid fa-wallet"></i>
+          <span>Wallet</span>
+        </button>
+        <button class="nav-item" type="button" data-view="discovery" data-key="03">
+          <i class="fa-solid fa-compass"></i>
+          <span>Discovery</span>
+        </button>
+        <button class="nav-item" type="button" data-view="history" data-key="04">
+          <i class="fa-solid fa-clock-rotate-left"></i>
+          <span>History</span>
+        </button>
+        <button class="nav-item" type="button" data-view="settings" data-key="05">
+          <i class="fa-solid fa-sliders"></i>
+          <span>Settings</span>
+        </button>
+      </nav>
+
+      <button class="launch-identity-sidebar" id="launchIdentitySidebar" type="button" data-action="open-launch-identity" aria-label="Open active launch identity" hidden></button>
+
+      <div class="sidebar-footer">
+        <span class="eyebrow">Network</span>
+        <button class="network-button" type="button" id="networkButton" aria-label="Open authoritative RPC settings">
+          <span class="status-dot"></span>
+          <span id="networkLabel">Checking</span>
+          <i class="fa-solid fa-sliders"></i>
+        </button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <section class="terminal-tape" aria-label="Trebuchet terminal status">
+        <span class="terminal-ident"><i aria-hidden="true"></i><strong>TREBUCHET</strong></span>
+        <span><small>CHAIN</small><strong>SOLANA</strong></span>
+        <span><small>ENV</small><strong id="environmentLabel">CHECKING</strong></span>
+        <span><small>SIGNER</small><strong>LOCAL</strong></span>
+        <span class="terminal-tape-wide"><small>CUSTODY SIGNAL</small><strong id="custodySignalLabel">CHECKING ENVIRONMENT</strong></span>
+        <span class="terminal-tape-end"><small>KEY CUSTODY</small><strong>ON DEVICE</strong></span>
+      </section>
+      <header class="topbar">
+        <div class="topbar-copy">
+          <span class="topbar-brand" aria-hidden="true">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span>
+              <strong>T R E B U C H E T</strong>
+              <small>makesometokens.com</small>
+            </span>
+          </span>
+          <span class="eyebrow" id="viewEyebrow">Six guided phases</span>
+          <h1 id="viewTitle">Launch a token</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="launch-identity-chip" id="launchIdentityChip" type="button" data-action="open-launch-identity" aria-label="Open active launch identity" hidden></button>
+          <button class="icon-button" type="button" id="themeButton" aria-label="Toggle contrast">
+            <i class="fa-solid fa-circle-half-stroke"></i>
+          </button>
+          <button class="wallet-button" type="button" id="walletButton" aria-label="Open managed wallet">
+            <span class="wallet-led"></span>
+            <span id="walletLabel">Trebuchet wallet</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="global-strip" id="globalStrip" aria-label="App status"></section>
+
+      <section class="view is-active" id="view-launch" aria-labelledby="viewTitle">
+        <div class="launch-grid launch-cockpit">
+          <section class="surface surface-main" aria-label="Trebuchet launch mechanism">
+            <div class="section-heading cockpit-heading">
+              <div>
+                <span class="eyebrow">Token being launched</span>
+                <h2 id="launchName">Untitled token launch</h2>
+              </div>
+              <span class="badge" id="launchStatus">Draft</span>
+            </div>
+
+            <section class="live-launch-monitor" id="liveLaunchMonitor" aria-live="polite" hidden></section>
+
+            <div class="launch-toolbar" aria-label="Launch tools">
+            <details class="cockpit-board launch-summary-drawer" aria-label="Launch plan">
+              <summary>
+                <span><i class="fa-solid fa-chart-pie" aria-hidden="true"></i><strong>Plan</strong></span>
+                <small>Supply · liquidity · cost</small>
+              </summary>
+              <section class="agent-console" aria-label="Trebuchet launch agent">
+                <div class="agent-status">
+                  <span class="agent-orb" aria-hidden="true"><i class="fa-solid fa-bolt"></i></span>
+                  <span>
+                    <span class="eyebrow">Trebuchet agent</span>
+                    <h3 id="agentStatusTitle">Ready to build the launch plan</h3>
+                  </span>
+                </div>
+                <div class="agent-next">
+                  <small>Next move</small>
+                  <strong id="agentNextTitle">Review run plan</strong>
+                  <span id="agentNextDetail">Trebuchet holds the launch key locally and signs the run after you arm it.</span>
+                </div>
+                <div class="agent-checks" aria-label="Launch checkpoints">
+                  <button class="is-active" type="button" data-agent-check="setup" data-launch-workspace="configure">Setup</button>
+                  <button type="button" data-agent-check="fund" data-launch-workspace="fund">Fund</button>
+                  <button type="button" data-agent-check="run" data-launch-workspace="mint">Run</button>
+                  <button type="button" data-agent-check="recover" data-launch-workspace="finish">Finish</button>
+                </div>
+                <p class="agent-footnote">Launch Solana tokens. No middleman. Your machine / your keys / your launch.</p>
+              </section>
+
+              <section class="chart-deck" id="chartDeck" aria-label="Launch charts">
+                <article class="chart-card tokenomics-card">
+                  <div class="chart-head">
+                    <span>
+                      <span class="eyebrow">Tokenomics</span>
+                      <strong>Supply split</strong>
+                    </span>
+                    <span class="risk-badge warn" id="tokenomicsState">Preview</span>
+                  </div>
+                  <div class="donut-wrap">
+                    <div class="donut-chart" id="tokenomicsChart" role="img" aria-label="Tokenomics preview chart"></div>
+                    <div class="chart-legend" id="tokenomicsLegend"></div>
+                  </div>
+                </article>
+
+                <article class="chart-card liquidity-card">
+                  <div class="chart-head">
+                    <span>
+                      <span class="eyebrow">Liquidity</span>
+                      <strong>Depth bands</strong>
+                    </span>
+                    <span class="risk-badge warn" id="liquidityState">Preview</span>
+                  </div>
+                  <div class="depth-chart" id="liquidityChart" role="img" aria-label="Liquidity depth preview chart"></div>
+                </article>
+
+                <article class="chart-card funding-card">
+                  <div class="chart-head">
+                    <span>
+                      <span class="eyebrow">Funding</span>
+                      <strong>Cost envelope</strong>
+                    </span>
+                    <span class="risk-badge" id="fundingState">Ready</span>
+                  </div>
+                  <div class="funding-meter" id="fundingMeter"></div>
+                </article>
+              </section>
+
+              <aside class="action-panel" aria-label="Next action">
+                <div class="section-heading">
+                  <div>
+                    <span class="eyebrow">Next action</span>
+                    <h2 id="queueTitle">Review run plan</h2>
+                  </div>
+                  <i class="fa-solid fa-shield-halved rail-icon" aria-hidden="true"></i>
+                </div>
+                <div class="queue-list" id="queueList"></div>
+                <div class="button-pair">
+                  <button class="primary-button" type="button" id="stageButton">
+                    <i class="fa-solid fa-layer-group"></i>
+                    <span>Review run plan</span>
+                  </button>
+                  <button class="secondary-button" type="button" id="simulateButton">
+                    <i class="fa-solid fa-wave-square"></i>
+                    <span>Practice run</span>
+                  </button>
+                </div>
+              </aside>
+            </details>
+
+            <details class="launch-settings-drawer">
+              <summary>
+                <span><i class="fa-solid fa-sliders" aria-hidden="true"></i><strong>Launch settings</strong></span>
+                <small><span id="launchSettingsEnvironment">Practice</span> · <span id="launchSettingsExperience">Guided</span></small>
+              </summary>
+
+              <div class="launch-choice-bar" aria-label="Launch choices">
+                <div class="launch-choice-group">
+                  <span class="launch-choice-label">Environment</span>
+                  <div class="environment-row" role="tablist" aria-label="Execution environment">
+                    <button class="environment-button" type="button" role="tab" aria-selected="false" data-action="select-environment" data-environment="practice">
+                      <i class="fa-solid fa-flask" aria-hidden="true"></i>
+                      <span><strong>Practice</strong><small>Local simulation · 0 SOL</small></span>
+                    </button>
+                    <button class="environment-button" type="button" role="tab" aria-selected="false" data-action="select-environment" data-environment="live">
+                      <i class="fa-solid fa-satellite-dish" aria-hidden="true"></i>
+                      <span><strong>Live</strong><small>On-chain · guarded</small></span>
+                    </button>
+                  </div>
+                </div>
+                <div class="launch-choice-group">
+                  <span class="launch-choice-label">Experience</span>
+                  <div class="experience-row launch-experience-switch" role="tablist" aria-label="Launch experience">
+                    <button class="experience-button is-selected" type="button" role="tab" aria-selected="true" data-action="select-experience" data-experience="guided">
+                      <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+                      <span><strong>Guided</strong><small>Simple step by step</small></span>
+                    </button>
+                    <button class="experience-button" type="button" role="tab" aria-selected="false" data-action="select-experience" data-experience="advanced">
+                      <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+                      <span><strong>Advanced</strong><small>Every launch control</small></span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </details>
+            </div>
+
+            <nav class="launch-workspace-tabs" id="launchWorkspaceTabs" role="tablist" aria-label="Six launch phases">
+              <button class="launch-workspace-tab is-selected" id="launchWorkspaceTabWallet" type="button" role="tab" aria-selected="true" aria-controls="launchWorkspaceViewport" data-launch-workspace="wallet">
+                <i class="fa-solid fa-wallet" aria-hidden="true"></i>
+                <span><strong>Wallet</strong><small data-launch-workspace-state="wallet">Choose signer</small></span>
+              </button>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabConfigure" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="configure">
+                <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+                <span><strong>Token &amp; pools</strong><small data-launch-workspace-state="configure">Design launch</small></span>
+              </button>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabFund" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="fund">
+                <i class="fa-solid fa-coins" aria-hidden="true"></i>
+                <span><strong>Fund</strong><small data-launch-workspace-state="fund">Estimate</small></span>
+              </button>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabMint" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="mint">
+                <i class="fa-solid fa-coins" aria-hidden="true"></i>
+                <span><strong>Create token</strong><small data-launch-workspace-state="mint">Review mint</small></span>
+              </button>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabLiquidity" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="liquidity">
+                <i class="fa-solid fa-water" aria-hidden="true"></i>
+                <span><strong>Liquidity</strong><small data-launch-workspace-state="liquidity">Pools &amp; locks</small></span>
+              </button>
+              <button class="launch-workspace-tab" id="launchWorkspaceTabFinish" type="button" role="tab" aria-selected="false" aria-controls="launchWorkspaceViewport" data-launch-workspace="finish">
+                <i class="fa-solid fa-flag-checkered" aria-hidden="true"></i>
+                <span><strong>Finish</strong><small data-launch-workspace-state="finish">Sweep &amp; proof</small></span>
+              </button>
+            </nav>
+
+            <div class="launch-workspace-viewport" id="launchWorkspaceViewport" role="tabpanel" tabindex="0" aria-live="polite">
+            <section class="launch-identity-dock" id="launchIdentityDock" aria-label="Active token launch identity" hidden></section>
+            <section class="setup-dock" data-launch-pane="configure" aria-label="Launch setup dock">
+              <div class="setup-dock-head">
+                <span>
+                  <span class="eyebrow">Trebuchet first launch</span>
+                  <strong id="setupSummary">Your first launch</strong>
+                </span>
+                <span class="setup-head-actions">
+                  <span class="setup-help" id="setupHelp">Practice only · no SOL spent</span>
+                  <button class="text-button guided-advanced-shortcut" type="button" data-action="select-experience" data-experience="advanced">Advanced</button>
+                </span>
+              </div>
+              <section class="guided-launch-flow" id="guidedLaunchFlow" aria-live="polite"></section>
+
+              <div class="advanced-launch-controls" id="advancedLaunchControls">
+              <section class="launch-step-guide configure-step-guide" aria-labelledby="configureStepTitle">
+                <div>
+                  <h2 id="configureStepTitle">Token &amp; pools</h2>
+                  <p>Set the permanent identity and liquidity budget.</p>
+                </div>
+                <aside>
+                  <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                  <span>Review permanent details before funding.</span>
+                </aside>
+              </section>
+              <div class="launch-workbench compact-workbench">
+                <form class="config-grid" id="launchConfig" aria-label="Launch configuration">
+                  <label>
+                    <span>Token name</span>
+                    <input id="tokenName" type="text" value="" placeholder="Your token name" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>Ticker symbol</span>
+                    <input id="tokenSymbol" type="text" value="" placeholder="TOKEN" maxlength="10" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>Total supply</span>
+                    <input id="tokenSupply" type="text" value="1,000,000,000" inputmode="numeric" max="10000000000" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>Description</span>
+                    <input id="tokenDescription" type="text" value="" placeholder="What is this token for?" autocomplete="off">
+                  </label>
+                  <div class="logo-input-row">
+                    <span class="logo-input-label">Token logo / auto-compress</span>
+                    <label class="logo-upload-control" for="tokenLogoFile">
+                      <input id="tokenLogoFile" type="file" accept="image/png,image/jpeg,image/gif">
+                      <span class="logo-upload-command"><i class="fa-solid fa-arrow-up-from-bracket"></i> Select image</span>
+                      <span class="logo-upload-meta">PNG/JPG/GIF · source ≤10MB · auto-compressed</span>
+                    </label>
+                  </div>
+                  <div class="token-logo-preview" id="tokenLogoPreview"></div>
+                  <label class="sealed-launch-control" for="sealedLaunch">
+                    <input id="sealedLaunch" type="checkbox" checked>
+                    <span>
+                      <strong>Sealed launch</strong>
+                      <small>Commit identity now; reveal it only after liquidity is locked.</small>
+                    </span>
+                  </label>
+                  <label>
+                    <span>Mint standard</span>
+                    <select id="mintFormat">
+                      <option value="token-2022" selected>Token-2022 · on-mint identity</option>
+                      <option value="classic-spl">Classic SPL · compatibility</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Target market cap</span>
+                    <input id="targetMarketCapUsd" type="text" value="250,000" autocomplete="off">
+                  </label>
+                </form>
+                <section class="launch-budget-recommender" aria-labelledby="launchBudgetTitle">
+                  <input id="launchSol" type="hidden" value="1">
+                  <div class="launch-budget-head">
+                    <span>
+                      <h3 id="launchBudgetTitle">Liquidity budget</h3>
+                      <p>Network fees are estimated next.</p>
+                    </span>
+                    <label class="launch-budget-input" for="liquidityBudgetSol">
+                      <span>Liquidity budget</span>
+                      <span><input id="liquidityBudgetSol" type="number" value="1" min="0" step="0.1"><strong>SOL</strong></span>
+                    </label>
+                  </div>
+                  <div class="launch-budget-presets" role="group" aria-label="Liquidity budget presets">
+                    <button type="button" data-action="select-launch-budget" data-budget="0"><strong>Minimum</strong><small>Launch costs only</small></button>
+                    <button class="is-selected" type="button" data-action="select-launch-budget" data-budget="1"><strong>1 SOL</strong><small>Lean</small></button>
+                    <button type="button" data-action="select-launch-budget" data-budget="10"><strong>10 SOL</strong><small>Balanced</small></button>
+                    <button type="button" data-action="select-launch-budget" data-budget="100"><strong>100 SOL</strong><small>Deep</small></button>
+                  </div>
+                  <div class="launch-budget-strategy" id="launchBudgetStrategy" aria-live="polite"></div>
+                </section>
+                <details class="vanity-panel vanity-details">
+                  <summary>
+                    <span>Contract address</span>
+                    <strong>Random address · recommended</strong>
+                  </summary>
+                  <div class="vanity-details-body" aria-label="Optional Vanity CA grinder">
+                  <div class="manifest-head">
+                    <span>
+                      <span class="eyebrow">Custom Vanity CA</span>
+                      <h3>Starts &amp; Ends With</h3>
+                    </span>
+                    <span class="risk-badge">Optional</span>
+                  </div>
+                  <div class="vanity-inputs">
+                    <label>
+                      <span>Start</span>
+                      <input id="vanityStart" type="text" value="" placeholder="eg MKT" autocomplete="off" aria-describedby="vanityFeedback">
+                    </label>
+                    <label>
+                      <span>End</span>
+                      <input id="vanityEnd" type="text" value="" placeholder="eg K1T" autocomplete="off" aria-describedby="vanityFeedback">
+                    </label>
+                  </div>
+                  <div class="candidate-strip" id="vanityCandidates">
+                    <button class="pill-button is-active" type="button" data-action="select-vanity" data-public-key="" aria-pressed="true">Random CA</button>
+                    <button class="pill-button" type="button" data-action="start-vanity">Grind CA</button>
+                  </div>
+                  </div>
+                </details>
+              </div>
+
+              <details class="drawer classic-controls launch-design-details">
+                <summary>
+                  <span>Liquidity and distribution recipe</span>
+                  <strong id="classicSummary">Simple SOL pool · no allocation</strong>
+                </summary>
+                <div class="launch-design-intro">
+                  <strong>The default recipe is ready for a straightforward launch.</strong>
+                  <p>Open this only when you need multiple pools, a token allocation, an airdrop, or a different Fee Key destination.</p>
+                </div>
+                <form class="classic-grid" id="classicConfig" aria-label="Liquidity and distribution configuration">
+                  <div class="launch-control-group-heading">
+                    <span class="eyebrow">Liquidity recipe</span>
+                    <strong>How much supply enters the market?</strong>
+                    <small>The SOL pool is the primary market. Quote pools, slices, ladder bands, and support are optional.</small>
+                  </div>
+                  <label>
+                    <span>SOL pool %</span>
+                    <input id="mainPoolPercent" type="number" value="100" min="0" max="100" step="0.1">
+                  </label>
+                  <label>
+                    <span>Quote pool %</span>
+                    <input id="quotePoolPercent" type="number" value="0" min="0" max="100" step="0.1">
+                  </label>
+                  <label>
+                    <span>Quote venue</span>
+                    <select id="quotePoolVenue">
+                      <option value="meme" selected>Meme flywheel</option>
+                      <option value="reserve">Reserve flywheel</option>
+                      <option value="usdc">Stable USDC</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Main slices</span>
+                    <input id="sliceShares" type="text" value="100" autocomplete="off">
+                  </label>
+                  <label>
+                    <span>Ladder bands</span>
+                    <input id="ladderBands" type="number" value="0" min="0" max="20" step="1">
+                  </label>
+                  <label>
+                    <span>Support SOL</span>
+                    <input id="supportSol" type="number" value="0" min="0" step="0.05">
+                  </label>
+                  <label>
+                    <span>Fee Key recipient</span>
+                    <input id="feeKeyRecipient" type="text" value="" placeholder="Final owner wallet" autocomplete="off">
+                  </label>
+                  <div class="launch-control-group-heading">
+                    <span class="eyebrow">Distribution and destination</span>
+                    <strong>What stays outside liquidity, and where does it go?</strong>
+                    <small>Allocated and airdropped supply never enters a pool. The sweep destination receives every remaining asset at the end.</small>
+                  </div>
+                  <label>
+                    <span>Preallocation %</span>
+                    <input id="preallocationSupplyPercent" type="number" value="0" min="0" max="99" step="0.1">
+                  </label>
+                  <label>
+                    <span>Airdrop wallets</span>
+                    <input id="airdropWallets" type="number" value="0" min="0" step="1">
+                  </label>
+                  <label>
+                    <span>Return wallet</span>
+                    <input id="sweepDestination" type="text" value="" placeholder="Wallet receiving remaining assets" autocomplete="off">
+                  </label>
+                </form>
+                <div class="operator-toolbar" aria-label="Pool configuration actions">
+                  <button class="pill-button" type="button" data-action="round-slices-100">Round slices to 100%</button>
+                  <button class="pill-button" type="button" data-action="add-custom-pool">Add quote pool</button>
+                </div>
+                <div class="pool-editor-panel" id="poolEditorPanel" aria-label="Custom pool editor"></div>
+                <div class="airdrop-report-grid">
+                  <section class="operator-subpanel" aria-label="Airdrop CSV import">
+                    <div class="subpanel-head">
+                      <span>
+                        <span class="eyebrow">Airdrop</span>
+                        <h3>CSV recipients</h3>
+                      </span>
+                      <span class="risk-badge warn" id="airdropSummary">Off</span>
+                    </div>
+                    <div class="airdrop-budget-controls">
+                      <label>
+                        <span>Budget %</span>
+                        <input id="airdropSupplyPercent" type="number" value="2" min="0" max="99" step="0.1">
+                      </label>
+                      <label class="toggle-line">
+                        <input id="airdropAutoFit" type="checkbox" checked>
+                        <span>Auto-fit</span>
+                      </label>
+                    </div>
+                    <textarea id="airdropCsvText" rows="4" spellcheck="false" placeholder="wallet,tokens&#10;Recipient111...,1000"></textarea>
+                    <div class="operator-toolbar compact">
+                      <button class="pill-button" type="button" data-action="sample-airdrop">Sample CSV</button>
+                      <button class="pill-button" type="button" data-action="fit-airdrop-budget">Fit budget</button>
+                      <button class="pill-button" type="button" data-action="clear-airdrop">Clear</button>
+                    </div>
+                    <div class="airdrop-budget-panel" id="airdropBudgetPanel"></div>
+                    <div class="mini-table" id="airdropRecipientPreview"></div>
+                  </section>
+                  <section class="operator-subpanel" aria-label="Launch report export">
+                    <div class="subpanel-head">
+                      <span>
+                        <span class="eyebrow">Final phase</span>
+                        <h3>Report and sweep</h3>
+                      </span>
+                      <span class="risk-badge" id="reportSummary">Draft</span>
+                    </div>
+                    <div class="mini-table" id="reportPreview"></div>
+                    <div class="operator-toolbar compact">
+                      <button class="pill-button" type="button" data-action="toggle-report-publish">Toggle publish</button>
+                      <button class="pill-button" type="button" data-action="download-report-preview">Download preview</button>
+                    </div>
+                  </section>
+                </div>
+              </details>
+              <div class="launch-phase-actions launch-phase-actions-split configure-phase-actions">
+                <button class="text-button" type="button" data-launch-workspace="wallet"><i class="fa-solid fa-arrow-left"></i><span>Wallet</span></button>
+                <div>
+                  <button class="secondary-button" type="button" data-action="review-plan"><i class="fa-solid fa-list-check"></i><span>Review plan</span></button>
+                  <button class="primary-button" type="button" data-launch-workspace="fund"><span>Continue to funding</span><i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+              </div>
+              </div>
+            </section>
+
+            <section class="guided-run-shell" id="guidedRunShell" data-launch-pane="fund mint liquidity finish" aria-live="polite"></section>
+
+            <section class="classic-bridge" id="classicBridge" data-launch-pane="wallet fund mint liquidity finish" aria-label="Launch phase workspace"></section>
+
+            <section class="launch-console" id="launchConsole" data-launch-pane="mint liquidity" aria-label="Launch readout">
+              <div class="asset-lockup">
+                <span class="asset-mark" id="assetMark">TOK</span>
+                <span>
+                  <strong id="assetName">Untitled</strong>
+                  <small id="assetSymbol">TOK</small>
+                </span>
+              </div>
+              <div class="launch-readout" id="launchReadout"></div>
+            </section>
+
+            <details class="drawer diagnostics-drawer" hidden aria-hidden="true">
+              <summary>
+                <span>Launch record checks</span>
+                <strong id="runbookSummary">6 phases</strong>
+              </summary>
+              <div class="stage-list" id="stageList"></div>
+            </details>
+
+            <section class="signature-panel" id="signaturePanel" data-launch-pane="mint liquidity" aria-label="Launch run progress"></section>
+
+            <details class="drawer diagnostics-drawer" data-launch-pane="finish">
+              <summary>
+                <span>Developer diagnostics</span>
+                <strong id="preflightSummary">2 warnings</strong>
+              </summary>
+              <div class="diagnostics-grid">
+                <div>
+                  <span class="eyebrow">System status</span>
+                  <h3>What is real here</h3>
+                </div>
+                <div>
+                  <span class="eyebrow">Preflight</span>
+                  <h3>Checks</h3>
+                </div>
+              </div>
+              <section class="live-ops-panel" id="liveOpsPanel" aria-label="Live launch activity"></section>
+              <div class="parity-list" id="parityPanel"></div>
+              <div class="guardrail-list" id="guardrailList"></div>
+            </details>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-wallet" aria-labelledby="viewTitle">
+        <div class="two-column">
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">Trebuchet wallet</span>
+                <h2>App-managed wallets</h2>
+              </div>
+              <div class="button-pair">
+                <button class="secondary-button compact" type="button" data-action="import-wallet">
+                  <i class="fa-solid fa-file-import"></i>
+                  <span>Import</span>
+                </button>
+                <button class="secondary-button compact" type="button" id="newVaultButton">
+                  <i class="fa-solid fa-plus"></i>
+                  <span>Wallet</span>
+                </button>
+              </div>
+            </div>
+            <div class="account-list" id="accountList"></div>
+          </section>
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">Custody workspace</span>
+                <h2>Wallet operations</h2>
+              </div>
+            </div>
+            <div class="wallet-recovery-inventory-slot" id="walletRecoveryInventory"></div>
+            <div class="wallet-module-heading">
+              <span>
+                <small>Active signer</small>
+                <strong>Selected launch wallet</strong>
+              </span>
+              <span class="risk-badge wallet-rarity-badge" id="activeWalletRarityBadge">No wallet</span>
+            </div>
+            <div class="wallet-detail-panel" id="walletDetailPanel"></div>
+            <div class="asset-table" id="assetTable"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-discovery" aria-labelledby="viewTitle">
+        <div class="discovery-grid">
+          <section class="surface surface-main">
+            <nav class="discovery-pane-tabs" role="tablist" aria-label="Discovery workspace">
+              <button class="discovery-pane-tab is-selected" id="discoveryTabTokens" type="button" role="tab" aria-selected="true" aria-controls="discoveryPanelTokens" data-discovery-pane="tokens">
+                <i class="fa-solid fa-chart-line" aria-hidden="true"></i>
+                <span><strong>Tokens</strong></span>
+              </button>
+              <button class="discovery-pane-tab" id="discoveryTabWallets" type="button" role="tab" aria-selected="false" aria-controls="discoveryPanelWallets" data-discovery-pane="wallets">
+                <i class="fa-solid fa-wallet" aria-hidden="true"></i>
+                <span><strong>Wallets</strong></span>
+              </button>
+            </nav>
+            <section class="discovery-pane is-active" id="discoveryPanelTokens" data-discovery-pane-panel="tokens" role="tabpanel" aria-labelledby="discoveryTabTokens">
+            <section class="personal-discovery-panel token-discovery-panel" aria-labelledby="personalDiscoveryTitle">
+              <div class="personal-discovery-head">
+                <span class="personal-discovery-title">
+                  <strong id="personalDiscoveryTitle">Tokens</strong>
+                  <small id="personalDiscoveryTokenCount">0</small>
+                </span>
+                <label class="visually-hidden" for="personalDiscoverySort">Sort tokens</label>
+                <select id="personalDiscoverySort" aria-label="Sort tokens">
+                  <option value="relevance">Relevance</option>
+                  <option value="connections">Connections</option>
+                  <option value="name">Name</option>
+                </select>
+                <button class="primary-button compact" id="personalDiscoveryScanButton" type="button" data-action="scan-personal-discovery">
+                  <i class="fa-solid fa-rotate"></i>
+                  <span>Refresh</span>
+                </button>
+              </div>
+              <div class="personal-discovery-status" id="personalDiscoveryStatus" aria-live="polite"></div>
+              <div class="personal-token-network" id="personalTokenNetwork"></div>
+            </section>
+            <details class="discovery-utility-panel discovery-manual-tools">
+              <summary><i class="fa-solid fa-magnifying-glass"></i><span>Inspect mint</span></summary>
+              <form class="discovery-inspect-bar" id="discoveryInspectForm">
+                <label class="visually-hidden" for="discoveryMintInput">Token mint</label>
+                <input id="discoveryMintInput" name="mint" type="text" placeholder="Solana mint" autocomplete="off" spellcheck="false">
+                <button class="primary-button" id="discoveryInspectButton" type="submit">
+                  <i class="fa-solid fa-magnifying-glass-chart"></i>
+                  <span>Inspect</span>
+                </button>
+              </form>
+            </details>
+            <div class="discovery-error" id="discoveryError" aria-live="polite"></div>
+            <details class="discovery-utility-panel discovery-saved-tools">
+              <summary><i class="fa-solid fa-box-archive"></i><span>Saved</span><span class="badge" id="discoveryRegistryCount">0</span></summary>
+              <div class="discovery-source-banner" id="discoverySourceBanner"></div>
+              <div class="discovery-toolbar">
+                <label>
+                  <i class="fa-solid fa-magnifying-glass"></i>
+                  <input id="discoverySearchInput" type="search" placeholder="Filter" autocomplete="off">
+                </label>
+                <div class="filter-row" aria-label="Evidence status filter">
+                  <button class="pill-button is-active" type="button" data-discovery-filter="all">All</button>
+                  <button class="pill-button" type="button" data-discovery-filter="official">Official</button>
+                  <button class="pill-button" type="button" data-discovery-filter="review">Review</button>
+                  <button class="pill-button" type="button" data-discovery-filter="risk">Risk</button>
+                </div>
+              </div>
+              <div class="discovery-table" id="discoveryTable"></div>
+            </details>
+            </section>
+            <section class="discovery-pane" id="discoveryPanelWallets" data-discovery-pane-panel="wallets" role="tabpanel" aria-labelledby="discoveryTabWallets" hidden>
+            <section class="personal-discovery-panel wallet-tracking-panel" aria-labelledby="walletTrackingTitle">
+              <div class="personal-discovery-head">
+                <strong id="walletTrackingTitle">Tracked wallets</strong>
+              </div>
+              <form class="discovery-wallet-form" id="discoveryWalletForm">
+                <label class="visually-hidden" for="discoveryWalletInput">Wallet address</label>
+                <input id="discoveryWalletInput" name="publicKey" type="text" placeholder="Add a wallet address" autocomplete="off" spellcheck="false">
+                <label class="visually-hidden" for="discoveryWalletLabelInput">Wallet label</label>
+                <input id="discoveryWalletLabelInput" name="label" type="text" maxlength="48" placeholder="Label (optional)" autocomplete="off">
+                <button class="secondary-button compact" id="discoveryWalletAddButton" type="submit">
+                  <i class="fa-solid fa-plus"></i><span>Track</span>
+                </button>
+              </form>
+              <div class="discovery-wallets" id="discoveryWallets"></div>
+              <div class="personal-discovery-status" id="discoveryWalletStatus" aria-live="polite"></div>
+            </section>
+            </section>
+          </section>
+          <aside class="rail" data-discovery-pane-panel="tokens">
+            <section class="surface">
+              <div class="evidence-panel" id="evidencePanel"></div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-history" aria-labelledby="viewTitle">
+        <section class="surface surface-main">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Launch journal</span>
+              <h2>Recent sessions</h2>
+            </div>
+          </div>
+          <div class="history-pane-tabs" id="historyPaneTabs" role="tablist" aria-label="History workspace">
+            <button class="history-pane-tab is-selected" id="historyTabRecovery" type="button" role="tab" aria-selected="true" aria-controls="historyPanelRecovery" data-action="select-history-pane" data-history-pane="recovery"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i><strong>Recovery</strong></button>
+            <button class="history-pane-tab" id="historyTabWallets" type="button" role="tab" aria-selected="false" aria-controls="historyPanelWallets" data-action="select-history-pane" data-history-pane="wallets"><i class="fa-solid fa-wallet" aria-hidden="true"></i><strong>Wallets</strong></button>
+            <button class="history-pane-tab" id="historyTabAudit" type="button" role="tab" aria-selected="false" aria-controls="historyPanelAudit" data-action="select-history-pane" data-history-pane="audit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i><strong>Activity</strong></button>
+            <button class="history-pane-tab" id="historyTabJournal" type="button" role="tab" aria-selected="false" aria-controls="historyPanelJournal" data-action="select-history-pane" data-history-pane="journal"><i class="fa-solid fa-list" aria-hidden="true"></i><strong>Journal</strong></button>
+          </div>
+          <div class="history-pane-stage">
+            <section class="history-pane is-active" id="historyPanelRecovery" data-history-pane-panel="recovery" role="tabpanel" aria-labelledby="historyTabRecovery"><div class="recovery-wizard" id="recoveryWizard"></div></section>
+            <section class="history-pane" id="historyPanelWallets" data-history-pane-panel="wallets" role="tabpanel" aria-labelledby="historyTabWallets" hidden><div class="recovery-wallet-workspace" id="recoveryWalletWorkspace"></div></section>
+            <section class="history-pane" id="historyPanelAudit" data-history-pane-panel="audit" role="tabpanel" aria-labelledby="historyTabAudit" hidden><div class="history-execution-audit" id="historyExecutionAudit"></div></section>
+            <section class="history-pane" id="historyPanelJournal" data-history-pane-panel="journal" role="tabpanel" aria-labelledby="historyTabJournal" hidden><div class="timeline" id="timeline"></div></section>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="view-settings" aria-labelledby="viewTitle">
+        <div class="two-column">
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">Security</span>
+                <h2>Default policy</h2>
+              </div>
+            </div>
+            <div class="settings-list" id="settingsList"></div>
+          </section>
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">Build target</span>
+                <h2>Local modes</h2>
+              </div>
+            </div>
+            <div class="mode-stack" id="modeStack"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <section class="recovery-pin-gate" id="recoveryPinGate" role="dialog" aria-modal="true" aria-labelledby="recoveryPinTitle" aria-describedby="recoveryPinDetail recoveryPinMessage" aria-hidden="true" data-status="idle" hidden>
+    <button class="recovery-pin-cancel" id="recoveryPinCancel" type="button" data-action="cancel-recovery-pin" aria-label="Cancel PIN entry">
+      <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+    </button>
+    <div class="recovery-pin-shell">
+      <span class="recovery-pin-lock" aria-hidden="true"><i class="fa-solid fa-lock"></i></span>
+      <header class="recovery-pin-head">
+        <span class="eyebrow" id="recoveryPinEyebrow">Trebuchet security</span>
+        <h2 id="recoveryPinTitle">Unlock Recovery PIN</h2>
+        <p id="recoveryPinDetail">Enter the four-digit PIN that protects local launch wallets and saved secrets.</p>
+      </header>
+      <button class="recovery-pin-boxes" id="recoveryPinBoxes" type="button" data-action="focus-recovery-pin" aria-label="Enter four-digit Recovery PIN">
+        <span></span><span></span><span></span><span></span>
+      </button>
+      <input class="recovery-pin-capture" id="recoveryPinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" aria-label="Recovery PIN digits">
+      <p class="recovery-pin-message" id="recoveryPinMessage" role="status" aria-live="assertive">Enter your four-digit Recovery PIN.</p>
+      <p class="recovery-pin-local"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Verified locally. Never sent off this Mac.</p>
+    </div>
+  </section>
+
+  <section class="sweep-confirm-gate operator-prompt-gate" id="operatorPromptGate" role="dialog" aria-modal="true" aria-labelledby="operatorPromptTitle" aria-describedby="operatorPromptDetail operatorPromptMessage" aria-hidden="true" hidden>
+    <div class="sweep-confirm-shell operator-prompt-shell">
+      <header class="sweep-confirm-head operator-prompt-head">
+        <span class="eyebrow" id="operatorPromptEyebrow">Operator confirmation</span>
+        <h2 id="operatorPromptTitle">Confirm action</h2>
+        <p id="operatorPromptDetail">Enter the requested value to continue.</p>
+      </header>
+      <label class="sweep-confirm-field operator-prompt-field" for="operatorPromptInput">
+        <span id="operatorPromptLabel">Value</span>
+        <input id="operatorPromptInput" type="text" autocomplete="off" spellcheck="false">
+        <textarea id="operatorPromptTextarea" rows="5" autocomplete="off" spellcheck="false" hidden></textarea>
+      </label>
+      <p class="sweep-confirm-message operator-prompt-message" id="operatorPromptMessage" role="status" aria-live="assertive">This action stays inside the local Trebuchet app.</p>
+      <div class="sweep-confirm-actions operator-prompt-actions">
+        <button class="pill-button" id="operatorPromptCancel" type="button" data-action="cancel-operator-prompt">Cancel</button>
+        <button class="pill-button" id="operatorPromptSubmit" type="button" data-action="submit-operator-prompt">
+          <span id="operatorPromptSubmitLabel">Continue</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section class="sweep-confirm-gate" id="sweepConfirmGate" role="dialog" aria-modal="true" aria-labelledby="sweepConfirmTitle" aria-describedby="sweepConfirmDetail sweepConfirmMessage" aria-hidden="true" hidden>
+    <div class="sweep-confirm-shell">
+      <header class="sweep-confirm-head">
+        <span class="eyebrow">Recovery operation</span>
+        <h2 id="sweepConfirmTitle">Sweep recovery wallet</h2>
+        <p id="sweepConfirmDetail">Choose the destination, then type the full source address to authorize the sweep.</p>
+      </header>
+      <div class="sweep-confirm-route" aria-label="Sweep route">
+        <span><small>From recovery wallet</small><code id="sweepConfirmSource"></code></span>
+        <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+        <span><small>To destination</small><strong>Validated before signing</strong></span>
+      </div>
+      <label class="sweep-confirm-field" for="sweepConfirmDestination">
+        <span>Destination wallet</span>
+        <input id="sweepConfirmDestination" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Solana destination address">
+      </label>
+      <label class="sweep-confirm-field" for="sweepConfirmTypedAddress">
+        <span>Type the full recovery wallet address</span>
+        <input id="sweepConfirmTypedAddress" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Exact source address required">
+      </label>
+      <p class="sweep-confirm-message" id="sweepConfirmMessage" role="status" aria-live="assertive">The local recovery entry is removed only after Trebuchet verifies the source wallet is empty.</p>
+      <div class="sweep-confirm-actions">
+        <button class="pill-button" type="button" data-action="cancel-sweep-confirm">Cancel</button>
+        <button class="pill-button danger" type="button" data-action="submit-sweep-confirm">
+          <i class="fa-solid fa-broom-ball" aria-hidden="true"></i><span>Sweep assets</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <div class="approval-window floating" id="approvalFloating" aria-live="polite"></div>
+  <div class="activity-drawer" id="activityLogDrawer" aria-hidden="true"></div>
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+  <script src="./runtime-state.js?v=1"></script>
+  <script src="./api-client.js?v=37"></script>
+  <script src="../gif-optimizer.js?v=3"></script>
+  <script src="./app.js?v=173"></script>
+</body>
+</html>

@@ -185,9 +185,9 @@ import {
 // Default Raydium AmmConfig index. Index 3 = 1% fee, tickSpacing 120 — the
 // "exotic" tier. Matches the pattern used in past manual launches. Other
 // tiers are available at runtime via raydium.api.getClmmConfigs():
-//   index 0 = 0.25% fee, tickSpacing 60   (most volatile pairs)
-//   index 1 = 0.05% fee, tickSpacing 10   (major pairs)
-//   index 2 = 0.01% fee, tickSpacing 1    (stables)
+//   index 1 = 0.25% fee, tickSpacing 60   (most volatile pairs)
+//   index 5 = 0.05% fee, tickSpacing 1    (major pairs)
+//   index 4 = 0.01% fee, tickSpacing 1    (stables)
 //   index 3 = 1.00% fee, tickSpacing 120  (exotic / new tokens)  <-- default
 const DEFAULT_AMM_CONFIG_INDEX = 3;
 
@@ -593,9 +593,9 @@ async function logWalletBalances(connection, ownerPk, tokenMint, label) {
 // HTTP wrapper, with a process-lifetime cache and a hardcoded fallback
 // for the case where the endpoint is unreachable.
 //
-// As of late 2025 there are eight tiers per Raydium's docs: 2%, 1%,
-// 0.25%, 0.05%, 0.04%, 0.03%, 0.02%, 0.01%. We don't hardcode the
-// indices because Raydium can add tiers; we let the API tell us.
+// As of August 2026 the endpoint publishes 18 configs from 0.01% through 4%.
+// We don't hardcode the full list because Raydium can add tiers; the API is
+// authoritative and the offline fallback is a tested four-tier subset.
 
 const RAYDIUM_CLMM_CONFIG_URL = 'https://api-v3.raydium.io/main/clmm-config';
 let cachedFeeTiers = null;
@@ -3494,6 +3494,19 @@ export async function createPoolsAndPositions({
   const ownerKeypair = Keypair.fromSecretKey(Uint8Array.from(tempWalletSecretKey));
   const raydium = await initSdk(ownerKeypair);
   const connection = raydium.connection;
+  const launchedMintCompatibility = await getMintCompatibilityWithRaydiumClmm(
+    connection,
+    new PublicKey(tokenMint),
+  );
+  if (!launchedMintCompatibility.compatible) {
+    const err = new Error(
+      `Launched token ${tokenMint} uses Token-2022 extensions Raydium CLMM does not support: `
+      + `${launchedMintCompatibility.disallowedNames.join(', ')}.`,
+    );
+    err.failedPhase = 'pre_flight';
+    err.partialResults = priorResults;
+    throw err;
+  }
 
   // -----------------------------------------------------------------------
   // 2. Compute launch USD price for the token: target_mc / supply
@@ -3848,8 +3861,8 @@ export async function createPoolsAndPositions({
   // -----------------------------------------------------------------------
   const launchedToken = {
     address: tokenMint,
-    programId: TOKEN_PROGRAM_ID.toBase58(),
-    decimals: tokenDecimals,
+    programId: launchedMintCompatibility.programId.toBase58(),
+    decimals: launchedMintCompatibility.decimals ?? tokenDecimals,
   };
 
   // -----------------------------------------------------------------------
@@ -4896,7 +4909,13 @@ export async function estimateRequiredFunding({
   // Arweave. The endpoint resolves the effective value from the request body
   // (live cost preview) or the saved preference; defaults off for direct callers.
   publishLaunchReport = false,
+  // Dependency injection for deterministic demo/offline execution. Production
+  // callers omit these and use the real price/route services.
+  priceOracle = null,
+  routeDiscovery = null,
 }) {
+  const lookupPrice = priceOracle || _estGetUsdPrice;
+  const discoverRoute = routeDiscovery || _estDiscoverRaydiumRoute;
   const solBreakdown = [];
   const quoteBreakdown = [];
   const byQuote = {};
@@ -4951,7 +4970,7 @@ export async function estimateRequiredFunding({
   let solUsd;
   try {
     // getUsdPrice returns a Decimal or null
-    const p = await _estGetUsdPrice(WSOL_MINT);
+    const p = await lookupPrice(WSOL_MINT);
     solUsd = p || new Decimal(FALLBACK_SOL_USD);
   } catch (e) {
     console.warn(`estimateRequiredFunding: SOL price fallback (${e.message})`);
@@ -5165,7 +5184,7 @@ export async function estimateRequiredFunding({
       // viable and we get a usable price in the same call.
       let route = null;
       try {
-        route = await _estDiscoverRaydiumRoute({
+        route = await discoverRoute({
           quoteMint: quoteAddr,
           quoteDecimals,
           solUsd,
@@ -5191,7 +5210,7 @@ export async function estimateRequiredFunding({
         quoteUsdSource = 'raydium-probe';
       } else {
         try {
-          quoteUsd = await _estGetUsdPrice(quoteAddr);
+          quoteUsd = await lookupPrice(quoteAddr);
           if (quoteUsd && quoteUsd.gt(0)) {
             quoteUsdSource = 'oracle';
           } else {

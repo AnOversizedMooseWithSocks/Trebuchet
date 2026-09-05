@@ -1,9 +1,7 @@
 // main.js — Electron entry point.
 //
-// Strategy: pick a free port, hand it to the Express server via
-// process.env.PORT, side-effect-import server.js (which calls app.listen
-// during module init), wait for it to actually be listening, then open
-// a BrowserWindow pointed at it.
+// Strategy: pick a free port, construct the authenticated loopback API,
+// start it explicitly, then open a BrowserWindow pointed at it.
 //
 // Why this approach: trebuchet was originally built as a web app —
 // Express backend plus a static frontend that talks to it via
@@ -30,10 +28,35 @@ import {
   pickAssetForPlatform,
   parseReleaseTag,
   pickLatestRelease,
+  releaseTrustForArtifact,
 } from './updateCheck.js';
 
 // __dirname equivalent in ESM. Used to resolve sibling files like README.md.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const requestedDesktopUi = String(process.env.TREBUCHET_UI || '').trim().toLowerCase();
+const classicUiRequested = process.argv.includes('--classic')
+  || requestedDesktopUi === 'classic'
+  || requestedDesktopUi === 'v1';
+const desktopUiPath = classicUiRequested ? '/' : '/v2/';
+
+// One desktop process owns the local API, recovery journal, and launch-wallet
+// operation mutex. Starting a second Electron process would otherwise create a
+// second in-memory mutex against the same on-disk wallet and journal, allowing
+// two resume requests to race and duplicate liquidity positions. Keep the
+// original process authoritative and focus its window when Trebuchet is opened
+// again from Finder, the Dock, or another development command.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const [win] = BrowserWindow.getAllWindows();
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Right-click context menu.
@@ -309,6 +332,7 @@ async function checkForUpdates(win, options = {}) {
       downloadUrl: asset.browser_download_url,
       downloadFilename: asset.name,
       releaseUrl: release.html_url,
+      releaseTrust: releaseTrustForArtifact(release.body || '', asset.name, process.platform),
       // The renderer truncates release notes for the modal; we just
       // pass the raw markdown through. May be empty.
       notes: release.body || '',
@@ -636,6 +660,7 @@ function setAppMenu() {
 // Boot sequence.
 // ---------------------------------------------------------------------------
 let serverPort;
+let localApiServer;
 
 async function startServer() {
   // Persisted state (rpcConfig.json) needs to live somewhere writable and
@@ -649,13 +674,13 @@ async function startServer() {
 
   serverPort = await getFreePort();
 
-  // IMPORTANT: PORT must be set before importing server.js, since server.js
-  // reads process.env.PORT at module load time and immediately calls listen.
+  // Preserve PORT for standalone tooling while passing it explicitly to the
+  // runtime. Importing server.js no longer binds a socket as a side effect.
   process.env.PORT = String(serverPort);
 
-  // Side-effect import: server.js calls app.listen() during module init.
-  // We don't need its exports.
-  await import('./server.js');
+  const { createLocalApiServer } = await import('./server.js');
+  localApiServer = createLocalApiServer({ port: serverPort });
+  await localApiServer.start();
 
   await waitForServer(serverPort);
 }
@@ -704,6 +729,10 @@ function createWindow() {
     if (win.isDestroyed()) return;
     if (!userPrefs.get().checkForUpdatesOnStartup) return;
     checkForUpdates(win, { silent: true });
+  });
+  updateCheckBridge.registerManualHandler(() => {
+    if (win.isDestroyed()) return;
+    checkForUpdates(win);
   });
 
   // Initial compositor reset (Windows-only).
@@ -842,10 +871,11 @@ function createWindow() {
     win.webContents.focus();
   });
 
-  win.loadURL(`http://127.0.0.1:${serverPort}/`);
+  win.loadURL(`http://127.0.0.1:${serverPort}${desktopUiPath}`);
 }
 
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
   setAppMenu();
 
   // Hand Electron's safeStorage API to our secret-store module so any
@@ -904,6 +934,9 @@ app.on('window-all-closed', () => {
 // If no grind is in flight (or vanityKeygen was never loaded), the
 // cancel call is a no-op and this handler costs nothing.
 app.on('before-quit', () => {
+  localApiServer?.stop().catch((error) => {
+    console.warn('[shutdown] local API did not close cleanly:', error?.message);
+  });
   import('./vanityKeygen.js')
     .then((mod) => {
       const cancelled = mod.cancelVanityGrind();

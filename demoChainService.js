@@ -50,6 +50,7 @@ const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 // Classic SPL token program id — the only programId the demo ledger ever
 // reports. Token-2022 specifics don't matter for a UI walkthrough.
 const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
 // Known quote-token metadata, keyed by both symbol and mint so a pool
 // configured either way resolves cleanly.
@@ -103,9 +104,17 @@ function sleep(ms) {
 
 // base58 alphabet (Bitcoin/Solana) — no 0, O, I, or l.
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+let deterministicDemoValue = 0;
 
 function randomBase58(len) {
   let out = '';
+  if (process.env.TREBUCHET_E2E_DETERMINISTIC === '1') {
+    const value = deterministicDemoValue++;
+    for (let i = 0; i < len; i++) {
+      out += BASE58[(value * 17 + i * 13) % BASE58.length];
+    }
+    return out;
+  }
   for (let i = 0; i < len; i++) {
     out += BASE58[Math.floor(Math.random() * BASE58.length)];
   }
@@ -512,6 +521,7 @@ export async function handleCreateToken(req, res) {
       vanityCAKeypair: vanityCAKeypairRaw,
       vanityPrefix,
       vanitySuffix,
+      mintFormat = 'token-2022',
     } = req.body;
 
     const decimals = 9;
@@ -553,6 +563,16 @@ export async function handleCreateToken(req, res) {
         console.warn(`[demo] invalid vanityCAKeypair, falling back: ${e.message}`);
         mint = demoAddress();
       }
+    } else if (vanityPrefix && vanitySuffix
+        && typeof vanityPrefix === 'string'
+        && typeof vanitySuffix === 'string'
+        && vanityPrefix.length > 0
+        && vanitySuffix.length > 0) {
+      const px = vanityPrefix.slice(0, 15);
+      const sx = vanitySuffix.slice(0, 15);
+      const middle = Math.max(1, 32 - px.length - sx.length);
+      mint = px + randomBase58(middle) + sx;
+      console.log(`[demo] synthesizing start/end vanity CA: ${mint}`);
     } else if (vanityPrefix && typeof vanityPrefix === 'string' && vanityPrefix.length > 0) {
       // Construct a 32-char base58 string starting with the user's prefix.
       // Clamp prefix length to 31 so we always have at least one random
@@ -569,10 +589,22 @@ export async function handleCreateToken(req, res) {
       mint = demoAddress();
     }
     const metadataUri = `https://arweave.net/${demoAddress()}`;
+    const normalizedMintFormat = mintFormat === 'classic-spl' ? 'classic-spl' : 'token-2022';
+    const tokenProgram = normalizedMintFormat === 'classic-spl'
+      ? TOKEN_PROGRAM_ID
+      : TOKEN_2022_PROGRAM_ID;
 
     // Record the token and credit the full supply to the launch wallet.
-    st.createdTokens.push({ mint, name, symbol, decimals, totalSupply: supplyNum });
-    creditToken(st, mint, rawFromWhole(supplyNum, decimals), decimals);
+    st.createdTokens.push({
+      mint,
+      name,
+      symbol,
+      decimals,
+      totalSupply: supplyNum,
+      mintFormat: normalizedMintFormat,
+      tokenProgram,
+    });
+    creditToken(st, mint, rawFromWhole(supplyNum, decimals), decimals, tokenProgram);
 
     console.log(`[demo] token created: ${mint}`);
 
@@ -584,6 +616,12 @@ export async function handleCreateToken(req, res) {
       tokenMint: mint,
       decimals,
       metadataUri,
+      mintFormat: normalizedMintFormat,
+      tokenProgram,
+      metadataStandard: normalizedMintFormat === 'classic-spl'
+        ? 'metaplex-pda'
+        : 'token-2022-inline',
+      metadataPointerAuthorityRevoked: normalizedMintFormat === 'token-2022',
       isSafe: true,
       mintAndFreezeAuthoritiesSafe: true,
       mintAuthorityRenounced: true,
@@ -1007,8 +1045,8 @@ export function handleResumeLaunch(req, res) {
 // Enumerates the launch wallet's NFTs, fungible tokens, and SOL from the
 // ledger; sleeps per item; removes each as it "transfers"; and returns the
 // same { tokensTransferred, solTransferred, destinationWallet, nftSweep,
-// tokenSweep, solSweepError } shape the real endpoint returns. After the
-// sweep the wallet is empty in the ledger (everything moved to the
+// tokenSweep, solSweepError, walletEmpty } shape the real endpoint returns.
+// After the sweep the wallet is empty in the ledger (everything moved to the
 // destination, which we don't track).
 
 // Shared airdrop simulator — used by both handleTransferAssets (the
@@ -1155,6 +1193,7 @@ export async function handleTransferAssets(req, res, opts = {}) {
       nftSweep,
       tokenSweep,
       solSweepError: null,
+      walletEmpty: true,
       // Match the real handler: airdrop is null when not configured,
       // or { transferred: [...], failed: [...] } when run. The
       // frontend reads response.airdrop.transferred.length and

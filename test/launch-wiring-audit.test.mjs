@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, '..');
@@ -14,6 +15,28 @@ const tokenConfigSrc = readFileSync(path.join(REPO, 'public', 'modules', 'token-
 const journalsSrc = readFileSync(path.join(REPO, 'public', 'modules', 'journals.js'), 'utf8');
 const lpExecSrc = readFileSync(path.join(REPO, 'public', 'modules', 'lp-execution.js'), 'utf8');
 const poolEditorSrc = readFileSync(path.join(REPO, 'public', 'modules', 'pool-editor.js'), 'utf8');
+
+function loadV2ServerFingerprintHarness() {
+  const start = serverSrc.indexOf('function v2ProofPositionCount');
+  const end = serverSrc.indexOf('\nfunction v2TransferFinalizationIssue', start);
+  assert.ok(start >= 0 && end > start, 'v2 server fingerprint helpers must be extractable');
+  const sandbox = { String, Number, Array, JSON, Math };
+  vm.runInNewContext(
+    [
+      serverSrc.slice(start, end),
+      'globalThis.v2LaunchProofFingerprint = v2LaunchProofFingerprint;',
+      'globalThis.v2LaunchDataProofFingerprint = v2LaunchDataProofFingerprint;',
+      'globalThis.v2TransferHasFinalSweepEvidence = v2TransferHasFinalSweepEvidence;',
+      'globalThis.v2TransferHasWalletEmptyFinalSweepEvidence = v2TransferHasWalletEmptyFinalSweepEvidence;',
+      'globalThis.v2AirdropDeliveryEvidenceState = v2AirdropDeliveryEvidenceState;',
+      'globalThis.v2LaunchDataAirdropCompletionStatus = v2LaunchDataAirdropCompletionStatus;',
+      'globalThis.v2LaunchDataReportCompletenessState = v2LaunchDataReportCompletenessState;',
+    ].join('\n'),
+    sandbox,
+    { filename: 'server.js v2 fingerprint harness' },
+  );
+  return sandbox;
+}
 
 // ---------------------------------------------------------------------------
 // Wiring-audit regression tests (ladder / prealloc / airdrop / support).
@@ -37,8 +60,8 @@ const poolEditorSrc = readFileSync(path.join(REPO, 'public', 'modules', 'pool-ed
 
 test('journal replay covers support locks (and keys on supportIndex)', () => {
   assert.ok(
-    /if \(event\.stage === 'support_lock_done'[^)]*\) \{\r?\n\s*const pos = result\.supportPositions\?\.\[event\.supportIndex\];/.test(serverSrc),
-    'applyLpEventToResults must handle support_lock_done via supportIndex',
+    /if \(event\.stage === 'support_lock_done'[^)]*\) \{\r?\n\s*const pos = positionForIndex\(result\.supportPositions, 'supportIndex', event\.supportIndex\);/.test(serverSrc),
+    'applyLpEventToResults must handle support_lock_done by supportIndex',
   );
 });
 
@@ -161,8 +184,9 @@ test('airdrop plan is journaled at create-lp and restored on resume', () => {
 });
 
 test('classic resume materializes recoverable Phase 1 pool events before retrying', () => {
-  const resumeStart = serverSrc.indexOf("app.post('/api/resume-launch'");
-  assert.ok(resumeStart >= 0, 'resume-launch route must exist');
+  assert.match(serverSrc, /app\.post\('\/api\/resume-launch', resumeLaunchHandler\);/);
+  const resumeStart = serverSrc.indexOf('async function resumeLaunchHandler(');
+  assert.ok(resumeStart >= 0, 'resume-launch handler must exist');
   const resumeSrc = serverSrc.slice(resumeStart, resumeStart + 6500);
   assert.ok(
     /const activeJournal = launchJournal\.activeForWallet\(walletPublicKey\);/.test(resumeSrc),
@@ -287,23 +311,334 @@ test('/api/run-airdrop aliases the idempotent airdrop handler', () => {
   );
 });
 
-test('publish endpoint is journal-idempotent (one report per mint)', () => {
+test('publish endpoint is journal-idempotent by proof fingerprint', () => {
   assert.ok(
     /reportPublish: raw\.reportPublish && typeof raw\.reportPublish === 'object' \? raw\.reportPublish : null,/.test(journalSrc),
     'normalizeJournal must preserve journal.reportPublish',
   );
   assert.ok(
-    /const prior = launchJournal\.activeForWallet\(walletPublicKey\)\?\.reportPublish;/.test(serverSrc),
-    'publish endpoint must check the journal before uploading',
+    /const reportJournal = launchJournalForReport\(walletPublicKey, launchData\);/.test(serverSrc)
+      && /function launchJournalForReport\(walletPublicKey, launchData = \{\}\)/.test(serverSrc)
+      && /const exact = launchJournal\.get\(requestedId\)/.test(serverSrc)
+      && /const prior = reportJournal\?\.reportPublish;/.test(serverSrc),
+    'publish endpoint must check the proof-bound non-archived journal before uploading',
   );
   assert.ok(
-    /\{ reportPublish: \{ mint, jsonUri: result\.jsonUri/.test(serverSrc),
-    'a successful publish must record the URIs in the journal',
+    /launchJournal\.update\(reportJournal\.id, reportPublishPatch, reportPublishEvent\)/.test(serverSrc),
+    'publish endpoint must update a completed matching journal by id instead of creating a new active journal',
+  );
+  assert.ok(
+    /priorFingerprint === reportProofFingerprint/.test(serverSrc),
+    'reusing a report must require a matching proof fingerprint',
+  );
+  assert.ok(
+    /prior report for \$\{mint\} belongs to a different proof/.test(serverSrc),
+    'a prior report for another proof must not be accepted as current',
+  );
+  assert.ok(
+    /proofFingerprint: reportProofFingerprint/.test(serverSrc),
+    'a successful publish must record the proof fingerprint in the journal',
   );
   assert.ok(
     /alreadyPublished: true/.test(serverSrc),
-    're-requests must return the recorded URIs',
+    'matching re-requests must return the recorded URIs',
   );
+});
+
+test('v2 report publish blocks incomplete airdrops before upload', () => {
+  assert.ok(
+    /if \(launchData\?\.source === 'trebuchet-v2'\)/.test(serverSrc),
+    'publish endpoint must identify v2 report requests',
+  );
+  assert.ok(
+    /const launchDataProofFingerprint = typeof launchData\?\.proofFingerprint === 'string'/.test(serverSrc),
+    'v2 publish must read the proof fingerprint from the uploaded launch data',
+  );
+  assert.ok(
+    /reason: 'missing-proof-fingerprint'/.test(serverSrc),
+    'v2 publish must reject report envelopes without a proof fingerprint',
+  );
+  assert.ok(
+    /requestProofFingerprint && requestProofFingerprint !== launchDataProofFingerprint/.test(serverSrc),
+    'v2 publish must reject mismatched request and launch-data fingerprints',
+  );
+  assert.ok(
+    /reason: 'proof-fingerprint-mismatch'/.test(serverSrc),
+    'mismatched v2 fingerprints must return an explicit stale proof result',
+  );
+  assert.ok(
+    /reportProofFingerprint = launchDataProofFingerprint;/.test(serverSrc),
+    'v2 publish must journal the fingerprint bound to the uploaded launch data',
+  );
+  assert.ok(
+    /const airdropStatus = v2LaunchDataAirdropCompletionStatus\(launchData\);/.test(serverSrc),
+    'publish endpoint must derive v2 airdrop completion from launch data',
+  );
+  assert.ok(
+    /airdropIncomplete: true/.test(serverSrc),
+    'incomplete v2 airdrops must return an explicit skipped result',
+  );
+  assert.ok(
+    /airdrop-proof-missing:\$\{airdropStatus\.missing\.join/.test(serverSrc),
+    'missing exact v2 airdrop proof must be reported before upload',
+  );
+  assert.ok(
+    /airdrop-pending:\$\{airdropStatus\.pending\}/.test(serverSrc),
+    'pending v2 airdrops must be reported before upload',
+  );
+  assert.ok(
+    /airdrop-failed:\$\{airdropStatus\.failed\}/.test(serverSrc),
+    'failed v2 airdrops must be reported before upload',
+  );
+  assert.ok(
+    serverSrc.indexOf('v2LaunchDataAirdropCompletionStatus(launchData)') <
+      serverSrc.indexOf('const { secretKeyArr } = resolveSigner'),
+    'v2 airdrop completion must be checked before resolving the signer and uploading',
+  );
+  assert.ok(
+    /Array\.isArray\(airdrop\.transferred\) \? airdrop\.transferred\.length : 0/.test(serverSrc),
+    'v2 publish airdrop completion must account for delivered transfer rows',
+  );
+  assert.ok(
+    /function v2AirdropDeliveryEvidenceState\(airdrop = \{\}\)/.test(serverSrc),
+    'v2 publish must use exact airdrop row/signature evidence, not only counts',
+  );
+  assert.ok(
+    /const derivedProofFingerprint = v2LaunchDataProofFingerprint\(launchData\);/.test(serverSrc),
+    'v2 publish must recompute the proof fingerprint from launch data',
+  );
+  assert.ok(
+    /reason: 'launch-data-proof-fingerprint-mismatch'/.test(serverSrc),
+    'v2 publish must reject envelopes whose launch data does not derive the claimed fingerprint',
+  );
+  assert.ok(
+    serverSrc.indexOf('v2LaunchDataProofFingerprint(launchData)') <
+      serverSrc.indexOf('const { secretKeyArr } = resolveSigner'),
+    'v2 launch-data fingerprint must be verified before resolving the signer and uploading',
+  );
+});
+
+test('v2 server derives report fingerprints from launchData evidence', () => {
+  const {
+    v2LaunchDataProofFingerprint,
+    v2LaunchProofFingerprint,
+    v2TransferHasFinalSweepEvidence,
+    v2TransferHasWalletEmptyFinalSweepEvidence,
+    v2LaunchDataAirdropCompletionStatus,
+    v2LaunchDataReportCompletenessState,
+  } = loadV2ServerFingerprintHarness();
+  const launchData = {
+    source: 'trebuchet-v2',
+    launchWallet: 'WalletReport11111111111111111111111111111111',
+    destinationWallet: 'DestReport111111111111111111111111111111111',
+    transfer: {
+      status: 'planned-before-sweep',
+      destinationWallet: 'WrongPlannedDest11111111111111111111111111',
+    },
+    mint: 'MintReport111111111111111111111111111111111',
+    token: {
+      mint: 'MintReport111111111111111111111111111111111',
+      authorities: {
+        mintAuthorityRenounced: true,
+        freezeAuthorityDisabled: true,
+        metadataUpdateAuthorityRevoked: true,
+        metadataImmutable: true,
+      },
+    },
+    pools: [{
+      poolId: 'PoolReport111111111111111111111111111111111',
+      quoteMint: 'QuoteReport11111111111111111111111111111111',
+      supplyPercent: 42.5,
+      tickSpacing: 60,
+      initialPrice: '0.00042',
+      launchedSide: 'base',
+      createPoolTx: 'CreatePoolReport111111111111111111111111111',
+      positions: [{
+        type: 'main',
+        positionNftMint: 'PositionReport111111111111111111111111111',
+        feeKeyNftMint: 'FeeKeyReport1111111111111111111111111111',
+        locked: true,
+        tickLower: -443640,
+        tickUpper: 443640,
+      }],
+    }],
+    liquidity: {
+      positionCount: 1,
+      lockedPositionCount: 1,
+      feeKeyCount: 1,
+    },
+    airdrop: {
+      plannedRecipientCount: 1,
+      deliveredCount: 1,
+      failedCount: 0,
+      recipients: [{ wallet: 'DropReport1111111111111111111111111111111', tokens: 100 }],
+      transferred: [{ wallet: 'DropReport1111111111111111111111111111111', tokens: 100, txId: 'DropTxReport111111111111111111111111111111' }],
+      failed: [],
+    },
+  };
+  const proof = {
+    walletPublicKey: launchData.launchWallet,
+    destinationWallet: launchData.destinationWallet,
+    transfer: launchData.transfer,
+    token: {
+      mint: launchData.mint,
+      mintAuthorityRenounced: true,
+      freezeAuthorityDisabled: true,
+      metadataUpdateAuthorityRevoked: true,
+      metadataImmutable: true,
+    },
+    liquidity: {
+      poolIds: [launchData.pools[0].poolId],
+      positionCount: 1,
+      lockedPositionCount: 1,
+      feeKeyCount: 1,
+      results: [{
+        poolId: launchData.pools[0].poolId,
+        quoteMint: launchData.pools[0].quoteMint,
+        supplyPercent: launchData.pools[0].supplyPercent,
+        tickSpacing: launchData.pools[0].tickSpacing,
+        initialPrice: launchData.pools[0].initialPrice,
+        launchedSide: launchData.pools[0].launchedSide,
+        createPoolTx: launchData.pools[0].createPoolTx,
+        mainPositions: [{
+          positionNftMint: launchData.pools[0].positions[0].positionNftMint,
+          feeKeyNftMint: launchData.pools[0].positions[0].feeKeyNftMint,
+          locked: true,
+          tickLower: -443640,
+          tickUpper: 443640,
+        }],
+      }],
+    },
+    airdrop: launchData.airdrop,
+  };
+  const fromLaunchData = v2LaunchDataProofFingerprint(launchData);
+  const fromProof = v2LaunchProofFingerprint(proof);
+  const fingerprint = JSON.parse(fromLaunchData);
+  const zeroLiquidityProof = {
+    ...proof,
+    liquidity: {
+      ...proof.liquidity,
+      positionCount: 0,
+      lockedPositionCount: 0,
+      feeKeyCount: 0,
+    },
+  };
+  const zeroLiquidityFingerprint = JSON.parse(v2LaunchProofFingerprint(zeroLiquidityProof));
+
+  assert.equal(fromLaunchData, fromProof);
+  assert.equal(fingerprint.mint, launchData.mint);
+  assert.equal(fingerprint.destinationWallet, launchData.destinationWallet);
+  assert.equal(v2TransferHasFinalSweepEvidence(launchData.transfer), false);
+  assert.equal(v2TransferHasWalletEmptyFinalSweepEvidence(launchData.transfer), false);
+  assert.equal(fingerprint.positionCount, 1);
+  assert.equal(fingerprint.lockedPositionCount, 1);
+  assert.equal(fingerprint.feeKeyCount, 1);
+  assert.equal(fingerprint.positions[0].positionNftMint, launchData.pools[0].positions[0].positionNftMint);
+  assert.notEqual(fingerprint.airdrop.transferredHash, '00000000');
+  assert.equal(zeroLiquidityFingerprint.positionCount, 0);
+  assert.equal(zeroLiquidityFingerprint.lockedPositionCount, 0);
+  assert.equal(zeroLiquidityFingerprint.feeKeyCount, 0);
+
+  const terminalTransferData = {
+    ...launchData,
+    destinationWallet: 'ConfigDestReport11111111111111111111111111111',
+    transfer: {
+      destinationWallet: 'TerminalDestReport1111111111111111111111111',
+      walletEmpty: true,
+    },
+  };
+  const terminalFingerprint = JSON.parse(v2LaunchDataProofFingerprint(terminalTransferData));
+  assert.equal(v2TransferHasFinalSweepEvidence(terminalTransferData.transfer), true);
+  assert.equal(v2TransferHasWalletEmptyFinalSweepEvidence(terminalTransferData.transfer), true);
+  assert.equal(terminalFingerprint.destinationWallet, terminalTransferData.transfer.destinationWallet);
+
+  const partialTransferData = {
+    ...launchData,
+    destinationWallet: 'ConfigDestReport11111111111111111111111111111',
+    transfer: {
+      destinationWallet: 'PartialDestReport111111111111111111111111111',
+      tokenSweep: {
+        transferred: [{
+          mint: launchData.mint,
+          amount: '100',
+          txId: 'PartialSweepTxReport111111111111111111111111',
+        }],
+        errors: [],
+      },
+    },
+  };
+  const partialFingerprint = JSON.parse(v2LaunchDataProofFingerprint(partialTransferData));
+  assert.equal(v2TransferHasFinalSweepEvidence(partialTransferData.transfer), true);
+  assert.equal(v2TransferHasWalletEmptyFinalSweepEvidence(partialTransferData.transfer), false);
+  assert.equal(partialFingerprint.destinationWallet, partialTransferData.destinationWallet);
+  assert.notEqual(partialFingerprint.destinationWallet, partialTransferData.transfer.destinationWallet);
+
+  const countOnlyAirdropData = {
+    ...launchData,
+    airdrop: {
+      plannedRecipientCount: 1,
+      deliveredCount: 1,
+      failedCount: 0,
+      recipients: [],
+      transferred: [],
+      failed: [],
+    },
+  };
+  const countOnlyStatus = v2LaunchDataAirdropCompletionStatus(countOnlyAirdropData);
+  assert.equal(countOnlyStatus.complete, false);
+  assert.match(countOnlyStatus.missing.join(','), /airdrop recipient rows/);
+  assert.match(countOnlyStatus.missing.join(','), /airdrop delivered rows/);
+  assert.match(countOnlyStatus.missing.join(','), /airdrop transaction signatures/);
+  const countOnlyCompleteness = v2LaunchDataReportCompletenessState(countOnlyAirdropData);
+  assert.equal(countOnlyCompleteness.complete, false);
+  assert.ok(countOnlyCompleteness.missing.includes('airdrop recipient rows'));
+  assert.ok(countOnlyCompleteness.missing.includes('airdrop delivered rows'));
+  assert.ok(countOnlyCompleteness.missing.includes('airdrop transaction signatures'));
+
+  const hashOnlyAirdropData = {
+    ...launchData,
+    airdrop: {
+      plannedRecipientCount: 1,
+      deliveredCount: 1,
+      failedCount: 0,
+      recipientsHash: 'hash-only-recipients',
+      transferredHash: 'hash-only-transferred',
+      failedHash: 'hash-only-failed',
+      recipients: [],
+      transferred: [],
+      failed: [],
+    },
+  };
+  const hashOnlyStatus = v2LaunchDataAirdropCompletionStatus(hashOnlyAirdropData);
+  assert.equal(hashOnlyStatus.complete, false);
+  assert.match(hashOnlyStatus.missing.join(','), /full airdrop rows/);
+
+  const zeroDeliveredCountData = {
+    ...launchData,
+    airdrop: {
+      ...launchData.airdrop,
+      deliveredCount: 0,
+    },
+  };
+  const zeroDeliveredStatus = v2LaunchDataAirdropCompletionStatus(zeroDeliveredCountData);
+  assert.equal(zeroDeliveredStatus.complete, false);
+  assert.match(zeroDeliveredStatus.missing.join(','), /airdrop delivered count/);
+
+  const zeroLiquidityCountData = {
+    ...launchData,
+    liquidity: {
+      poolCount: 0,
+      positionCount: 0,
+      lockedPositionCount: 0,
+      feeKeyCount: 0,
+    },
+  };
+  const zeroLiquidityCompleteness = v2LaunchDataReportCompletenessState(zeroLiquidityCountData);
+  assert.equal(zeroLiquidityCompleteness.complete, false);
+  assert.ok(zeroLiquidityCompleteness.missing.includes('pool count'));
+  assert.ok(zeroLiquidityCompleteness.missing.includes('position count'));
+  assert.ok(zeroLiquidityCompleteness.missing.includes('lock count'));
+  assert.ok(zeroLiquidityCompleteness.missing.includes('fee key count'));
 });
 
 test('large airdrop lists warn (no cap)', () => {
@@ -371,6 +706,26 @@ test('run-airdrop claims the per-wallet launch-op mutex', () => {
     /if \(claimedLaunchOp && walletPublicKey\) \{\r?\n\s*clearLaunchOpInFlight\(walletPublicKey\);/.test(handler),
     'the mutex must release in finally, only when this handler claimed it',
   );
+});
+
+test('transfer-assets validates destination before resolving a saved signer', () => {
+  const handlerStart = serverSrc.indexOf('async function transferAssetsHandler(');
+  const handler = serverSrc.slice(handlerStart, handlerStart + 2500);
+  const requiredIndex = handler.indexOf('destinationWallet required');
+  const validIndex = handler.indexOf('destinationWallet must be a valid Solana address');
+  const signerIndex = handler.indexOf('resolveSigner({ tempWalletSecretKey, walletPublicKey: req.body.walletPublicKey })');
+  assert.ok(requiredIndex >= 0, 'transfer-assets must reject missing destinationWallet');
+  assert.ok(validIndex >= 0, 'transfer-assets must reject malformed destinationWallet');
+  assert.ok(signerIndex >= 0, 'transfer-assets signer resolution anchor missing');
+  assert.ok(requiredIndex < signerIndex && validIndex < signerIndex, 'destination validation must happen before signer resolution');
+});
+
+test('transfer-assets response exposes authoritative sweep verification', () => {
+  const handlerStart = serverSrc.indexOf('async function transferAssetsHandler(');
+  const handlerEnd = serverSrc.indexOf("app.post('/api/transfer-assets'", handlerStart);
+  const handler = serverSrc.slice(handlerStart, handlerEnd);
+
+  assert.match(handler, /res\.json\(\{[\s\S]*?walletEmpty,[\s\S]*?hasPartialFailure,/);
 });
 
 test('index.html has no duplicate element ids', () => {

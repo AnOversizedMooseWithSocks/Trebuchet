@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
 import { Keypair } from '@solana/web3.js';
+import { normalizeVanityTargetBase58 } from './validators.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -133,6 +134,12 @@ export function cancelVanityGrind() {
 }
 
 export function generateVanityKeypair({ prefix, suffix, threads, blockhash, onProgress } = {}) {
+  try {
+    ({ prefix, suffix } = normalizeVanityTargetBase58(prefix, suffix));
+  } catch (error) {
+    return Promise.reject(error);
+  }
+
   // Single-flight guard: only one grind at a time.  If a grind is
   // already running, reject immediately to avoid spawning concurrent
   // native processes that would fight for CPU / memory.

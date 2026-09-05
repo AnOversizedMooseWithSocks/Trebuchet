@@ -28,6 +28,27 @@ test('vanity keygen has single-flight guard against concurrent grinds', () => {
   assert.ok(hasGuard, 'vanityKeygen.js must have a single-flight guard');
 });
 
+test('vanity targets are Base58-normalized before grind work starts', () => {
+  const serverPath = path.join(REPO, 'server.js');
+  const serverSrc = readFileSync(serverPath, 'utf8');
+  const streamRoute = serverSrc.match(/app\.get\('\/api\/generate-vanity-wallet-stream'[\s\S]*?\n\}\);/)?.[0] || '';
+  const postRoute = serverSrc.match(/app\.post\('\/api\/generate-vanity-wallet'[\s\S]*?\n\}\);/)?.[0] || '';
+  assert.ok(streamRoute.includes('normalizeVanityTargetBase58'), 'vanity SSE route must normalize Base58 targets');
+  assert.ok(postRoute.includes('normalizeVanityTargetBase58'), 'vanity POST route must normalize Base58 targets');
+  assert.ok(
+    streamRoute.indexOf('normalizeVanityTargetBase58') < streamRoute.indexOf('vanityAvailability()'),
+    'vanity SSE route must reject impossible targets before binary availability work',
+  );
+  assert.ok(
+    postRoute.indexOf('normalizeVanityTargetBase58') < postRoute.indexOf('vanityAvailability()'),
+    'vanity POST route must reject impossible targets before binary availability work',
+  );
+
+  const keygenPath = path.join(REPO, 'vanityKeygen.js');
+  const keygenSrc = readFileSync(keygenPath, 'utf8');
+  assert.match(keygenSrc, /normalizeVanityTargetBase58/, 'native keygen wrapper must reject invalid Base58 targets');
+});
+
 // Test #8: getentropy failure aborts instead of using predictable seed.
 test('vanity C binary does not fall back to gettimeofday on entropy failure', () => {
   const cPath = path.join(REPO, 'c', 'vanity_keygen.c');

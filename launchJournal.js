@@ -13,8 +13,13 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const CONFIG_DIR = process.env.TREBUCHET_CONFIG_DIR || __dirname;
-const FILE = path.join(CONFIG_DIR, 'launchJournals.json');
+function configDir() {
+  return process.env.TREBUCHET_CONFIG_DIR || __dirname;
+}
+
+function journalFile() {
+  return path.join(configDir(), 'launchJournals.json');
+}
 const MAX_EVENTS = 200;
 const MAX_STRING_LENGTH = 8000;
 const MAX_STACK_LINES = 20;
@@ -114,6 +119,24 @@ export function errorDetails(error, context = {}) {
   return sanitizeForJournal(details);
 }
 
+// A successful finish-token recovery can adopt metadata that landed on-chain
+// immediately before an RPC propagation error. In that case the original
+// metadata_account_created progress callback may never have reached the
+// journal, even though the subsequent recovery verified the token and marked
+// it safe. Treat that verified repair state as metadata evidence so readiness
+// does not keep routing an already-finished mint back through repair.
+export function tokenCreationComplete(journal, tokenMint = journal?.token?.mint) {
+  const mint = String(tokenMint || '').trim();
+  if (!mint || journal?.token?.mintAuthorityRenounced !== true) return false;
+
+  const events = Array.isArray(journal?.events) ? journal.events : [];
+  const supplyRecorded = events.some((event) => event?.stage === 'supply_minted');
+  const metadataRecorded = events.some((event) => event?.stage === 'metadata_account_created');
+  const metadataAdoptedBySafeRepair = journal?.token?.isSafe === true;
+
+  return supplyRecorded && (metadataRecorded || metadataAdoptedBySafeRepair);
+}
+
 function normalizeJournal(raw) {
   const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : nowIso();
   const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : createdAt;
@@ -126,6 +149,7 @@ function normalizeJournal(raw) {
     updatedAt,
     completedAt: raw.completedAt || null,
     archivedAt: raw.archivedAt || null,
+    launchConfig: raw.launchConfig && typeof raw.launchConfig === 'object' ? raw.launchConfig : null,
     token: raw.token && typeof raw.token === 'object' ? raw.token : null,
     poolPlan: raw.poolPlan && typeof raw.poolPlan === 'object' ? raw.poolPlan : null,
     lp: raw.lp && typeof raw.lp === 'object' ? raw.lp : null,
@@ -140,8 +164,8 @@ function normalizeJournal(raw) {
 
 function readRaw() {
   try {
-    if (!fs.existsSync(FILE)) return [];
-    const parsed = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    if (!fs.existsSync(journalFile())) return [];
+    const parsed = JSON.parse(fs.readFileSync(journalFile(), 'utf8'));
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
     console.warn('launchJournal: failed to read, treating as empty:', e.message);
@@ -157,10 +181,11 @@ function load() {
 
 function persist(list) {
   try {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    const tmp = `${FILE}.${process.pid}.${Date.now()}.tmp`;
+    fs.mkdirSync(configDir(), { recursive: true });
+    const file = journalFile();
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(list, null, 2) + '\n');
-    fs.renameSync(tmp, FILE);
+    fs.renameSync(tmp, file);
   } catch (e) {
     console.error('launchJournal: failed to save:', e.message);
   }
@@ -178,7 +203,12 @@ function mergeKnownFields(journal, patch) {
   const sanitized = sanitizeForJournal(patch) || {};
   for (const [key, value] of Object.entries(sanitized)) {
     if (key === 'id' || key === 'walletPublicKey' || key === 'createdAt') continue;
-    if (['token', 'poolPlan', 'lp', 'transfer'].includes(key)) {
+    if (key === 'launchConfig') {
+      // A launch recipe is an immutable configuration snapshot, not a
+      // collection of incremental execution facts. Replace it atomically so
+      // stale nested pool rows cannot survive a newly armed plan.
+      journal[key] = value && typeof value === 'object' ? value : null;
+    } else if (['token', 'poolPlan', 'lp', 'transfer'].includes(key)) {
       journal[key] = {
         ...(journal[key] && typeof journal[key] === 'object' ? journal[key] : {}),
         ...(value && typeof value === 'object' ? value : {}),
@@ -205,6 +235,7 @@ export function start({ walletPublicKey }) {
     updatedAt: ts,
     completedAt: null,
     archivedAt: null,
+    launchConfig: null,
     token: null,
     poolPlan: null,
     lp: null,
@@ -230,6 +261,23 @@ export function activeForWallet(walletPublicKey) {
   return journal ? clone(journal) : null;
 }
 
+export function update(id, patch = {}, event = null) {
+  if (!id) return null;
+  const list = load();
+  const journal = list.find((entry) => entry.id === id);
+  if (!journal) return null;
+  mergeKnownFields(journal, patch);
+  if (event) {
+    const sanitizedEvent = sanitizeForJournal(event);
+    journal.events.push({ ts: nowIso(), ...sanitizedEvent });
+    journal.events = journal.events.slice(-MAX_EVENTS);
+  }
+  journal.updatedAt = nowIso();
+  if (journal.status === 'completed' && !journal.completedAt) journal.completedAt = journal.updatedAt;
+  persist(list);
+  return clone(journal);
+}
+
 export function upsertForWallet(walletPublicKey, patch = {}, event = null) {
   if (!walletPublicKey) return null;
   const list = load();
@@ -245,6 +293,7 @@ export function upsertForWallet(walletPublicKey, patch = {}, event = null) {
       updatedAt: ts,
       completedAt: null,
       archivedAt: null,
+      launchConfig: null,
       token: null,
       poolPlan: null,
       lp: null,

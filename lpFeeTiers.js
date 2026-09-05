@@ -3,12 +3,13 @@
 // Pure fee tier normalization logic. Extracted from lpService.js so the
 // normalization and fallback logic can be tested without network access.
 
-// Hardcoded fallback for when the Raydium API is unreachable. These are
-// the indices that have been stable since CLMM launched.
+// Hardcoded fallback for when the Raydium API is unreachable. Keep these
+// aligned with https://api-v3.raydium.io/main/clmm-config; a stale config
+// index can select the wrong on-chain AmmConfig or make pool creation fail.
 export const FALLBACK_FEE_TIERS = [
-  { index: 0, tradeFeeRate:  2500, tickSpacing:  60 }, // 0.25%
-  { index: 1, tradeFeeRate:   500, tickSpacing:  10 }, // 0.05%
-  { index: 2, tradeFeeRate:   100, tickSpacing:   1 }, // 0.01%
+  { index: 4, tradeFeeRate:   100, tickSpacing:   1 }, // 0.01%
+  { index: 5, tradeFeeRate:   500, tickSpacing:   1 }, // 0.05%
+  { index: 1, tradeFeeRate:  2500, tickSpacing:  60 }, // 0.25%
   { index: 3, tradeFeeRate: 10000, tickSpacing: 120 }, // 1%
 ];
 

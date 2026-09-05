@@ -1,0 +1,46 @@
+name: Devnet transaction E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_spend_sol:
+        description: Maximum treasury spend for this run (0.01–0.1 SOL)
+        required: true
+        default: "0.03"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devnet-e2e-funded-wallet
+  cancel-in-progress: false
+
+jobs:
+  devnet-transactions:
+    name: Devnet transactions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: devnet-e2e
+
+    steps:
+      - name: Checkout approved ref
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run funded devnet transaction E2E
+        env:
+          TREBUCHET_DEVNET_REQUIRED: "1"
+          TREBUCHET_DEVNET_MAX_SPEND_SOL: ${{ inputs.max_spend_sol }}
+          TREBUCHET_DEVNET_RPC_URL: ${{ secrets.DEVNET_RPC_URL }}
+          TREBUCHET_DEVNET_FUNDING_WALLET_SECRET_B64: ${{ secrets.DEVNET_FUNDING_WALLET_SECRET_B64 }}
+          TREBUCHET_DEVNET_FUNDING_WALLET_PUBLIC_KEY: ${{ vars.DEVNET_FUNDING_WALLET_PUBLIC_KEY }}
+        run: npm run test:e2e:devnet

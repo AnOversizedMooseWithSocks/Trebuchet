@@ -6,6 +6,7 @@ import {
   registerWallet,
   handleCheckBalance,
   handleCheckBalanceDetailed,
+  handleCreateToken,
   handleStatus,
   handleFindFunder,
   handleRpcHealth,
@@ -93,6 +94,23 @@ test('handleRpcHealth reports good health with 0ms latency', () => {
   handleRpcHealth(mockReq(), res);
   assert.equal(res._json.health, 'good');
   assert.equal(res._json.latencyMs, 0);
+});
+
+test('handleCreateToken synthesizes demo vanity mints with start and end targets', async () => {
+  const kp = Keypair.generate();
+  const res = mockRes();
+  await handleCreateToken(mockReq({
+    tempWalletSecretKey: Array.from(kp.secretKey),
+    name: 'Demo Vanity',
+    symbol: 'DVN',
+    totalSupply: 1000,
+    vanityPrefix: 'MO',
+    vanitySuffix: 'ON',
+  }), res);
+
+  assert.equal(res._json.success, true);
+  assert.match(res._json.tokenMint, /^MO/);
+  assert.match(res._json.tokenMint, /ON$/);
 });
 
 // ---------------------------------------------------------------------------

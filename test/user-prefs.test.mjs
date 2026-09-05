@@ -39,6 +39,7 @@ test('returns defaults when no preferences file exists', async (t) => {
   assert.equal(prefs.medievalCursor, false);
   assert.equal(prefs.medievalCursorOptIn, false);
   assert.equal(prefs.playBackgroundMusic, false);
+  assert.equal(prefs.demoMode, true);
 
   // Calling get() before any set() should not touch the disk. The
   // file is created lazily on the first set().

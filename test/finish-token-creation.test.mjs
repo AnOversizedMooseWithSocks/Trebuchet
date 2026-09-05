@@ -83,6 +83,21 @@ function connFor(mintB58, pdaB58, { mintAccount, metaAccount }) {
   });
 }
 
+test('existing SPL mints use the metadata-only Metaplex instruction', () => {
+  const source = fs.readFileSync(new URL('../tokenService.js', import.meta.url), 'utf8');
+  assert.match(source, /createMetadataAccountV3/);
+  assert.match(source, /function createMetadataForExistingMint/);
+  assert.match(source, /mintAuthority:\s*umi\.identity/);
+  assert.doesNotMatch(source, /\bcreateV1\s*\(/);
+});
+
+test('finish supply retries only the validated fresh-account propagation race', () => {
+  const source = fs.readFileSync(new URL('../tokenService.js', import.meta.url), 'utf8');
+  assert.match(source, /verifyMintSupplyAccounts/);
+  assert.match(source, /retryIf:\s*\(error\)\s*=>\s*isFreshTokenAccountPropagationError\(error\)/);
+  assert.match(source, /mintInfo\.supply\s*<\s*totalTokens/);
+});
+
 test.afterEach(() => {
   tokenService.resetConnectionFactoryForTests?.();
   tokenService.resetMetadataFactoriesForTests?.();
@@ -121,6 +136,37 @@ test('finishTokenCreation: everything already on-chain -> no-op, reports safe, n
   assert.equal(status.isSafe, true);
   assert.deepEqual(status.steps, [], 'nothing should be re-done');
   assert.deepEqual(status.sanity, [], 'journal matches chain -> no flags');
+});
+
+test('liquidity gate rejects a zero-supply interrupted mint and accepts a finished token', async () => {
+  const mintKp = Keypair.generate();
+  const mintB58 = mintKp.publicKey.toBase58();
+  const pda = metaPda(mintKp.publicKey);
+  const launchAuthority = Keypair.generate().publicKey.toBase58();
+
+  tokenService.setConnectionFactoryForTests(() => connFor(mintB58, pda.toBase58(), {
+    mintAccount: makeMintAccount({ supplyRaw: 0n, mintAuthority: launchAuthority }),
+    metaAccount: makeMetadataAccount({ revoked: false }),
+  }));
+  let status = await tokenService.inspectTokenCreationStatus({
+    tokenMint: mintB58,
+    totalSupply: TOTAL_SUPPLY,
+    decimals: 9,
+  });
+  assert.equal(status.complete, false);
+  assert.equal(status.supplyMatches, false);
+
+  tokenService.setConnectionFactoryForTests(() => connFor(mintB58, pda.toBase58(), {
+    mintAccount: makeMintAccount({ supplyRaw: TOTAL_RAW, mintAuthority: null }),
+    metaAccount: makeMetadataAccount({ revoked: true }),
+  }));
+  status = await tokenService.inspectTokenCreationStatus({
+    tokenMint: mintB58,
+    totalSupply: TOTAL_SUPPLY,
+    decimals: 9,
+  });
+  assert.equal(status.complete, true);
+  assert.equal(status.actualSupply, TOTAL_RAW.toString());
 });
 
 test('finishTokenCreation: update authority not yet revoked -> best-effort step is non-fatal, sanity flags the journal claim', async () => {

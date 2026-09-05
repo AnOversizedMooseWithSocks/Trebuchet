@@ -11,12 +11,28 @@ import {
 } from '../scripts/release-lib.mjs';
 
 const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+const readBytes = (file) => readFileSync(new URL(`../${file}`, import.meta.url));
+
+function assertPng(file, width, height) {
+  const bytes = readBytes(file);
+  assert.deepEqual(
+    [...bytes.subarray(0, 8)],
+    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    `${file} must contain PNG bytes`,
+  );
+  assert.equal(bytes.readUInt32BE(16), width, `${file} width`);
+  assert.equal(bytes.readUInt32BE(20), height, `${file} height`);
+}
 
 test('release workflow is tag-driven and publishes checksums', () => {
   const workflow = read('.github/workflows/release.yml');
   const publishScript = read('scripts/publish-release.mjs');
 
   assert.match(workflow, /tags:\s*\n\s*-\s*'v\*'/);
+  assert.match(workflow, /name:\s+Verify production release evidence and trust/);
+  assert.match(workflow, /production-gate:[\s\S]*?actions\/checkout@v6\s+with:\s+#[^\n]*\n\s+#[^\n]*\n\s+fetch-depth:\s+0/);
+  assert.match(workflow, /node scripts\/production-release-gate\.mjs "\$GITHUB_REF_NAME"/);
+  assert.match(workflow, /build:\s*\n\s+name:[\s\S]*?needs:\s+production-gate/);
   assert.match(workflow, /node scripts\/release-build\.mjs/);
   assert.match(workflow, /node scripts\/publish-release\.mjs/);
   assert.match(workflow, /actions\/download-artifact@v5/);
@@ -29,7 +45,7 @@ test('release workflow is tag-driven and publishes checksums', () => {
   assert.match(workflow, /mirror -R --only-newer --no-perms --verbose=2 website/);
 });
 
-test('ci only runs package smoke builds before release', () => {
+test('ci runs package smoke builds and the packaged v2 runtime before release', () => {
   const workflow = read('.github/workflows/ci.yml');
 
   assert.match(workflow, /on:\s*\n\s+pull_request:\s*\n\s+workflow_dispatch:/);
@@ -38,6 +54,10 @@ test('ci only runs package smoke builds before release', () => {
   assert.doesNotMatch(workflow, /macos-15-intel/);
   assert.doesNotMatch(workflow, /Install Linux packaging dependencies/);
   assert.match(workflow, /Build package smoke/);
+  assert.match(workflow, /Run packaged v2 Electron smoke/);
+  assert.match(workflow, /xvfb-run -a npm run test:electron:v2:packaged/);
+  assert.match(workflow, /Run v2 API-backed E2E test/);
+  assert.match(workflow, /Run v2 desktop and mobile viewport smoke/);
   assert.doesNotMatch(workflow, /Build release package/);
   assert.doesNotMatch(workflow, /Upload build artifact/);
 });
@@ -49,8 +69,14 @@ test('main merges automatically create patch, minor, or major release tags', () 
   assert.match(workflow, /actions:\s+write/);
   assert.match(workflow, /pull-requests:\s+read/);
   assert.match(workflow, /node scripts\/auto-version\.mjs/);
+  assert.match(workflow, /name:\s+Verify release gates before tagging/);
+  assert.match(workflow, /node scripts\/production-release-gate\.mjs "\$\{\{ steps\.next\.outputs\.tag \}\}"/);
   assert.match(workflow, /git tag -a "\$\{\{ steps\.next\.outputs\.tag \}\}"/);
   assert.match(workflow, /gh workflow run release\.yml --ref "\$\{\{ steps\.next\.outputs\.tag \}\}"/);
+  assert.ok(
+    workflow.indexOf('Verify release gates before tagging') < workflow.indexOf('git tag -a'),
+    'production release gate must run before the public tag is created',
+  );
 
   assert.equal(releaseTypeFromLabels([]), 'patch');
   assert.equal(releaseTypeFromLabels(['minor']), 'minor');
@@ -62,6 +88,12 @@ test('main merges automatically create patch, minor, or major release tags', () 
   });
   assert.equal(nextRelease('1.2.3', ['v1.3.9'], ['minor']).version, '1.4.0');
   assert.equal(nextRelease('1.2.3', ['v1.3.9'], ['major']).version, '2.0.0');
+  assert.deepEqual(nextRelease('1.0.0', ['v1.0.48'], [], { minimumMajor: 2 }), {
+    releaseType: 'major',
+    version: '2.0.0',
+    tag: 'v2.0.0',
+  });
+  assert.match(workflow, /TREBUCHET_MIN_RELEASE_MAJOR:\s+2/);
 });
 
 test('release workflow publishes the GitHub package for each tag', () => {
@@ -98,6 +130,13 @@ test('release docs explain trust states and verification', () => {
   assert.match(docs, /GitHub Packages/);
   assert.match(docs, /WIN_CSC_LINK/);
   assert.match(docs, /APPLE_API_KEY/);
+  assert.match(docs, /V2 production gate/);
+  assert.match(docs, /release-evidence\/v2\/field-verification\.json/);
+  assert.match(docs, /release-evidence\/v2\/release-attestation\.json/);
+  assert.match(docs, /independently recomputes/i);
+  assert.match(docs, /different GitHub users/i);
+  assert.match(docs, /30 days/i);
+  assert.match(docs, /V2 releases cannot fall back to unsigned test artifacts/);
   assert.match(docs, /SHA256SUMS\.txt/);
 });
 
@@ -246,14 +285,23 @@ test('website download CTA uses per-OS direct links to tagged GitHub releases', 
   assert.match(site, /Trebuchet-__TREBUCHET_VERSION__-Portable\.exe/);
   assert.match(site, /Trebuchet-__TREBUCHET_VERSION__-x86_64\.AppImage/);
   assert.match(site, /trebuchet-desktop___TREBUCHET_VERSION___amd64\.deb/);
-  assert.match(site, /Unsigned build: macOS may say the app is damaged/);
-  assert.match(site, /xattr -dr com\.apple\.quarantine \/Applications\/Trebuchet\.app/);
+  assert.match(site, /Signed for Windows/);
+  assert.match(site, /Signed and notarized for macOS/);
+  assert.match(site, /Unsigned package/);
+  assert.doesNotMatch(site, /xattr .*com\.apple\.quarantine/);
 
   // Negative checks — make sure we don't slip back into the old
   // "redirect to /releases/latest" or "raw committed dist files"
   // patterns. Either would break deep-linking and version pinning.
   assert.doesNotMatch(site, /\/raw\/main\/dist\//);
   assert.doesNotMatch(site, /\/releases\/latest(?!\.\w)/);
+});
+
+test('marketing image assets are real PNG files with release dimensions', () => {
+  assertPng('website/assets/app-launch-console.png', 1600, 1000);
+  assertPng('website/assets/app-discovery.png', 1600, 1000);
+  assertPng('website/assets/app-recovery-center.png', 1600, 1000);
+  assertPng('website/og-image.png', 1200, 630);
 });
 
 test('release workflow stamps version into website and verifies assets before FTP push', () => {
@@ -338,4 +386,6 @@ test('update-check API URL matches the canonical repo case from package.json', (
     `main.js must NOT use /releases/latest — that endpoint excludes ` +
       `prereleases and 404s while every release is unsigned`,
   );
+  assert.match(main, /releaseTrustForArtifact/);
+  assert.match(main, /releaseTrust: releaseTrustForArtifact\(release\.body \|\| '', asset\.name, process\.platform\)/);
 });

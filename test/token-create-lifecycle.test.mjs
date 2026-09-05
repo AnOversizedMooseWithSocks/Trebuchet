@@ -24,6 +24,7 @@ process.env.TREBUCHET_CONFIG_DIR = TMP;
 
 const journal = await import('../launchJournal.js');
 const tokenService = await import('../tokenService.js');
+const { metadataDocumentHash } = await import('../brandShieldService.js');
 const { makeFakeConnection, makeFakeUmi, failOnCall } = await import('./helpers/mockSolana.mjs');
 
 // ---------------------------------------------------------------------------
@@ -56,9 +57,76 @@ function freshWalletPk() {
   return `WalletPk${Math.random().toString(36).slice(2, 10)}`;
 }
 
+test('new token launches default to Token-2022 while classic SPL remains an explicit compatibility profile', () => {
+  assert.equal(tokenService.normalizeMintFormat(), 'token-2022');
+  assert.equal(tokenService.normalizeMintFormat('modern'), 'token-2022');
+  assert.equal(tokenService.normalizeMintFormat('classic'), 'classic-spl');
+  assert.equal(
+    tokenService.tokenProgramForMintFormat('token-2022').toBase58(),
+    'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+  );
+  assert.equal(
+    tokenService.tokenProgramForMintFormat('classic-spl').toBase58(),
+    'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+  );
+});
+
 test.afterEach(() => {
   tokenService.resetConnectionFactoryForTests?.();
   tokenService.resetMetadataFactoriesForTests?.();
+});
+
+test('sealed metadata reveal verifies both the placeholder and final identity hash', () => {
+  const finalDocument = {
+    name: 'XRAT',
+    symbol: 'XRAT',
+    description: 'Official launch',
+    image: 'https://arweave.net/xrat',
+  };
+  const metadataHash = tokenService.verifySealedMetadataCommitment({
+    placeholderDocument: {
+      description: `Identity committed by Trebuchet: sha256:${metadataDocumentHash(finalDocument)}`,
+    },
+    finalDocument,
+    metadataHash: metadataDocumentHash(finalDocument),
+    name: 'XRAT',
+    symbol: 'XRAT',
+  }).metadataHash;
+
+  assert.equal(metadataHash, metadataDocumentHash(finalDocument));
+  assert.throws(() => tokenService.verifySealedMetadataCommitment({
+    placeholderDocument: { description: `sha256:${'0'.repeat(64)}` },
+    finalDocument,
+    metadataHash,
+    name: 'XRAT',
+    symbol: 'XRAT',
+  }), /placeholder metadata does not contain/);
+  assert.throws(() => tokenService.verifySealedMetadataCommitment({
+    placeholderDocument: { description: `sha256:${metadataHash}` },
+    finalDocument: { ...finalDocument, image: 'https://evil.example/copy' },
+    metadataHash,
+    name: 'XRAT',
+    symbol: 'XRAT',
+  }), /does not match the sealed identity commitment/);
+});
+
+test('sealed metadata reveal waits for finalized RPC posture without resending', async () => {
+  let reads = 0;
+  const state = await tokenService.waitForSealedMetadataPosture(async () => {
+    reads += 1;
+    return reads < 3
+      ? { uri: 'https://example.test/placeholder.json', updateAuthority: 'LaunchWallet' }
+      : { uri: 'https://example.test/final.json', updateAuthority: '11111111111111111111111111111111' };
+  }, {
+    metadataUri: 'https://example.test/final.json',
+    updateAuthority: '11111111111111111111111111111111',
+    attempts: 4,
+    delayMs: 0,
+  });
+
+  assert.equal(reads, 3);
+  assert.equal(state.uri, 'https://example.test/final.json');
+  assert.equal(state.updateAuthority, '11111111111111111111111111111111');
 });
 
 test('createTokenWithMetaplex: partial failure (metadata upload throws) is recoverable and does not over-report', async () => {
