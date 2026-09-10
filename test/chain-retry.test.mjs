@@ -17,10 +17,33 @@ test('classifies lamport shortfalls as insufficient_funds', () => {
     'Error: insufficient funds',
     'Attempt to debit an account but found no record of a prior credit.',
     'Transaction simulation failed: insufficient funds for rent',
-    'custom program error: 0x1771',
   ]) {
     assert.equal(classifyChainError(new Error(msg)), 'insufficient_funds', msg);
   }
+});
+
+test('custom program error 0x1771 is NOT treated as a lamport shortfall', () => {
+  // This pin previously asserted the opposite, matching a speculative pattern
+  // in chainRetry.js whose own comment carried a question mark. 0x1771 is
+  // 6001, and Anchor custom errors start at 6000 — so it is some Anchor
+  // program's second custom error (a state/approval error for the CLMM
+  // program), not a lamport shortfall. SPL Token isn't an Anchor program;
+  // its InsufficientFunds is plain 0x1.
+  //
+  // Retry behaviour is unchanged either way — 'deterministic' and
+  // 'insufficient_funds' both stop the retry. What changes is that the
+  // classifier no longer implies "add more SOL" for a failure that more SOL
+  // cannot fix.
+  assert.equal(
+    classifyChainError(new Error('custom program error: 0x1771')),
+    'deterministic',
+  );
+  // A genuine lamport shortfall reported alongside a program error must still
+  // classify as insufficient_funds — the text patterns win.
+  assert.equal(
+    classifyChainError(new Error('insufficient lamports; custom program error: 0x1771')),
+    'insufficient_funds',
+  );
 });
 
 test('classifies cluster/RPC weather as transient', () => {

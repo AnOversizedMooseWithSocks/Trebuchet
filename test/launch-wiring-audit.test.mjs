@@ -459,3 +459,98 @@ test('journal resume is gated on resolvability, not the mere presence of incompl
     'must treat two pools recorded for one allocation as unresolvable (ambiguous)',
   );
 });
+
+test('transfer-assets delegates the SOL gate to the orchestrator, wired correctly', () => {
+  // The gate LOGIC (straggler pass, SOL gate, gated SOL sweep) lives in
+  // sweepOrchestrator.js and has full behavioral branch coverage in
+  // test/sweep-orchestration.test.mjs. What THIS pin protects is the
+  // wiring: the handler must actually route through the orchestrator with
+  // the real collaborators, in the right position (after the token sweep,
+  // before the partial-failure accounting), and must not grow a bypassing
+  // direct SOL-sweep call.
+  const serverSrc = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const handlerStart = serverSrc.indexOf("app.post('/api/transfer-assets'");
+  assert.ok(handlerStart >= 0);
+  const handlerEnd = serverSrc.indexOf('app.post(', handlerStart + 10);
+  const handler = serverSrc.slice(handlerStart, handlerEnd > 0 ? handlerEnd : handlerStart + 25000);
+
+  const tokenSweepIdx = handler.indexOf('await sweepAllTokensToDestination(');
+  const gateCallIdx = handler.indexOf('await finishSweepWithSolGate(');
+  assert.ok(gateCallIdx >= 0, 'handler must call finishSweepWithSolGate');
+  assert.ok(tokenSweepIdx >= 0 && tokenSweepIdx < gateCallIdx,
+    'the gate runs after the first token sweep pass');
+
+  const gateCall = handler.slice(gateCallIdx, gateCallIdx + 900);
+  assert.match(gateCall, /sweepNfts: sweepNftsToDestination/);
+  assert.match(gateCall, /sweepTokens: sweepAllTokensToDestination/);
+  assert.match(gateCall, /sweepSol: sweepSolToDestination/);
+  assert.match(gateCall, /checkWalletBalanceMultiToken/);
+  assert.match(gateCall, /launchJournal\.recordEvent/);
+
+  // No direct SOL sweep may bypass the gate inside this handler.
+  const directSol = handler.indexOf('await sweepSolToDestination(');
+  assert.equal(directSol, -1,
+    'the handler must not call sweepSolToDestination directly — only via the gate');
+
+  // A skipped SOL sweep must mark the transfer partial, not successful.
+  assert.match(handler, /!!solSweepSkipped/,
+    'a deliberate SOL-sweep skip must count as a partial failure');
+});
+
+test('metadata-authority handoff runs before any sweep and is a hard stop', () => {
+  // Keep-authority launches: the handoff signs with the launch wallet, which
+  // the sweeps then empty and the completion path destroys. If the handoff
+  // ran after any sweeping — or its failure were swallowed — a failed
+  // handoff would silently orphan the authority on a doomed key. The
+  // handler has no try/catch around it, so a throw aborts the request
+  // before anything moves; this pin keeps it that way and in front.
+  const serverSrc = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const handlerStart = serverSrc.indexOf("app.post('/api/transfer-assets'");
+  const handlerEnd = serverSrc.indexOf('app.post(', handlerStart + 10);
+  const handler = serverSrc.slice(handlerStart, handlerEnd);
+
+  const handoffIdx = handler.indexOf('await transferMetadataAuthority(');
+  const nftIdx = handler.indexOf('await sweepNftsToDestination(');
+  assert.ok(handoffIdx >= 0, 'handoff call must exist in the handler');
+  assert.ok(nftIdx >= 0);
+  assert.ok(handoffIdx < nftIdx, 'handoff must precede the first sweep');
+  // Not wrapped: no try between the handoff and the preceding statement
+  // that would swallow its throw into a partial result.
+  const before = handler.slice(Math.max(0, handoffIdx - 400), handoffIdx);
+  assert.doesNotMatch(before, /try\s*\{\s*$/m,
+    'the handoff must not be inside a swallowing try block');
+});
+
+test('display price and launch price share one on-chain adapter definition', () => {
+  // The pool editor's shown price (/api/quote-token-info) and the launch's
+  // price (resolveQuoteUsdForCreate) must read pools through the SAME
+  // adapter builder, or the number the user sees can silently diverge from
+  // the number the launch uses — the exact gap this pin closes.
+  const lpSrc = readFileSync(new URL('../lpService.js', import.meta.url), 'utf8');
+  const serverSrc = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+
+  assert.match(lpSrc, /export function onChainPriceDeps\(raydium\)/,
+    'the shared adapter builder must exist and be exported');
+  // Launch path uses it.
+  assert.match(lpSrc, /_launchOnChainPrice\(\{[\s\S]{0,200}deps: onChainPriceDeps\(raydium\)/,
+    'the launch path must build its adapters with onChainPriceDeps');
+  // Display helper uses it.
+  assert.match(lpSrc, /getQuoteTokenOnChainPrice[\s\S]{0,400}onChainPriceDeps\(raydium\)/,
+    'the display helper must build its adapters with onChainPriceDeps');
+  // The pool list is paged (100/page) and defaults to sort="default"; the
+  // adapter must request liquidity-desc so page 1 holds the deepest pools.
+  assert.match(lpSrc, /fetchPoolByMints\(\{[\s\S]{0,120}sort: 'liquidity', order: 'desc'/,
+    'pool discovery must sort by liquidity desc so the deepest pool is on the fetched page');
+  // No second, inline copy of the adapter body anywhere.
+  const inlineCopies = (lpSrc.match(/fetchPoolsByMints: async \(m1, m2\)/g) || []).length;
+  assert.equal(inlineCopies, 1, 'the fetchPoolsByMints adapter must be defined exactly once');
+
+  // The endpoint calls the display helper and labels the source so the UI
+  // can show provenance and depth.
+  const ep = serverSrc.indexOf("app.post('/api/quote-token-info'");
+  const epBody = serverSrc.slice(ep, ep + 12000);
+  assert.match(epBody, /getQuoteTokenOnChainPrice\(/, 'endpoint must consult the on-chain price');
+  assert.match(epBody, /priceSource = `on-chain:\$\{oc\.anchorSymbol\}`/, 'endpoint must label the source');
+  assert.match(epBody, /priceLiquidityUsd/, 'endpoint must surface depth');
+  assert.match(epBody, /priceWarning = oc\.spreadError/, 'endpoint must surface a spread finding, not hide it');
+});

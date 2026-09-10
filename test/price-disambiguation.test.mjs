@@ -281,3 +281,96 @@ test('DexScreener: skips pairs where priceUsd or priceNative is non-positive', (
   const result = extractPriceFromDexScreenerPairs(XLRT, pairs);
   assert.equal(result.toString(), '0.05');
 });
+
+// ===========================================================================
+// Liquidity-aware pool selection.
+//
+// Regression case: a launch whose quote tokens were unverified low-caps
+// (Jupiter-unverified, DexScreener-unverified, shown as spam/$0 in
+// Phantom). The extractors returned the FIRST indexed pool's price
+// regardless of depth, so a dust pool's last-trade price became the launch
+// reference. That put one pool at a different market cap than its
+// siblings; arbitrage drained the cheap side immediately and the chart
+// opened with a crash.
+//
+// The rule these pin: among candidate pools, the DEEPEST one wins, and the
+// selected depth is reported so callers can refuse a price no real market
+// backs.
+// ===========================================================================
+
+const TOKEN = 'So11111111111111111111111111111111111111112';
+
+function geckoPool({ price, reserve, isBase = true }) {
+  return {
+    attributes: {
+      [isBase ? 'base_token_price_usd' : 'quote_token_price_usd']: String(price),
+      reserve_in_usd: reserve == null ? undefined : String(reserve),
+    },
+    relationships: {
+      base_token: { data: { id: isBase ? `solana_${TOKEN}` : 'solana_other' } },
+      quote_token: { data: { id: isBase ? 'solana_other' : `solana_${TOKEN}` } },
+    },
+  };
+}
+
+test('Gecko: the deepest pool wins, not the first listed', () => {
+  // Dust pool listed first with an absurd price; real market second.
+  const json = { data: [
+    geckoPool({ price: '999.0', reserve: 25 }),
+    geckoPool({ price: '1.50', reserve: 2_000_000 }),
+  ] };
+  const price = extractPriceFromGeckoPools(TOKEN, json);
+  assert.equal(price.toString(), '1.5',
+    'a $25 pool must not outrank a $2M pool just by being listed first');
+});
+
+test('Gecko: the selected pool\'s liquidity is reported to the caller', () => {
+  const json = { data: [geckoPool({ price: '1.50', reserve: 2_000_000 })] };
+  const price = extractPriceFromGeckoPools(TOKEN, json);
+  assert.ok(price.liquidityUsd, 'liquidityUsd must be attached');
+  assert.equal(price.liquidityUsd.toString(), '2000000');
+});
+
+test('Gecko: missing reserve data reports zero depth rather than guessing', () => {
+  // The launch path treats unknown depth as "cannot prove this is real"
+  // and refuses — so it must read as zero, never as absent-but-fine.
+  const json = { data: [geckoPool({ price: '1.50', reserve: null })] };
+  const price = extractPriceFromGeckoPools(TOKEN, json);
+  assert.equal(price.liquidityUsd.toString(), '0');
+});
+
+test('Gecko: with no depth data anywhere, original ordering is preserved', () => {
+  // Back-compat: responses carrying no reserves behave exactly as before.
+  const json = { data: [
+    geckoPool({ price: '7.00', reserve: null }),
+    geckoPool({ price: '9.00', reserve: null }),
+  ] };
+  assert.equal(extractPriceFromGeckoPools(TOKEN, json).toString(), '7');
+});
+
+test('DexScreener: the deepest pair wins, not the first listed', () => {
+  const pairs = [
+    { baseToken: { address: TOKEN }, priceUsd: '500.0', liquidity: { usd: 40 } },
+    { baseToken: { address: TOKEN }, priceUsd: '2.25', liquidity: { usd: 1_500_000 } },
+  ];
+  const price = extractPriceFromDexScreenerPairs(TOKEN, pairs);
+  assert.equal(price.toString(), '2.25');
+  assert.equal(price.liquidityUsd.toString(), '1500000');
+});
+
+test('DexScreener: a base-side match still beats a derived quote-side one at equal depth', () => {
+  // Ordering within equal depth is preserved, so the direct (pass 1)
+  // reading still takes precedence over the derived (pass 2) one.
+  const pairs = [
+    { quoteToken: { address: TOKEN }, baseToken: { address: 'x' },
+      priceUsd: '100', priceNative: '50', liquidity: { usd: 1000 } },
+    { baseToken: { address: TOKEN }, priceUsd: '3.00', liquidity: { usd: 1000 } },
+  ];
+  assert.equal(extractPriceFromDexScreenerPairs(TOKEN, pairs).toString(), '3');
+});
+
+test('DexScreener: missing liquidity field reports zero depth', () => {
+  const pairs = [{ baseToken: { address: TOKEN }, priceUsd: '3.00' }];
+  const price = extractPriceFromDexScreenerPairs(TOKEN, pairs);
+  assert.equal(price.liquidityUsd.toString(), '0');
+});

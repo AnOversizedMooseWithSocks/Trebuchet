@@ -2221,6 +2221,18 @@ function renderSimpleConfig() {
   const autoFitRaised = simpleConfig.preallocationAutoFit !== false
     && Math.abs(preallocPct - preallocPctInputValue) > 0.05;
 
+  // Airdrop shortfall: the airdrop list needs MORE tokens than the
+  // effective preallocation reserves. Reachable two ways — auto-fit is
+  // off and the typed percent is too low, or auto-fit is on but the list
+  // needs more than the 99% clamp. Either way the launch proceeds happily
+  // and the airdrop then runs the wallet dry partway down the list, so
+  // some recipients silently get nothing. Warn at config time, where it
+  // is still a one-number fix.
+  const airdropNeedPct = airdropRequiredPreallocationPercent();
+  const airdropShortfallPct = (Number.isFinite(airdropNeedPct) && airdropNeedPct > preallocPct + 0.05)
+    ? Number((airdropNeedPct - preallocPct).toFixed(2))
+    : null;
+
   // Compute display values for the preallocation row. Token amount uses
   // the total supply input (or 0 if unset). USD value uses the
   // targetMarketCap input. Both gracefully degrade to a dash when the
@@ -2406,7 +2418,14 @@ function renderSimpleConfig() {
             <strong>Preallocate supply</strong>
           </label>
           <div class="simple-config-slider">
-            <input class="input is-small" type="number" min="0" max="99" step="1"
+            <!-- step="any", NOT "1": auto-fit computes this value ceil'd to
+                 one decimal (e.g. 12.5% to cover an airdrop), so the app
+                 itself puts off-grid values here. With step="1" the browser
+                 marks the field :invalid and the spinner arrows SNAP to the
+                 integer grid — click up on 12.5 and it jumps to 13, losing
+                 the auto-fit floor. That snapping is the "values jump
+                 around" symptom. -->
+            <input class="input is-small" type="number" min="0" max="99" step="any"
                    id="simplePreallocPctInput"
                    style="width: 6rem;"
                    value="${preallocPct.toFixed(preallocPct % 1 === 0 ? 0 : 1)}" ${preallocDisabled}>
@@ -2423,6 +2442,12 @@ function renderSimpleConfig() {
           </label>`}
           <div class="simple-config-slider-value" id="simplePreallocDisplay" style="font-style: italic; color: var(--text-muted, #666);">${escapeHtml(preallocDisplayText)}</div>
           <span class="is-size-7 has-text-warning-dark ml-2" id="simplePreallocAutoFitHint" style="font-style: normal;${autoFitRaised ? '' : ' display: none;'}">⇡ auto-fit: ${preallocPctInputValue}% → ${preallocPct.toFixed(preallocPct % 1 === 0 ? 0 : 1)}% to cover airdrop</span>
+        </div>
+        <div id="simpleAirdropShortfallWarning" class="notification is-danger is-light py-2 px-3 mt-2 mb-0 is-size-7${airdropShortfallPct ? '' : ' hidden'}">
+          <strong>⚠ Your airdrop needs more tokens than you've preallocated.</strong>
+          The list requires about ${airdropShortfallPct ? airdropNeedPct.toFixed(1) : '0'}% of supply but only ${preallocPct.toFixed(preallocPct % 1 === 0 ? 0 : 1)}% is reserved.
+          If you launch like this the airdrop will run out partway down the list and later recipients will receive nothing.
+          Turn on <strong>Auto-fit airdrop</strong>, raise the preallocation percentage, or shorten the list.
         </div>
         <div id="simplePreallocWarning" class="notification is-warning is-light py-2 px-3 mt-2 mb-0 is-size-7${preallocChecked && !simpleConfig.supportEnabled ? '' : ' hidden'}">
           <strong>⚠ Preallocation is unbacked.</strong>
@@ -2539,7 +2564,13 @@ function renderSimpleConfig() {
             <strong>Add support position</strong>
           </label>
           <div class="simple-config-slider">
-            <input class="input is-small" type="number" min="0" step="0.1"
+            <!-- step="any", NOT "0.1": auto-back computes this from the
+                 preallocation's USD value and it renders to three decimals
+                 (e.g. 12.346), which is off the 0.1 grid. Same failure as
+                 the preallocation field above — :invalid styling plus
+                 spinner arrows snapping the value to the nearest grid
+                 point instead of incrementing from it. -->
+            <input class="input is-small" type="number" min="0" step="any"
                    id="simpleSupportSolInput"
                    style="width: 7rem;"
                    value="${Number(displayedSupportSol).toFixed(Math.abs(displayedSupportSol) >= 10 ? 1 : 3)}" ${supportSolDisabled}>

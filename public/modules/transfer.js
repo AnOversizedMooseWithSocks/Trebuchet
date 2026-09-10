@@ -570,10 +570,23 @@ async function runTransfer() {
       const airdropFailed = lastAirdropResult?.failed || [];
       const hasPartialFailure =
         data.solSweepError
+        || data.solSweepSkipped
         || tokenErrors.length > 0
         || nftErrors.length > 0
         || airdropFailed.length > 0;
 
+      if (data.solSweepSkipped) {
+        // Deliberate skip, not a failure: some asset transfer didn't complete,
+        // so the server kept the SOL in the launch wallet ON PURPOSE — it's
+        // the fee money a retry needs. Say that plainly, because "SOL wasn't
+        // transferred" reads as theft to a worried user.
+        log(
+          'Some assets could not be transferred yet, so your SOL was kept in the ' +
+          'launch wallet on purpose — it pays the fees for the retry. ' +
+          'Nothing has been lost. Click Transfer Assets again to retry.',
+          'warning',
+        );
+      }
       if (data.solSweepError) {
         log(`SOL sweep failed: ${data.solSweepError}`, 'warning');
         log(

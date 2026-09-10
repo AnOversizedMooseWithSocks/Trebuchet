@@ -764,7 +764,21 @@ function renderResolvedInfoHtml(pool) {
     //   (null/anything else)     → no provenance known
     let sourceLabel = '';
     const src = pool.resolvedPriceSource;
-    if (src === 'raydium-probe' || src === 'raydium-probe (cached)') {
+    if (typeof src === 'string' && src.startsWith('on-chain:')) {
+      // Read directly from the pool account on-chain — the same source the
+      // launch itself uses. Show the anchor pair and the depth so the user
+      // can judge how real the market behind the number is.
+      const anchor = src.slice('on-chain:'.length);
+      const depth = Number(pool.resolvedPriceLiquidityUsd);
+      const depthTxt = Number.isFinite(depth) && depth > 0
+        ? ` · $${Math.round(depth).toLocaleString()} deep` : '';
+      const poolsTxt = (pool.resolvedPricePoolsQualified && pool.resolvedPricePoolsDiscovered)
+        ? ` (${pool.resolvedPricePoolsQualified}/${pool.resolvedPricePoolsDiscovered} pools qualified)` : '';
+      sourceLabel =
+        ` <span class="has-text-success is-size-7" title="Price read from the pool account itself, ` +
+        `not from an indexer. This is the exact source the launch uses.">` +
+        `· on-chain ${escapeHtml(anchor)} pool${depthTxt}${poolsTxt}</span>`;
+    } else if (src === 'raydium-probe' || src === 'raydium-probe (cached)') {
       sourceLabel = ' <span class="has-text-success is-size-7">· verified from Raydium</span>';
     } else if (src === 'sol') {
       sourceLabel = ' <span class="has-text-grey is-size-7">· from SOL/USD oracle</span>';
@@ -807,6 +821,15 @@ function renderResolvedInfoHtml(pool) {
       }
     }
     techLine = `<div class="resolved-info-tech">${pool.resolvedDecimals} decimals · ${priceTxt}${sourceLabel}</div>`;
+    // On-chain pools that DISAGREE with each other: the launch will refuse
+    // this token outright, so say so here at pick time instead of at
+    // launch time. The message from the server already names the spread.
+    if (pool.resolvedPriceWarning) {
+      techLine +=
+        `<div class="notification is-danger is-light py-1 px-2 mt-1 is-size-7">` +
+        `<strong>⚠ Price conflict on-chain.</strong> ${escapeHtml(pool.resolvedPriceWarning)} ` +
+        `The launch will refuse this quote token until the pools agree.</div>`;
+    }
   } else {
     // Symbol+decimals came back from on-chain reads but neither
     // GeckoTerminal nor Jupiter could give us a USD price. Common for
@@ -1198,7 +1221,7 @@ function buildPoolNode(pool, idx) {
       <label class="label is-small">Allocation</label>
       <div class="field has-addons">
         <div class="control">
-          <input class="input is-small" type="number" min="0" max="100" step="0.01" data-field="supplyPercent" value="${pool.supplyPercent}">
+          <input class="input is-small" type="number" min="0" max="100" step="any" data-field="supplyPercent" value="${pool.supplyPercent}">
         </div>
         <div class="control"><a class="button is-small is-static">%</a></div>
       </div>
@@ -1671,7 +1694,7 @@ function buildSupportNode(pool, poolIdx) {
     </p>
     <div class="slice-row support-row" ${isCustom ? '' : 'style="opacity:0.5;pointer-events:none;"'}>
       <span class="slice-label">Support</span>
-      <input class="input is-small" type="number" min="0" step="0.01"
+      <input class="input is-small" type="number" min="0" step="any"
              data-support-sol-value value="${solValue}" ${isCustom ? '' : 'disabled'}
              style="width: 8rem;">
       <span style="line-height:30px;">SOL, down to&nbsp;-</span>
@@ -1825,7 +1848,7 @@ function buildBootstrapNode(pool, poolIdx) {
     </p>
     <div class="slice-row bootstrap-row" ${isCustom ? '' : 'style="opacity:0.5;pointer-events:none;"'}>
       <span class="slice-label">Bootstrap</span>
-      <input class="input is-small" type="number" min="0" step="0.001"
+      <input class="input is-small" type="number" min="0" step="any"
              data-bs-sol-value value="${solValue}" ${isCustom ? '' : 'disabled'}
              style="width: 8rem;">
       <span style="line-height:30px;">SOL of starting liquidity</span>
@@ -2423,7 +2446,7 @@ function buildBandRow(pool, poolIdx, band, bandIdx, rerenderBands, updateWarning
 
   row.innerHTML = `
     <span class="slice-label">Band ${bandIdx + 1}</span>
-    <input class="input is-small slice-share" type="number" min="0" max="100" step="0.01"
+    <input class="input is-small slice-share" type="number" min="0" max="100" step="any"
            data-field="supplyPercent" value="${Number(band.supplyPercent)}">
     <span style="line-height:30px;">% of pool</span>
     <span class="is-size-7 has-text-grey position-total-hint" data-position-total-hint="band">${escapeHtml(formatPositionSupplyHint(pool, band.supplyPercent))}</span>
@@ -2545,7 +2568,7 @@ function buildSliceNode(pool, poolIdx, slice, sliceIdx) {
   const labelText = isOnlySlice ? 'Slice' : `Slice ${sliceIdx + 1}/${pool.distribution.length}`;
   node.innerHTML = `
     <span class="slice-label">${labelText}</span>
-    <input class="input is-small slice-share" type="number" min="0" max="100" step="0.01" value="${slice.sharePercent}">
+    <input class="input is-small slice-share" type="number" min="0" max="100" step="any" value="${slice.sharePercent}">
     <span style="line-height:30px;">% of pool</span>
     <span class="is-size-7 has-text-grey position-total-hint" data-position-total-hint="slice">${escapeHtml(formatPositionSupplyHint(pool, slice.sharePercent))}</span>
     <label class="checkbox is-small" style="line-height:30px;">
@@ -2682,6 +2705,10 @@ function applyResolvedInfoToPool(pool, info) {
   // "from external indexer" alongside the price.
   if (info.priceSource !== undefined) {
     pool.resolvedPriceSource = info.priceSource;
+    pool.resolvedPriceLiquidityUsd = info.priceLiquidityUsd ?? null;
+    pool.resolvedPricePoolsQualified = info.pricePoolsQualified ?? null;
+    pool.resolvedPricePoolsDiscovered = info.pricePoolsDiscovered ?? null;
+    pool.resolvedPriceWarning = info.priceWarning ?? null;
   }
 
   // Mark resolution as succeeded so the retry hint goes away.
@@ -3220,6 +3247,22 @@ function updateContinueToFundingState() {
     reasons.push(`Token supply must not exceed ${MAX_TOKEN_SUPPLY.toLocaleString()}`);
   }
   if (!mc || mc <= 0) reasons.push('Target market cap must be > 0');
+
+  // Airdrop shortfall BLOCKS, not just warns. Launching with an airdrop
+  // that needs more tokens than are preallocated runs the wallet dry
+  // partway down the list; recipients after the cutoff get nothing on the
+  // first pass. The red notice in the preallocation section explains the
+  // fix options; this is what stops the launch until one is applied.
+  if (simpleConfig.mode === 'default' && typeof airdropRequiredPreallocationPercent === 'function') {
+    const needPct = airdropRequiredPreallocationPercent();
+    const havePct = Number(simpleConfig.preallocationPercent) || 0;
+    if (Number.isFinite(needPct) && needPct > havePct + 0.05) {
+      reasons.push(
+        `Airdrop needs ~${needPct.toFixed(1)}% of supply but only ${havePct.toFixed(1)}% is ` +
+        'preallocated — enable auto-fit, raise the preallocation, or shorten the list',
+      );
+    }
+  }
 
   btn.disabled = reasons.length > 0;
   btn.title = reasons.join('; ');

@@ -89,10 +89,14 @@ export function deterministicKeypair(seedByte = 7) {
 //   amount:      raw token amount (string, e.g. '1000000')
 //   decimals:    token decimals (number)
 //
-// Returns an object suitable for resp.value array.
-export function makeFakeTokenAccountEntry({ mint, owner, programId, amount = '1000000', decimals = 6 }) {
+// Returns an object suitable for resp.value array. `tokenAccount` is the
+// address of the token ACCOUNT holding the balance (defaults to the mint
+// string for legacy tests that don't care); it's what the sweep now uses
+// as the transfer source, so tests exercising non-ATA sources set it.
+export function makeFakeTokenAccountEntry({ mint, owner, programId, amount = '1000000', decimals = 6, tokenAccount = null }) {
+  const address = tokenAccount || mint;
   return {
-    pubkey: mint, // the checks use the mint key, not the ATA pubkey
+    pubkey: { toBase58: () => address }, // shaped like a PublicKey for enumeration
     account: {
       data: {
         parsed: {

@@ -473,10 +473,22 @@ export async function probeRaydiumPriceStrict({
     throw err;
   }
 
+  // Price impact of the probe notional, in percent, as reported by the
+  // Trade API. This is the depth signal the launch path needs: a real
+  // market absorbs the probe with a fraction of a percent of impact; a
+  // dust pool shows tens of percent, and its "price" is just the last
+  // tiny trade. null when the API didn't report it.
+  const rawImpact = json.data.priceImpactPct;
+  const priceImpactPct =
+    rawImpact !== undefined && rawImpact !== null && Number.isFinite(Number(rawImpact))
+      ? Number(rawImpact)
+      : null;
+
   return {
     effectiveQuoteUsd,
     inputLamports: inputAmount,
     outputRaw: outputAmount,
+    priceImpactPct,
   };
 }
 

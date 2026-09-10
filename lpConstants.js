@@ -55,6 +55,31 @@ export const AUTOSWAP_CUSTOM_SIZING_MULTIPLIER = 1.10;
 // Fallback SOL-USD price when oracle is unavailable.
 export const FALLBACK_SOL_USD = 200;
 
+// Minimum USD liquidity that must back an aggregator-sourced quote-token
+// price before it may be used to set a pool's STARTING price.
+//
+// Rationale: the starting price fixes the launch market cap, and it is
+// computed as launchedTokenUsd / quoteUsd. For an unverified low-cap quote
+// token the aggregators will happily report a price derived from a pool
+// holding a few dollars — a number that reflects the last tiny trade, not
+// a market. Using it puts that pool at a different market cap than its
+// siblings; arbitrage then drains the cheap side the moment trading opens
+// and the chart shows an immediate crash.
+//
+// $10k is deliberately modest: it admits genuinely small but real markets
+// while excluding dust pools. Users who know better can still proceed by
+// setting an explicit price override.
+export const MIN_QUOTE_LIQUIDITY_USD = 10_000;
+
+// Maximum price impact (percent) the Raydium price probe may report before
+// its price is refused as a launch reference. Same problem as the
+// aggregator liquidity floor above, on the OTHER (and first-tried) path:
+// the probe swaps a small fixed SOL notional; a real market absorbs it
+// with a fraction of a percent of impact, a dust pool shows tens of
+// percent. 5% is generous for the probe size and still catches the
+// dust-pool case decisively.
+export const MAX_PROBE_PRICE_IMPACT_PCT = 5;
+
 // Well-known mint addresses.
 export const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';

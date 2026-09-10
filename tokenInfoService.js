@@ -303,9 +303,37 @@ async function readOnChainBasics(mintAddress) {
 //      quote_token_price_base_token are present in the response with
 //      complementary semantics.
 //   5. If all pools fail, return null.
+// Reads the USD liquidity backing a Gecko pool entry. Gecko reports this
+// as `reserve_in_usd`. Returns 0 when absent/unparseable so an unknown
+// depth never outranks a known one.
+function geckoPoolLiquidityUsd(attributes) {
+  try {
+    const v = new Decimal(attributes?.reserve_in_usd ?? 0);
+    return v.isFinite() && v.gt(0) ? v : new Decimal(0);
+  } catch (_) {
+    return new Decimal(0);
+  }
+}
+
+// Extract a USD price for `mintAddress` from a Gecko pools response.
+//
+// Selection rule: the DEEPEST pool wins, not the first one listed.
+// Gecko's ordering is not a liquidity ranking, and for thinly-traded or
+// unverified tokens the first entry is routinely a near-empty pool whose
+// "price" is whatever the last tiny trade happened to be. Taking that
+// price as a launch reference is how a pool gets opened at the wrong
+// market cap. Depth is the only signal available here that distinguishes
+// a real market from a rounding error.
+//
+// Returns a Decimal (back-compatible) with a `.liquidityUsd` Decimal
+// attached when the winning pool reported one, so callers that care about
+// how trustworthy the price is can check it. Callers that don't are
+// unaffected.
 export function extractPriceFromGeckoPools(mintAddress, responseJson) {
   const pools = Array.isArray(responseJson?.data) ? responseJson.data : [];
   const expectedId = `solana_${mintAddress}`;
+
+  const candidates = [];
 
   for (const pool of pools) {
     const a = pool?.attributes;
@@ -324,12 +352,17 @@ export function extractPriceFromGeckoPools(mintAddress, responseJson) {
       continue;
     }
 
+    const liquidityUsd = geckoPoolLiquidityUsd(a);
+
     // Direct USD price for our side.
     const priceStr = isBase ? a.base_token_price_usd : a.quote_token_price_usd;
     if (priceStr) {
       try {
         const price = new Decimal(priceStr);
-        if (price.gt(0)) return price;
+        if (price.gt(0)) {
+          candidates.push({ price, liquidityUsd });
+          continue;
+        }
       } catch (_) {}
     }
 
@@ -349,13 +382,25 @@ export function extractPriceFromGeckoPools(mintAddress, responseJson) {
         const ratio = new Decimal(ratioStr);
         if (otherPrice.gt(0) && ratio.gt(0)) {
           const derived = otherPrice.mul(ratio);
-          if (derived.gt(0)) return derived;
+          if (derived.gt(0)) candidates.push({ price: derived, liquidityUsd });
         }
       } catch (_) {}
     }
     // Neither direct nor derived worked — try the next pool.
   }
-  return null;
+
+  if (candidates.length === 0) return null;
+
+  // Deepest pool wins. Ties (including the all-zero case, when Gecko
+  // reported no reserves at all) keep the original response order, which
+  // preserves the previous behaviour for responses carrying no depth data.
+  let best = candidates[0];
+  for (const c of candidates) {
+    if (c.liquidityUsd.gt(best.liquidityUsd)) best = c;
+  }
+  const result = best.price;
+  try { result.liquidityUsd = best.liquidityUsd; } catch (_) {}
+  return result;
 }
 
 async function fetchPriceFromGecko(mintAddress) {
@@ -486,12 +531,23 @@ async function fetchPriceFromJupiter(mintAddress) {
 export function extractPriceFromDexScreenerPairs(mintAddress, pairs) {
   if (!Array.isArray(pairs)) return null;
 
+  const liqOf = (pair) => {
+    try {
+      const v = new Decimal(pair?.liquidity?.usd ?? 0);
+      return v.isFinite() && v.gt(0) ? v : new Decimal(0);
+    } catch (_) {
+      return new Decimal(0);
+    }
+  };
+
+  const candidates = [];
+
   // Pass 1: our token as base.
   for (const pair of pairs) {
     if (pair?.baseToken?.address === mintAddress && pair.priceUsd) {
       try {
         const price = new Decimal(pair.priceUsd);
-        if (price.gt(0)) return price;
+        if (price.gt(0)) candidates.push({ price, liquidityUsd: liqOf(pair) });
       } catch (_) {}
     }
   }
@@ -504,6 +560,12 @@ export function extractPriceFromDexScreenerPairs(mintAddress, pairs) {
   //   one_base_usd       = priceUsd
   //   one_base_in_quote  = priceNative
   //   one_quote_usd      = priceUsd / priceNative
+  //
+  // Base matches still take precedence over derived ones (pass 1 entries
+  // come first and ties preserve order), but within each pass the DEEPEST
+  // pair wins rather than the first listed — for unverified low-cap
+  // tokens the first pair is routinely a near-empty pool whose price is
+  // just the last tiny trade, which is not a safe launch reference.
   for (const pair of pairs) {
     if (
       pair?.quoteToken?.address === mintAddress &&
@@ -516,13 +578,21 @@ export function extractPriceFromDexScreenerPairs(mintAddress, pairs) {
         const baseInQuoteUnits = new Decimal(pair.priceNative);
         if (basePriceUsd.gt(0) && baseInQuoteUnits.gt(0)) {
           const derived = basePriceUsd.div(baseInQuoteUnits);
-          if (derived.gt(0)) return derived;
+          if (derived.gt(0)) candidates.push({ price: derived, liquidityUsd: liqOf(pair) });
         }
       } catch (_) {}
     }
   }
 
-  return null;
+  if (candidates.length === 0) return null;
+
+  let best = candidates[0];
+  for (const c of candidates) {
+    if (c.liquidityUsd.gt(best.liquidityUsd)) best = c;
+  }
+  const result = best.price;
+  try { result.liquidityUsd = best.liquidityUsd; } catch (_) {}
+  return result;
 }
 
 async function fetchPriceFromDexScreener(mintAddress) {

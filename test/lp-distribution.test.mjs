@@ -131,3 +131,62 @@ test('null recipient → null (not string "null")', () => {
   const result = normalizeDistribution([{ sharePercent: 100, recipient: null }]);
   assert.equal(result[0].recipient, null);
 });
+
+// ---------------------------------------------------------------------------
+// Non-finite share regression.
+//
+// normalizeDistribution is the SERVER-SIDE trust boundary: it runs on
+// request-body data, so it cannot assume the sender is the app's own UI.
+// A NaN share (missing field, or a non-numeric value) silently defeated
+// both guards, because every NaN comparison is false:
+//     Math.abs(NaN - 100) > 0.01  ->  false  (sum check passed)
+//     NaN <= 0                    ->  false  (positive check passed)
+// A NaN share would then reach position-supply math as a NaN token amount.
+// ---------------------------------------------------------------------------
+
+test('normalizeDistribution rejects a NaN share instead of silently accepting it', () => {
+  assert.throws(
+    () => normalizeDistribution([{ sharePercent: NaN }, { sharePercent: 100 }]),
+    /not a valid number/,
+  );
+});
+
+test('normalizeDistribution rejects a missing sharePercent', () => {
+  // Number(undefined) is NaN — the exact shape a malformed request body
+  // (or a future UI regression) would produce.
+  assert.throws(
+    () => normalizeDistribution([{ recipient: null }, { sharePercent: 100 }]),
+    /not a valid number/,
+  );
+});
+
+test('normalizeDistribution rejects non-numeric and non-finite share values', () => {
+  assert.throws(() => normalizeDistribution([{ sharePercent: 'abc' }]), /not a valid number/);
+  assert.throws(() => normalizeDistribution([{ sharePercent: Infinity }]), /not a valid number/);
+  assert.throws(() => normalizeDistribution([{ sharePercent: -Infinity }]), /not a valid number/);
+  assert.throws(() => normalizeDistribution([{ sharePercent: null }, { sharePercent: 100 }]),
+    /must be > 0%/, 'null coerces to 0 — caught by the positive-share guard');
+});
+
+test('normalizeDistribution error names which slice is bad', () => {
+  // The user needs to know WHICH slice to fix, not just that one is wrong.
+  assert.throws(
+    () => normalizeDistribution([{ sharePercent: 50 }, { sharePercent: NaN }]),
+    /#2/,
+  );
+});
+
+test('normalizeDistribution still accepts valid distributions unchanged', () => {
+  // Guard against the new check being over-eager.
+  assert.deepEqual(
+    normalizeDistribution([{ sharePercent: 33.33 }, { sharePercent: 33.33 }, { sharePercent: 33.34 }]),
+    [
+      { sharePercent: 33.33, recipient: null },
+      { sharePercent: 33.33, recipient: null },
+      { sharePercent: 33.34, recipient: null },
+    ],
+  );
+  assert.deepEqual(normalizeDistribution([{ sharePercent: '50' }, { sharePercent: '50' }]),
+    [{ sharePercent: 50, recipient: null }, { sharePercent: 50, recipient: null }],
+    'numeric strings remain acceptable');
+});

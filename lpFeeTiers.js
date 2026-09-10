@@ -27,6 +27,15 @@ export function normalizeFeeTierList(raw) {
     return FALLBACK_FEE_TIERS;
   }
   const normalized = list
+    // Exclude dynamic-fee configs (Raydium CLMM upgrade, May 2026). Every
+    // downstream consumer — the fee-tier picker, the funding estimate, the
+    // Fee Key income projection, the "what is a fee tier" glossary — treats
+    // tradeFeeRate as the pool's FIXED fee. A dynamic config's rate is only
+    // its baseline; the pool charges more under volatility. Offering one as
+    // if it were static would misstate the fee to the user and misprice the
+    // estimate. The API surfaces the control field on newer responses;
+    // configs that don't carry it are static by definition.
+    .filter((c) => !isDynamicFeeConfig(c))
     .map((c) => ({
       index: c.index,
       tradeFeeRate: c.tradeFeeRate,
@@ -37,4 +46,16 @@ export function normalizeFeeTierList(raw) {
     return FALLBACK_FEE_TIERS;
   }
   return normalized.sort((a, b) => a.tradeFeeRate - b.tradeFeeRate);
+}
+
+// A config is dynamic-fee when its control flag is set (non-zero / true).
+// Tolerant of the field's absence and of either numeric or boolean forms,
+// since the API shape may differ from the on-chain decode.
+export function isDynamicFeeConfig(c) {
+  if (!c || typeof c !== 'object') return false;
+  const v = c.dynamicFeeControl ?? c.dynamic_fee_control ?? c.dynamicFee ?? null;
+  if (v === null || v === undefined) return false;
+  if (typeof v === 'boolean') return v;
+  const n = Number(v);
+  return Number.isFinite(n) && n !== 0;
 }

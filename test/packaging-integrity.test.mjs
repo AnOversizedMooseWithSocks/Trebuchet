@@ -25,11 +25,11 @@ const ENTRY_POINTS = ['main.js', 'server.js'];
 // Modules that intentionally ship unreferenced by the import graph.
 // Anything listed here must have a reason recorded next to it.
 const INTENTIONALLY_UNPACKAGED = new Set([
-  // Superseded by the equivalent (and materially different) implementations
-  // inline in server.js — mergePriorResults / materializePhase1RecoveryResults.
-  // Imported only by test/launch-recovery.test.mjs. Kept on disk pending a
-  // decision to delete it or re-adopt it; must NOT be treated as runtime code.
-  'launchRecovery.js',
+  // (empty) — launchRecovery.js was deleted in the September 2026 audit. It
+  // was an abandoned event-replay design superseded by the on-chain-verified
+  // recovery in server.js, and its test suite reported coverage for code
+  // that never ran. The shipping resume path is exercised end-to-end by
+  // test/launch-lifecycle.test.mjs. Anything added here needs a reason.
 ]);
 
 // Resolve the set of root-level .js files reachable from the entry points by

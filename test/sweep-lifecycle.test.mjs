@@ -146,3 +146,190 @@ test('walletHelpers exposes DI seams without affecting production defaults', () 
   assert.equal(typeof walletHelpers.resetConnectionFactoryForTests, 'function');
   assert.doesNotThrow(() => walletHelpers.resetConnectionFactoryForTests());
 });
+
+// ---------------------------------------------------------------------------
+// Regressions for the "assets left behind after sweep" user reports.
+// Two users had LP (Fee Key) NFTs and sometimes tokens remain in the launch
+// wallet after a "successful" transfer, requiring manual recovery. Root
+// causes pinned here:
+//   1. Transfers read from a DERIVED ATA instead of the account the asset
+//      was actually discovered in — non-ATA balances failed permanently.
+//   2. Balances split across multiple accounts for one mint could not fully
+//      sweep from a single aggregate transfer.
+// (The third cause — SOL swept even when asset transfers failed, stranding
+// the assets behind a SOL wall — is orchestration in server.js; its gate is
+// asserted in launch-wiring-audit.test.mjs.)
+// ---------------------------------------------------------------------------
+
+// Pull the transferChecked source account out of a built transaction: it's
+// keys[0] of the instruction owned by the token program that isn't the
+// ATA-create instruction (ATA-create is owned by the associated-token
+// program, so filtering by token-program ownership is sufficient).
+function transferSourcesOf(tx) {
+  return tx.instructions
+    .filter((ix) => ix.programId.equals(TOKEN_PROGRAM_ID))
+    .map((ix) => ix.keys[0].pubkey.toBase58());
+}
+
+test('sweep transfers move funds from the DISCOVERED account, not a derived ATA', async () => {
+  const kp = Keypair.generate();
+  const mintA = '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr';
+  // A distinctive non-ATA token account address holding the balance.
+  const auxAccount = Keypair.generate().publicKey.toBase58();
+
+  const seenSources = [];
+  walletHelpers.setConnectionFactoryForTests(() =>
+    makeFakeConnection({
+      getBalance: async () => 1_000_000,
+      // Respect the program filter, as the real RPC does — each token
+      // account appears under exactly ONE program's query.
+      getParsedTokenAccountsByOwner: async (_owner, filter) => (
+        filter.programId.equals(TOKEN_PROGRAM_ID)
+          ? { value: [
+              makeFakeTokenAccountEntry({
+                mint: mintA, owner: kp.publicKey.toBase58(),
+                programId: TOKEN_PROGRAM_ID, amount: '500000', decimals: 6,
+                tokenAccount: auxAccount,
+              }),
+            ] }
+          : { value: [] }
+      ),
+      sendTransaction: async (tx) => {
+        seenSources.push(...transferSourcesOf(tx));
+        return 'sweep-tx-1';
+      },
+    }),
+  );
+
+  const result = await walletHelpers.sweepAllTokensToDestination({
+    tempWalletSecretKey: Array.from(kp.secretKey),
+    destinationWallet: DEST_WALLET,
+  });
+
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.transferred.length, 1);
+  assert.deepEqual(
+    seenSources, [auxAccount],
+    'the transfer must read from the account the balance was found in — a '
+    + 'derived-ATA read here is exactly how assets were left behind',
+  );
+});
+
+test('a mint split across two accounts sweeps BOTH accounts', async () => {
+  const kp = Keypair.generate();
+  const mintA = '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr';
+  // Real generated addresses — arbitrary strings risk non-base58 chars.
+  const acct1 = Keypair.generate().publicKey.toBase58();
+  const acct2 = Keypair.generate().publicKey.toBase58();
+
+  const seenSources = [];
+  walletHelpers.setConnectionFactoryForTests(() =>
+    makeFakeConnection({
+      getBalance: async () => 1_000_000,
+      getParsedTokenAccountsByOwner: async (_owner, filter) => (
+        filter.programId.equals(TOKEN_PROGRAM_ID)
+          ? { value: [
+              makeFakeTokenAccountEntry({
+                mint: mintA, owner: kp.publicKey.toBase58(),
+                programId: TOKEN_PROGRAM_ID, amount: '300000', decimals: 6,
+                tokenAccount: acct1,
+              }),
+              makeFakeTokenAccountEntry({
+                mint: mintA, owner: kp.publicKey.toBase58(),
+                programId: TOKEN_PROGRAM_ID, amount: '200000', decimals: 6,
+                tokenAccount: acct2,
+              }),
+            ] }
+          : { value: [] }
+      ),
+      sendTransaction: async (tx) => {
+        seenSources.push(...transferSourcesOf(tx));
+        return `sweep-tx-${seenSources.length}`;
+      },
+    }),
+  );
+
+  const result = await walletHelpers.sweepAllTokensToDestination({
+    tempWalletSecretKey: Array.from(kp.secretKey),
+    destinationWallet: DEST_WALLET,
+  });
+
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.transferred.length, 1, 'reported once per mint');
+  assert.equal(result.transferred[0].txIds.length, 2, 'two transfer txs, one per account');
+  assert.deepEqual(
+    seenSources.sort(), [acct1, acct2].sort(),
+    'every account holding a balance is swept — an aggregate transfer from '
+    + 'one account leaves the other behind',
+  );
+});
+
+test('NFT sweep transfers from the account the NFT was found in', async () => {
+  const kp = Keypair.generate();
+  const nftMint = '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R';
+  const nftAccount = Keypair.generate().publicKey.toBase58();
+
+  const seenSources = [];
+  walletHelpers.setConnectionFactoryForTests(() =>
+    makeFakeConnection({
+      getBalance: async () => 1_000_000,
+      getParsedTokenAccountsByOwner: async (_owner, filter) => (
+        filter.programId.equals(TOKEN_PROGRAM_ID)
+          ? { value: [
+              makeFakeTokenAccountEntry({
+                mint: nftMint, owner: kp.publicKey.toBase58(),
+                programId: TOKEN_PROGRAM_ID, amount: '1', decimals: 0,
+                tokenAccount: nftAccount,
+              }),
+            ] }
+          : { value: [] }
+      ),
+      sendTransaction: async (tx) => {
+        seenSources.push(...transferSourcesOf(tx));
+        return 'nft-tx-1';
+      },
+    }),
+  );
+
+  const result = await walletHelpers.sweepNftsToDestination({
+    tempWalletSecretKey: Array.from(kp.secretKey),
+    destinationWallet: DEST_WALLET,
+  });
+
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.transferred.length, 1);
+  assert.deepEqual(seenSources, [nftAccount],
+    'Fee Key NFTs must sweep from their discovered account');
+});
+
+test('sweep enumeration reads at finalized commitment', async () => {
+  // A lagging RPC node serving a pre-lock view at 'confirmed' can hide a
+  // just-minted Fee Key from the sweep AND from the post-sweep emptiness
+  // check — the silent version of the left-behind bug. Pin the commitment.
+  const kp = Keypair.generate();
+  const seenCommitments = [];
+  walletHelpers.setConnectionFactoryForTests(() =>
+    makeFakeConnection({
+      getBalance: async () => 1_000_000,
+      getParsedTokenAccountsByOwner: async (_owner, _filter, commitment) => {
+        seenCommitments.push(commitment);
+        return { value: [] };
+      },
+    }),
+  );
+
+  await walletHelpers.sweepAllTokensToDestination({
+    tempWalletSecretKey: Array.from(kp.secretKey),
+    destinationWallet: DEST_WALLET,
+  });
+  await walletHelpers.sweepNftsToDestination({
+    tempWalletSecretKey: Array.from(kp.secretKey),
+    destinationWallet: DEST_WALLET,
+  });
+
+  assert.ok(seenCommitments.length >= 2, 'both sweeps enumerated');
+  assert.ok(
+    seenCommitments.every((c) => c === 'finalized'),
+    `sweep enumeration must be at finalized; saw: ${JSON.stringify(seenCommitments)}`,
+  );
+});
