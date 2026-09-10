@@ -1,0 +1,12 @@
+# Files removed upstream. Extracting a zip over a checkout cannot delete
+# files, so run `node scripts/apply-deletions.mjs` after extracting.
+# One repo-relative path per line.
+
+# September 2026 audit: abandoned event-replay recovery design. server.js
+# uses on-chain-verified recovery; the lifecycle tests cover it end to end.
+# Its test suite reported coverage for code that never ran.
+launchRecovery.js
+test/launch-recovery.test.mjs
+
+# Removed earlier: the Solflare browser-wallet bridge (never signed anything).
+public/modules/solflare-wallet.js

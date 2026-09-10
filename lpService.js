@@ -3863,7 +3863,7 @@ export async function preflightCreatePoolsAndPositions({
   // SOL/USD lookup — same hard-stop rule as createPoolsAndPositions.
   let solUsd = null;
   try {
-    solUsd = await getUsdPrice(WSOL_MINT);
+    solUsd = await _launchGetUsdPrice(WSOL_MINT);
   } catch (e) {
     const err = new Error(
       `Couldn't resolve SOL/USD price (${e.message}). Check your network ` +
@@ -3897,6 +3897,23 @@ export async function preflightCreatePoolsAndPositions({
   const connection = __connectionFactoryOverride
     ? __connectionFactoryOverride()
     : new Connection(getRpcUrl(), 'confirmed');
+
+  // SDK handle for the on-chain price step, so preflight resolves prices
+  // through the SAME source order the creation loop uses. If they differed
+  // (preflight via probe/aggregator, creation via on-chain pools) the drift
+  // guard would compare two different oracles and could refuse a healthy
+  // launch — or worse, the confirmed price would not be the launch price.
+  // Best-effort: if the SDK can't load (offline demo, CI without RPC), fall
+  // through with null and the fallback chain is used, exactly as before
+  // the on-chain source existed. A regression here previously surfaced as
+  // a ReferenceError in this function, which no test exercised — see
+  // test/launch-preflight.test.mjs.
+  let raydium = null;
+  try {
+    raydium = await readOnlySdk();
+  } catch (e) {
+    console.warn(`preflight: SDK unavailable for on-chain pricing (${e.message}); using fallback sources`);
+  }
 
   const resolvedPrices = [];
   for (let allocIdx = 0; allocIdx < allocations.length; allocIdx++) {
