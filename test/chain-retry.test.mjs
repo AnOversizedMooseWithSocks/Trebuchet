@@ -124,6 +124,22 @@ test('does NOT retry a deterministic failure', async () => {
   assert.equal(calls, 1);
 });
 
+test('allows a caller-proven propagation race to retry without weakening global classification', async () => {
+  let calls = 0;
+  const { value, attempts } = await landTxWithRetry({
+    send: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('Program log: Error: InvalidAccountData');
+      return 'landed-after-propagation';
+    },
+    retryIf: (error) => /InvalidAccountData/.test(error.message),
+    sleep: noSleep,
+  });
+  assert.equal(classifyChainError(new Error('InvalidAccountData')), 'deterministic');
+  assert.equal(value, 'landed-after-propagation');
+  assert.equal(attempts, 2);
+});
+
 test('exhausts retries on a persistent transient and rethrows tagged', async () => {
   let calls = 0;
   await assert.rejects(

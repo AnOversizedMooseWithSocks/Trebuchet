@@ -61,10 +61,15 @@ export function incrementVersion(version, releaseType) {
   return { major: version.major, minor: version.minor, patch: version.patch + 1 };
 }
 
-export function nextRelease(packageVersion, tags = [], labels = []) {
-  const releaseType = releaseTypeFromLabels(labels);
+export function nextRelease(packageVersion, tags = [], labels = [], { minimumMajor = 0 } = {}) {
+  let releaseType = releaseTypeFromLabels(labels);
   const baseVersion = highestVersion([packageVersion, ...tags]);
-  const version = formatVersion(incrementVersion(baseVersion, releaseType));
+  let nextVersion = incrementVersion(baseVersion, releaseType);
+  if (Number(minimumMajor) > nextVersion.major) {
+    nextVersion = { major: Number(minimumMajor), minor: 0, patch: 0 };
+    releaseType = 'major';
+  }
+  const version = formatVersion(nextVersion);
 
   return {
     releaseType,
@@ -106,6 +111,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     readPackageVersion(),
     parseJsonEnv('RELEASE_TAGS_JSON', []),
     parseJsonEnv('PR_LABELS_JSON', []),
+    { minimumMajor: Number(process.env.TREBUCHET_MIN_RELEASE_MAJOR || 0) },
   );
 
   writeOutput(release);

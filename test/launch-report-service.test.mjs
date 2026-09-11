@@ -82,7 +82,14 @@ test('buildReportTags: caps Pool-Id tags', () => {
 });
 
 test('buildReportEnvelope: wraps launch data in a versioned envelope', () => {
-  const env = buildReportEnvelope({ mint: 'M', pools: [{ id: 'P' }] }, {
+  const launchData = {
+    mint: 'M',
+    pools: [{ id: 'P' }],
+    destinationWallet: 'Dest111',
+    transfer: { status: 'planned-before-sweep', destinationWallet: 'Dest111' },
+    airdrop: { plannedRecipientCount: 1, transferred: [{ wallet: 'Wallet111', txId: 'Tx111' }] },
+  };
+  const env = buildReportEnvelope(launchData, {
     htmlUri: 'https://arweave.test/report-html',
     appVersion: '1.2.3',
     generatedAt: '2024-01-01T00:00:00.000Z',
@@ -92,7 +99,7 @@ test('buildReportEnvelope: wraps launch data in a versioned envelope', () => {
   assert.deepEqual(env.app, { name: LAUNCH_REPORT_APP_NAME, version: '1.2.3' });
   assert.equal(env.generatedAt, '2024-01-01T00:00:00.000Z');
   assert.equal(env.htmlReportUri, 'https://arweave.test/report-html');
-  assert.deepEqual(env.launch, { mint: 'M', pools: [{ id: 'P' }] });
+  assert.deepEqual(env.launch, launchData);
 });
 
 test('publishLaunchReport: opt-out short-circuits without touching the uploader', async () => {

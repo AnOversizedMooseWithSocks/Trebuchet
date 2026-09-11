@@ -48,6 +48,7 @@ jobs:
         id: next
         env:
           PR_LABELS_JSON: ${{ steps.pr.outputs.labels }}
+          TREBUCHET_MIN_RELEASE_MAJOR: 2
         run: |
           git fetch --tags origin
           tags_json="$(
@@ -55,6 +56,22 @@ jobs:
             node -e "const fs = require('node:fs'); const tags = fs.readFileSync(0, 'utf8').trim().split(/\s+/).filter(Boolean); console.log(JSON.stringify(tags));"
           )"
           RELEASE_TAGS_JSON="${tags_json}" node scripts/auto-version.mjs
+
+      - name: Verify release gates before tagging
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_KEYCHAIN: ${{ secrets.APPLE_KEYCHAIN }}
+          APPLE_KEYCHAIN_PROFILE: ${{ secrets.APPLE_KEYCHAIN_PROFILE }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: node scripts/production-release-gate.mjs "${{ steps.next.outputs.tag }}"
 
       - name: Push tag and start release
         env:

@@ -5,15 +5,15 @@ import { normalizeFeeTierList, FALLBACK_FEE_TIERS } from '../lpFeeTiers.js';
 
 test('normalizes a real-looking Raydium API response (bare array)', () => {
   const raw = [
-    { index: 0, tradeFeeRate: 2500, tickSpacing: 60, description: '0.25%' },
-    { index: 1, tradeFeeRate: 500, tickSpacing: 10 },
-    { index: 2, tradeFeeRate: 100, tickSpacing: 1 },
+    { index: 1, tradeFeeRate: 2500, tickSpacing: 60, description: '0.25%' },
+    { index: 5, tradeFeeRate: 500, tickSpacing: 1 },
+    { index: 4, tradeFeeRate: 100, tickSpacing: 1 },
   ];
   const result = normalizeFeeTierList(raw);
   assert.equal(result.length, 3);
-  assert.deepEqual(result[0], { index: 2, tradeFeeRate: 100, tickSpacing: 1 });
-  assert.deepEqual(result[1], { index: 1, tradeFeeRate: 500, tickSpacing: 10 });
-  assert.deepEqual(result[2], { index: 0, tradeFeeRate: 2500, tickSpacing: 60 });
+  assert.deepEqual(result[0], { index: 4, tradeFeeRate: 100, tickSpacing: 1 });
+  assert.deepEqual(result[1], { index: 5, tradeFeeRate: 500, tickSpacing: 1 });
+  assert.deepEqual(result[2], { index: 1, tradeFeeRate: 2500, tickSpacing: 60 });
 });
 
 test('normalizes wrapped { data: [...] } response', () => {
@@ -22,7 +22,7 @@ test('normalizes wrapped { data: [...] } response', () => {
     success: true,
     data: [
       { index: 3, tradeFeeRate: 10000, tickSpacing: 120 },
-      { index: 0, tradeFeeRate: 2500, tickSpacing: 60 },
+      { index: 1, tradeFeeRate: 2500, tickSpacing: 60 },
     ],
   };
   const result = normalizeFeeTierList(raw);
@@ -34,9 +34,9 @@ test('normalizes wrapped { data: [...] } response', () => {
 test('sorts by ascending tradeFeeRate regardless of input order', () => {
   const raw = [
     { index: 3, tradeFeeRate: 10000, tickSpacing: 120 },
-    { index: 0, tradeFeeRate: 2500, tickSpacing: 60 },
-    { index: 1, tradeFeeRate: 500, tickSpacing: 10 },
-    { index: 2, tradeFeeRate: 100, tickSpacing: 1 },
+    { index: 1, tradeFeeRate: 2500, tickSpacing: 60 },
+    { index: 5, tradeFeeRate: 500, tickSpacing: 1 },
+    { index: 4, tradeFeeRate: 100, tickSpacing: 1 },
   ];
   const result = normalizeFeeTierList(raw);
   const rates = result.map((r) => r.tradeFeeRate);
@@ -45,21 +45,21 @@ test('sorts by ascending tradeFeeRate regardless of input order', () => {
 
 test('filters out entries with non-integer index or rate', () => {
   const raw = [
-    { index: 0, tradeFeeRate: 2500, tickSpacing: 60 },
+    { index: 1, tradeFeeRate: 2500, tickSpacing: 60 },
     { index: 'bad', tradeFeeRate: 500, tickSpacing: 10 },    // non-integer index
-    { index: 2, tradeFeeRate: 100.5, tickSpacing: 1 },       // non-integer rate
+    { index: 4, tradeFeeRate: 100.5, tickSpacing: 1 },       // non-integer rate
     { index: 3, tradeFeeRate: 10000, tickSpacing: 120 },
   ];
   const result = normalizeFeeTierList(raw);
   assert.equal(result.length, 2);
-  assert.equal(result[0].index, 0);
+  assert.equal(result[0].index, 1);
   assert.equal(result[1].index, 3);
 });
 
 test('falls back when all entries are invalid (non-integer)', () => {
   const raw = [
     { index: 'x', tradeFeeRate: 500, tickSpacing: 10 },
-    { index: 2, tradeFeeRate: 100.5, tickSpacing: 1 },
+    { index: 4, tradeFeeRate: 100.5, tickSpacing: 1 },
   ];
   const result = normalizeFeeTierList(raw);
   assert.deepEqual(result, FALLBACK_FEE_TIERS);
@@ -88,5 +88,5 @@ test('falls back when data is not an array', () => {
 test('fallback list has the four stable tiers', () => {
   assert.equal(FALLBACK_FEE_TIERS.length, 4);
   const indices = FALLBACK_FEE_TIERS.map((t) => t.index).sort();
-  assert.deepEqual(indices, [0, 1, 2, 3]);
+  assert.deepEqual(indices, [1, 3, 4, 5]);
 });

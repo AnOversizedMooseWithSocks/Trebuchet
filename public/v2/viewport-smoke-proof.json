@@ -1,0 +1,129 @@
+{
+  "artifactVersion": 1,
+  "kind": "trebuchet-v2-viewport-smoke",
+  "passed": true,
+  "command": "npm run test:v2:viewport",
+  "generatedAt": "2026-09-04T06:31:48.748Z",
+  "durationMs": 8824,
+  "target": "file:///Users/ratimics/develop/trebuchet/public/v2/index.html",
+  "requiredChecks": [
+    "launchVisible",
+    "horizontalOverflow",
+    "tokenomicsChart",
+    "liquidityChart",
+    "fundingMeter",
+    "parityPanel",
+    "firstViewportFit",
+    "terminalPanelFit",
+    "discoveryTokenViewport",
+    "keyboardWalkthrough"
+  ],
+  "assetHashes": {
+    "index.html": "b273c78ac0af1918e9048d59223760d6745630d709619287f6d7a5a7a9dc1aa8",
+    "styles.css": "497035f90f50e19137038d9768e862548824811922f2ec17a26d50087a42d0fd",
+    "api-client.js": "1911d05f88af563c21458676557c14db12b4dd5a5bbefc511db2df760b7b0b6f",
+    "app.js": "0b5d665ed159f74d80cac9bed98517715b38bd41253c98311205bf4f2c101207"
+  },
+  "viewports": [
+    {
+      "name": "desktop",
+      "width": 1440,
+      "height": 900,
+      "passed": true,
+      "checks": {
+        "launchVisible": true,
+        "horizontalOverflow": true,
+        "tokenomicsChart": true,
+        "liquidityChart": true,
+        "fundingMeter": true,
+        "parityPanel": true,
+        "firstViewportFit": true,
+        "terminalPanelFit": true,
+        "discoveryTokenViewport": true,
+        "keyboardWalkthrough": true
+      },
+      "keyboardChecks": {
+        "tabReachesControls": true,
+        "focusStaysInViewport": true,
+        "focusIsVisible": true,
+        "focusablesAreLabelled": true
+      },
+      "scrollOwner": "panel"
+    },
+    {
+      "name": "normal",
+      "width": 1100,
+      "height": 720,
+      "passed": true,
+      "checks": {
+        "launchVisible": true,
+        "horizontalOverflow": true,
+        "tokenomicsChart": true,
+        "liquidityChart": true,
+        "fundingMeter": true,
+        "parityPanel": true,
+        "firstViewportFit": true,
+        "terminalPanelFit": true,
+        "discoveryTokenViewport": true,
+        "keyboardWalkthrough": true
+      },
+      "keyboardChecks": {
+        "tabReachesControls": true,
+        "focusStaysInViewport": true,
+        "focusIsVisible": true,
+        "focusablesAreLabelled": true
+      },
+      "scrollOwner": "panel"
+    },
+    {
+      "name": "cramped",
+      "width": 900,
+      "height": 650,
+      "passed": true,
+      "checks": {
+        "launchVisible": true,
+        "horizontalOverflow": true,
+        "tokenomicsChart": true,
+        "liquidityChart": true,
+        "fundingMeter": true,
+        "parityPanel": true,
+        "firstViewportFit": true,
+        "terminalPanelFit": true,
+        "discoveryTokenViewport": true,
+        "keyboardWalkthrough": true
+      },
+      "keyboardChecks": {
+        "tabReachesControls": true,
+        "focusStaysInViewport": true,
+        "focusIsVisible": true,
+        "focusablesAreLabelled": true
+      },
+      "scrollOwner": "page"
+    },
+    {
+      "name": "mobile",
+      "width": 390,
+      "height": 844,
+      "passed": true,
+      "checks": {
+        "launchVisible": true,
+        "horizontalOverflow": true,
+        "tokenomicsChart": true,
+        "liquidityChart": true,
+        "fundingMeter": true,
+        "parityPanel": true,
+        "firstViewportFit": true,
+        "terminalPanelFit": true,
+        "discoveryTokenViewport": true,
+        "keyboardWalkthrough": true
+      },
+      "keyboardChecks": {
+        "tabReachesControls": true,
+        "focusStaysInViewport": true,
+        "focusIsVisible": true,
+        "focusablesAreLabelled": true
+      },
+      "scrollOwner": "page"
+    }
+  ]
+}

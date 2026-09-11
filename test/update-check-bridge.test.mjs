@@ -102,3 +102,51 @@ test('a later registerHandler replaces the previous one', async () => {
   assert.equal(firstCalled, false);
   assert.equal(secondCalled, true);
 });
+
+test('triggerManual invokes the manual handler without consuming startup fire-once', async () => {
+  const bridge = await importFreshBridge();
+  let startupCount = 0;
+  let manualCount = 0;
+  bridge.registerHandler(() => { startupCount++; });
+  bridge.registerManualHandler(() => { manualCount++; });
+
+  const manual = bridge.triggerManual();
+  const startup = bridge.trigger();
+
+  assert.deepEqual(manual, { ran: true });
+  assert.deepEqual(startup, { ran: true });
+  assert.equal(manualCount, 1);
+  assert.equal(startupCount, 1);
+});
+
+test('triggerManual can run repeatedly for explicit user checks', async () => {
+  const bridge = await importFreshBridge();
+  let manualCount = 0;
+  bridge.registerManualHandler(() => { manualCount++; });
+
+  assert.deepEqual(bridge.triggerManual(), { ran: true });
+  assert.deepEqual(bridge.triggerManual(), { ran: true });
+
+  assert.equal(manualCount, 2);
+});
+
+test('triggerManual reports no-handler and catches handler errors', async () => {
+  const bridge = await importFreshBridge();
+
+  assert.deepEqual(bridge.triggerManual(), { ran: false, reason: 'no-handler' });
+
+  bridge.registerManualHandler(() => {
+    throw new Error('boom');
+  });
+  assert.deepEqual(bridge.triggerManual(), { ran: false, reason: 'handler-threw' });
+});
+
+test('triggerManual does not surface async handler rejections', async () => {
+  const bridge = await importFreshBridge();
+  bridge.registerManualHandler(async () => {
+    throw new Error('async boom');
+  });
+
+  assert.deepEqual(bridge.triggerManual(), { ran: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});

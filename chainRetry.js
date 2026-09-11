@@ -136,6 +136,11 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 //   onRetry     — async (attempt, err) => void (optional). Side effects between
 //                 attempts, e.g. refreshing the SDK's cached token accounts so
 //                 the rebuilt transaction is clean.
+//   retryIf     — optional, narrowly-scoped override for a caller that has
+//                 independently proved a normally-deterministic error is a
+//                 temporary state-propagation race. It must return true to
+//                 allow the retry. The idempotency guard is still re-checked
+//                 before every subsequent send.
 //   label       — string for log lines.
 //   maxAttempts — default 3.
 //   settleMs    — pause between attempts (default 1500). Lets cluster state
@@ -155,6 +160,7 @@ export async function landTxWithRetry({
   send,
   alreadyDone = null,
   onRetry = null,
+  retryIf = null,
   label = 'tx',
   maxAttempts = 3,
   settleMs = 1500,
@@ -178,7 +184,12 @@ export async function landTxWithRetry({
       return { value, skipped: false, attempts };
     } catch (err) {
       lastErr = err;
-      const kind = classifyChainError(err);
+      let kind = classifyChainError(err);
+      if (kind === 'deterministic' && retryIf) {
+        let allowRetry = false;
+        try { allowRetry = await retryIf(err, attempt); } catch (_) { allowRetry = false; }
+        if (allowRetry) kind = 'transient';
+      }
       console.warn(`    ${label}: attempt ${attempt}/${maxAttempts} failed (${kind}): ${err && err.message}`);
 
       if (kind !== 'transient') {

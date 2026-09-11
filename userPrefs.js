@@ -68,8 +68,9 @@ const DEFAULTS = Object.freeze({
   // Demo mode. When true, every chain-touching API simulates its result —
   // no transactions are sent and no SOL is spent. Intended for testing UI
   // changes, capturing tutorial screenshots, and demonstrating the app
-  // without chain risk. Off by default; intentional opt-in only.
-  demoMode: false,
+  // without chain risk. Practice-first is the safe onboarding default; users
+  // must explicitly switch to Live before Trebuchet can send transactions.
+  demoMode: true,
   // Intro splash video. The short animation that plays on startup. On by
   // default; can be turned off in settings so the app opens straight to the
   // UI (handy once the novelty wears off, or on slow hardware). Read by the

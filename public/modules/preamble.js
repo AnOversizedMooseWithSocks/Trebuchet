@@ -684,9 +684,9 @@ function buildEqualSplitDistribution(count, totalPct = 100) {
 // tradeFeeRate, tickSpacing }; tradeFeeRate is in 1e-6 units, so 10000
 // = 1%.
 let feeTiers = [
-  { index: 2, tradeFeeRate:   100, tickSpacing:   1 }, // 0.01%
-  { index: 1, tradeFeeRate:   500, tickSpacing:  10 }, // 0.05%
-  { index: 0, tradeFeeRate:  2500, tickSpacing:  60 }, // 0.25%
+  { index: 4, tradeFeeRate:   100, tickSpacing:   1 }, // 0.01%
+  { index: 5, tradeFeeRate:   500, tickSpacing:   1 }, // 0.05%
+  { index: 1, tradeFeeRate:  2500, tickSpacing:  60 }, // 0.25%
   { index: 3, tradeFeeRate: 10000, tickSpacing: 120 }, // 1%
 ];
 

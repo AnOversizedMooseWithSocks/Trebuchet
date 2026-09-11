@@ -50,11 +50,11 @@ export const upload = multer({
   storage,
   limits: { fileSize: 100 * 1024 }, // 100KB Arweave free-tier limit
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype === 'image/png' || file.mimetype === 'image/jpeg') {
+    if (file.mimetype === 'image/png' || file.mimetype === 'image/jpeg' || file.mimetype === 'image/gif') {
       cb(null, true);
       return;
     }
-    cb(new Error('Logo must be a PNG or JPG image'));
+    cb(new Error('Logo must be a PNG, JPG, or GIF image'));
   },
 });
 

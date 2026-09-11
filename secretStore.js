@@ -160,9 +160,21 @@ export function unlockSecretPin(pin) {
   return secretPinStore.unlock(String(pin ?? ''));
 }
 
+export function changeSecretPin(pin) {
+  return secretPinStore.rotateUnlockedPin(String(pin ?? ''));
+}
+
 export function lockSecretPin() {
   secretPinStore.lock();
   return secretPinStore.status();
+}
+
+export function resetSecretPin() {
+  return secretPinStore.reset();
+}
+
+export function isSecretPinToken(token) {
+  return secretPinStore.isPinToken(token);
 }
 
 export function hasSecretPin() {

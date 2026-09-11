@@ -38,8 +38,13 @@ const __dirname = path.dirname(__filename);
 // Same env-var convention as rpcConfig.js. main.js sets this to
 // app.getPath('userData') in the Electron build; left unset by the web
 // build so writes land alongside the source.
-const CONFIG_DIR = process.env.TREBUCHET_CONFIG_DIR || __dirname;
-const FILE = path.join(CONFIG_DIR, 'pendingWallets.json');
+function configDir() {
+  return process.env.TREBUCHET_CONFIG_DIR || __dirname;
+}
+
+function walletFile() {
+  return path.join(configDir(), 'pendingWallets.json');
+}
 
 // ---------------------------------------------------------------------------
 // Encoding/decoding between in-memory and on-disk representations.
@@ -53,6 +58,10 @@ function decodeEntry(raw) {
     publicKey: raw.publicKey,
     createdAt: raw.createdAt,
   };
+  if (typeof raw.rarity === 'string' && raw.rarity.trim()) {
+    out.rarity = raw.rarity.trim();
+  }
+  if (raw.vanity === true) out.vanity = true;
 
   // Secret key (byte array). Encrypted form serialises through JSON.
   if (typeof raw.secretKeyEnc === 'string') {
@@ -82,6 +91,10 @@ function encodeEntry(decoded) {
     publicKey: decoded.publicKey,
     createdAt: decoded.createdAt,
   };
+  if (typeof decoded.rarity === 'string' && decoded.rarity.trim()) {
+    out.rarity = decoded.rarity.trim();
+  }
+  if (decoded.vanity === true) out.vanity = true;
   if (Array.isArray(decoded.secretKey)) {
     out.secretKeyEnc = secretStore.encryptString(JSON.stringify(decoded.secretKey));
   }
@@ -92,14 +105,15 @@ function encodeEntry(decoded) {
 }
 
 // ---------------------------------------------------------------------------
-// File I/O. Failures are non-fatal — we'd rather skip the safety-net
-// silently than crash the launch flow because of a disk hiccup.
+// File I/O. Reads remain tolerant so Recovery can surface damaged entries,
+// but writes must fail closed. A newly generated wallet is not safe to fund
+// until its secret has been durably persisted and can be read back.
 // ---------------------------------------------------------------------------
 
 function readRaw() {
   try {
-    if (!fs.existsSync(FILE)) return [];
-    const txt = fs.readFileSync(FILE, 'utf8');
+    if (!fs.existsSync(walletFile())) return [];
+    const txt = fs.readFileSync(walletFile(), 'utf8');
     const parsed = JSON.parse(txt);
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
@@ -149,12 +163,29 @@ function persist(list) {
     // mkdirSync with recursive:true is a no-op if the dir exists.
     // Necessary on first run when CONFIG_DIR is a userData path that
     // hasn't been touched yet.
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    fs.mkdirSync(configDir(), { recursive: true });
     const encoded = list.map(encodeEntry);
-    fs.writeFileSync(FILE, JSON.stringify(encoded, null, 2) + '\n');
+    fs.writeFileSync(walletFile(), JSON.stringify(encoded, null, 2) + '\n');
   } catch (e) {
     console.error('pendingWallets: failed to save:', e.message);
+    const error = new Error('Trebuchet could not save wallet recovery data.');
+    error.code = 'WALLET_PERSIST_FAILED';
+    error.statusCode = 500;
+    error.cause = e;
+    throw error;
   }
+}
+
+function verifyPersistedWallet(publicKey) {
+  const raw = readRaw().find((entry) => entry?.publicKey === publicKey);
+  const decoded = raw ? decodeEntry(raw) : null;
+  if (!decoded || !Array.isArray(decoded.secretKey)) {
+    const error = new Error('Trebuchet could not verify the saved wallet recovery secret.');
+    error.code = 'WALLET_PERSIST_FAILED';
+    error.statusCode = 500;
+    throw error;
+  }
+  return decoded;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,17 +198,47 @@ function persist(list) {
 // mnemonic support won't have one, and we want them to keep working.
 // Idempotent: if the same publicKey is added twice, we keep the first
 // entry's createdAt timestamp.
-export function add(publicKey, secretKey, mnemonic) {
+export function add(publicKey, secretKey, mnemonic, metadata = {}) {
   const list = load();
-  if (list.some((w) => w.publicKey === publicKey)) return;
+  const existing = list.find((wallet) => wallet.publicKey === publicKey);
+  const rarity = typeof metadata?.rarity === 'string' && metadata.rarity.trim()
+    ? metadata.rarity.trim()
+    : null;
+  if (existing) {
+    let changed = false;
+    // Importing a valid backup for an entry whose ciphertext can no longer be
+    // decrypted must repair that entry. Keeping the first healthy secret is
+    // still idempotent, while a missing secret is never left unrecoverable.
+    if (!Array.isArray(existing.secretKey) && Array.isArray(secretKey)) {
+      existing.secretKey = secretKey;
+      changed = true;
+    }
+    if (typeof existing.mnemonic !== 'string' && typeof mnemonic === 'string' && mnemonic.length > 0) {
+      existing.mnemonic = mnemonic;
+      changed = true;
+    }
+    if (rarity && existing.rarity !== rarity) {
+      existing.rarity = rarity;
+      changed = true;
+    }
+    if (metadata?.vanity === true && existing.vanity !== true) {
+      existing.vanity = true;
+      changed = true;
+    }
+    if (changed) persist(list);
+    return verifyPersistedWallet(publicKey);
+  }
   const entry = {
     publicKey,
     secretKey,
     createdAt: new Date().toISOString(),
   };
   if (mnemonic) entry.mnemonic = mnemonic;
+  if (rarity) entry.rarity = rarity;
+  if (metadata?.vanity === true) entry.vanity = true;
   list.push(entry);
   persist(list);
+  return verifyPersistedWallet(publicKey);
 }
 
 // Drop a wallet from the recovery list. Used when the launch finishes
@@ -187,6 +248,19 @@ export function remove(publicKey) {
   const list = load();
   const filtered = list.filter((w) => w.publicKey !== publicKey);
   if (filtered.length !== list.length) persist(filtered);
+}
+
+export function removePinEncrypted() {
+  const raw = readRaw();
+  const filteredRaw = raw.filter((entry) => !(
+    secretStore.isSecretPinToken(entry?.secretKeyEnc) ||
+    secretStore.isSecretPinToken(entry?.mnemonicEnc)
+  ));
+  if (filteredRaw.length !== raw.length) {
+    fs.mkdirSync(configDir(), { recursive: true });
+    fs.writeFileSync(walletFile(), JSON.stringify(filteredRaw, null, 2) + '\n');
+  }
+  return raw.length - filteredRaw.length;
 }
 
 // Return a single pending wallet by public key, decrypted, or null if not

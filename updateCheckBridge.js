@@ -25,6 +25,7 @@
 // multiple times in a single app session.
 
 let handler = null;
+let manualHandler = null;
 let fired = false;
 
 /**
@@ -35,6 +36,15 @@ let fired = false;
  */
 export function registerHandler(fn) {
   handler = fn;
+}
+
+/**
+ * Register the manual "Check for Updates" handler. Unlike the startup
+ * trigger, manual checks are allowed to run repeatedly because the user
+ * explicitly asked for each one.
+ */
+export function registerManualHandler(fn) {
+  manualHandler = fn;
 }
 
 /**
@@ -56,10 +66,31 @@ export function trigger() {
   fired = true;
   if (!handler) return { ran: false, reason: 'no-handler' };
   try {
-    handler();
+    const result = handler();
+    if (result && typeof result.catch === 'function') {
+      result.catch((err) => console.warn('Startup update-check handler rejected:', err && err.message));
+    }
     return { ran: true };
   } catch (err) {
     console.warn('Startup update-check handler threw:', err && err.message);
+    return { ran: false, reason: 'handler-threw' };
+  }
+}
+
+/**
+ * Invoke the manual update-check handler. The result is pushed to the
+ * renderer by main.js, matching the Help menu behavior.
+ */
+export function triggerManual() {
+  if (!manualHandler) return { ran: false, reason: 'no-handler' };
+  try {
+    const result = manualHandler();
+    if (result && typeof result.catch === 'function') {
+      result.catch((err) => console.warn('Manual update-check handler rejected:', err && err.message));
+    }
+    return { ran: true };
+  } catch (err) {
+    console.warn('Manual update-check handler threw:', err && err.message);
     return { ran: false, reason: 'handler-threw' };
   }
 }

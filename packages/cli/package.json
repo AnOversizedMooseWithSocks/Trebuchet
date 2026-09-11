@@ -1,0 +1,19 @@
+{
+  "name": "@trebuchet/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Experimental read-only command-line interface for Trebuchet Core.",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "trebuchet": "./bin/trebuchet.js"
+  },
+  "dependencies": {
+    "@trebuchet/core": "0.1.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

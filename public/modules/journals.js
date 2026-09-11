@@ -196,7 +196,15 @@ function journalPriorResults(journal) {
   const source = Array.isArray(lp.results) && lp.results.length > 0
     ? lp.results
     : (Array.isArray(lp.partialResults) ? lp.partialResults : []);
-  return source.filter((result) => result && result.poolId);
+  return source.filter((result) => {
+    if (!result?.poolId) return false;
+    if (result.phase1Complete !== false) return true;
+    return [
+      ...(Array.isArray(result.mainPositions) ? result.mainPositions : []),
+      ...(Array.isArray(result.ladderPositions) ? result.ladderPositions : []),
+      ...(Array.isArray(result.supportPositions) ? result.supportPositions : []),
+    ].some((position) => position?.nftMint);
+  });
 }
 
 function journalHasCompletedLp(journal) {
@@ -279,6 +287,15 @@ function prepareRecoveredSessionFromJournal(journal, wallet) {
   fundingDetectionExhausted = false;
   createdTokenInfo = {
     mint: journal.token.mint,
+    mintFormat: journal.token.mintFormat || 'classic-spl',
+    tokenProgram: journal.token.tokenProgram || (
+      journal.token.mintFormat === 'token-2022'
+        ? 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+        : 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+    ),
+    metadataStandard: journal.token.metadataStandard || (
+      journal.token.mintFormat === 'token-2022' ? 'token-2022-inline' : 'metaplex-pda'
+    ),
     decimals: journal.token.decimals || journal.poolPlan?.tokenDecimals || 9,
     totalSupply: journal.token.totalSupply || journal.poolPlan?.tokenTotalSupply,
     name: journal.token.name || '',
@@ -292,6 +309,7 @@ function prepareRecoveredSessionFromJournal(journal, wallet) {
     freezeAuthorityDisabled: journal.token.freezeAuthorityDisabled === true,
     metadataUpdateAuthorityRevoked: journal.token.metadataUpdateAuthorityRevoked === true,
     metadataImmutable: journal.token.metadataImmutable === true,
+    metadataPointerAuthorityRevoked: journal.token.metadataPointerAuthorityRevoked === true,
   };
   lpResult = { results: journalPriorResults(journal) };
 

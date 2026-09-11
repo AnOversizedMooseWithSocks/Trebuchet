@@ -1,0 +1,24 @@
+{
+  "name": "@trebuchet/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sealed launch runner: verifies launch packets and executes them in an ephemeral, key-contained environment. Deployed per-operator (e.g. fly.io); the public site never holds keys.",
+  "bin": {
+    "trebuchet-runner": "./src/server.mjs"
+  },
+  "exports": {
+    ".": "./src/server.mjs",
+    "./packet": "./src/packet.js"
+  },
+  "dependencies": {
+    "@trebuchet/core": "0.1.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.mjs"
+  }
+}

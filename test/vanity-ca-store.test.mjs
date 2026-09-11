@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -109,5 +110,45 @@ test('stores vanity CA secrets with the configured Recovery PIN', async (t) => {
 
     assert.equal(secretStore.unlockSecretPin('1357'), true);
     assert.deepEqual(store.get('PinVanity1111111111111111111111111111111').secretKey, [9, 8, 7]);
+  });
+});
+
+test('removes only PIN-encrypted Vanity CAs during destructive PIN reset', async (t) => {
+  await withMutedConsole(async () => {
+    const configDir = makeTempConfigDir(t);
+    secretStore.lockSecretPin();
+    secretStore.setSafeStorage(null);
+    writeFileSync(
+      storeFile(configDir),
+      JSON.stringify([
+        {
+          publicKey: 'PinVanity1111111111111111111111111111111',
+          createdAt: '2026-01-02T03:04:05.000Z',
+          rarity: 'Rare',
+          secretKeyEnc: 'pin:discarded',
+        },
+        {
+          publicKey: 'PlainVanity11111111111111111111111111111',
+          createdAt: '2026-01-02T03:04:05.000Z',
+          rarity: 'Common',
+          secretKeyEnc: 'plain:[1,2,3]',
+        },
+      ]) + '\n',
+    );
+
+    const store = await importFreshStore(configDir);
+
+    assert.equal(store.removePinEncrypted(), 1);
+    assert.deepEqual(store.list().map((entry) => ({
+      publicKey: entry.publicKey,
+      secretKey: entry.secretKey,
+      rarity: entry.rarity,
+    })), [
+      {
+        publicKey: 'PlainVanity11111111111111111111111111111',
+        secretKey: [1, 2, 3],
+        rarity: 'Common',
+      },
+    ]);
   });
 });

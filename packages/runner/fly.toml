@@ -1,0 +1,27 @@
+# fly.io deployment for the sealed launch runner.
+# Deploy per-operator:
+#   cd packages/runner && fly launch --no-deploy
+#   fly secrets set TREBUCHET_RUNNER_TOKEN="$(openssl rand -hex 32)"
+#   fly deploy
+app = "trebuchet-sealed-runner"
+primary_region = "iad"
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 20
+    hard_limit = 40
+
+# No volumes on purpose: nothing persists. Packet state, wallets, and the
+# journal live only in the machine's ephemeral filesystem and die with it.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

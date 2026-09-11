@@ -56,6 +56,48 @@ test('starts a non-secret launch journal idempotently', async (t) => {
   assert.equal(disk[0].events[0].stage, 'wallet_generated');
 });
 
+test('recognizes a safe repaired token when the original metadata event was missed', async (t) => {
+  const configDir = makeTempConfigDir(t);
+  const launchJournal = await importFreshLaunchJournal(configDir);
+  const mint = 'MintSafeRepair111111111111111111111111111111';
+  const repaired = {
+    token: {
+      mint,
+      mintAuthorityRenounced: true,
+      isSafe: true,
+    },
+    events: [{ stage: 'supply_minted', tokenMint: mint }],
+  };
+
+  assert.equal(launchJournal.tokenCreationComplete(repaired, mint), true);
+  assert.equal(
+    launchJournal.tokenCreationComplete({
+      ...repaired,
+      token: { ...repaired.token, isSafe: false },
+    }, mint),
+    false,
+  );
+  assert.equal(
+    launchJournal.tokenCreationComplete({ ...repaired, events: [] }, mint),
+    false,
+  );
+});
+
+test('recognizes the ordinary metadata and supply journal path', async (t) => {
+  const configDir = makeTempConfigDir(t);
+  const launchJournal = await importFreshLaunchJournal(configDir);
+  const mint = 'MintNormal111111111111111111111111111111111';
+  const journal = {
+    token: { mint, mintAuthorityRenounced: true, isSafe: false },
+    events: [
+      { stage: 'metadata_account_created', tokenMint: mint },
+      { stage: 'supply_minted', tokenMint: mint },
+    ],
+  };
+
+  assert.equal(launchJournal.tokenCreationComplete(journal, mint), true);
+});
+
 test('updates token, pool, and transfer state while filtering secrets', async (t) => {
   const configDir = makeTempConfigDir(t);
   const launchJournal = await importFreshLaunchJournal(configDir);
@@ -109,11 +151,61 @@ test('updates token, pool, and transfer state while filtering secrets', async (t
   assert.equal(completed[0].lp.results[0].txIds.createPool, 'tx-create');
   assert.equal(completed[0].transfer.destinationWallet, 'Dest222');
   assert.equal(completed[0].completedAt, completed[0].updatedAt);
+  const updatedCompleted = launchJournal.update(
+    completed[0].id,
+    { reportPublish: { mint: completed[0].token.mint, jsonUri: 'ar://report-json' } },
+    { stage: 'report_published', mint: completed[0].token.mint },
+  );
+  assert.equal(updatedCompleted.reportPublish.jsonUri, 'ar://report-json');
+  assert.equal(launchJournal.activeForWallet(walletPublicKey), null);
+  const completedAfterUpdate = launchJournal.list({ includeCompleted: true });
+  assert.equal(completedAfterUpdate.length, 1);
+  assert.equal(completedAfterUpdate[0].reportPublish.jsonUri, 'ar://report-json');
+  assert.equal(completedAfterUpdate[0].events.at(-1).stage, 'report_published');
 
   const rawText = readFileSync(journalFile(configDir), 'utf8');
   assert.equal(rawText.includes('tempWalletSecretKey'), false);
   assert.equal(rawText.includes('secretKey'), false);
   assert.equal(rawText.includes('[1,2,3]'), false);
+});
+
+test('persists the armed launch recipe as one replaceable recovery snapshot', async (t) => {
+  const configDir = makeTempConfigDir(t);
+  const launchJournal = await importFreshLaunchJournal(configDir);
+  const walletPublicKey = 'WalletPlan22222222222222222222222222222222';
+
+  launchJournal.start({ walletPublicKey });
+  launchJournal.upsertForWallet(walletPublicKey, {
+    stage: 'launch_plan_armed',
+    launchConfig: {
+      schema: 'trebuchet-v2-launch-config',
+      source: 'trebuchet-v2',
+      token: { name: 'First plan', symbol: 'ONE', supply: '1000' },
+      poolTopology: {
+        sweepDestination: 'DestinationOne',
+        pools: [{ id: 'sol-main', quoteToken: 'SOL', supplyPercent: 100 }],
+      },
+      privateSigningKey: 'never-write-this',
+    },
+  });
+  launchJournal.upsertForWallet(walletPublicKey, {
+    launchConfig: {
+      schema: 'trebuchet-v2-launch-config',
+      source: 'trebuchet-v2',
+      token: { name: 'Replacement plan', symbol: 'TWO', supply: '2000' },
+      poolTopology: {
+        sweepDestination: 'DestinationTwo',
+        pools: [{ id: 'usdc-main', quoteToken: 'USDC', supplyPercent: 80 }],
+      },
+    },
+  });
+
+  const restored = launchJournal.activeForWallet(walletPublicKey);
+  assert.equal(restored.launchConfig.token.name, 'Replacement plan');
+  assert.equal(restored.launchConfig.poolTopology.sweepDestination, 'DestinationTwo');
+  assert.equal(restored.launchConfig.poolTopology.pools.length, 1);
+  assert.equal(restored.launchConfig.poolTopology.pools[0].id, 'usdc-main');
+  assert.equal('privateSigningKey' in restored.launchConfig, false);
 });
 
 test('archives journals without deleting history', async (t) => {

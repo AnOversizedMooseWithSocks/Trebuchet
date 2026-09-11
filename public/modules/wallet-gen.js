@@ -165,12 +165,12 @@ async function validateLogoFile(file) {
       `Compress the image or pick a smaller file.`;
   }
   // accept attribute on the input already restricts the picker to
-  // image/png and image/jpeg, but the browser's filter isn't a hard
+  // image/png, image/jpeg, and image/gif, but the browser's filter isn't a hard
   // gate (drag-and-drop, devtools, OS file dialogs that ignore filters
   // on some platforms). Re-check the MIME explicitly so we surface a
   // useful message instead of letting the image decode fail opaquely.
-  if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
-    return 'Logo must be a PNG or JPG image.';
+  if (file.type !== 'image/png' && file.type !== 'image/jpeg' && file.type !== 'image/gif') {
+    return 'Logo must be a PNG, JPG, or GIF image.';
   }
 
   // Image-decode dimension check. We have to actually load the file as
@@ -217,7 +217,7 @@ function setLogoError(message) {
 }
 
 bind('tokenLogo', 'change', async (e) => {
-  const f = e.target.files[0];
+  let f = e.target.files[0];
   const filenameEl = document.getElementById('logoFileName');
   // No file selected (user cancelled out of the picker, or cleared the
   // selection). Reset displayed state and any prior error.
@@ -231,6 +231,37 @@ bind('tokenLogo', 'change', async (e) => {
   // overwrite this with "No file selected" if validation fails.
   filenameEl.textContent = f.name;
   setLogoError(null);
+
+  if (f.type === 'image/gif') {
+    if (f.size > 10 * 1024 * 1024) {
+      e.target.value = '';
+      filenameEl.textContent = 'No file selected';
+      setLogoError('Animated GIF source must be 10MB or smaller.');
+      if (typeof renderTokenPreview === 'function') renderTokenPreview();
+      return;
+    }
+    try {
+      filenameEl.textContent = f.size > MAX_LOGO_BYTES ? 'Optimizing animation…' : f.name;
+      const prepared = await window.TrebuchetGifOptimizer.optimizeAnimatedGif(f, {
+        maxBytes: MAX_LOGO_BYTES,
+        maxDimension: MAX_LOGO_DIMENSION,
+        minDimension: MIN_LOGO_DIMENSION,
+      });
+      if (prepared.file !== f) {
+        const transfer = new DataTransfer();
+        transfer.items.add(prepared.file);
+        e.target.files = transfer.files;
+        f = prepared.file;
+        filenameEl.textContent = `${f.name} · ${Math.ceil(f.size / 1024)}KB optimized`;
+      }
+    } catch (error) {
+      e.target.value = '';
+      filenameEl.textContent = 'No file selected';
+      setLogoError(error.message || 'Animated GIF compression failed.');
+      if (typeof renderTokenPreview === 'function') renderTokenPreview();
+      return;
+    }
+  }
 
   const err = await validateLogoFile(f);
   if (err) {
@@ -248,10 +279,9 @@ bind('tokenLogo', 'change', async (e) => {
     return;
   }
   // Valid file — leave the filename as set above. The separate
-  // change-handler binding (see bind('tokenLogo', 'change', renderTokenPreview)
-  // below in this file) handles updating the preview thumbnail and
-  // live card. We don't trigger it directly from here; the browser
-  // fires `change` once and both listeners receive it.
+  // change-handler binding may have painted the source file while GIF
+  // optimization was still running, so repaint once with the safe file.
+  if (typeof renderTokenPreview === 'function') renderTokenPreview();
 });
 
 const poolList = document.getElementById('poolList');

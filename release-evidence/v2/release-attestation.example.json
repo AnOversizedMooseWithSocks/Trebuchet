@@ -1,0 +1,14 @@
+{
+  "schema": "trebuchet-v2-production-attestation",
+  "version": 1,
+  "cluster": "mainnet-beta",
+  "releaseTag": "v2.0.0",
+  "decision": "approved-for-v2-production",
+  "evidenceSha256": "<sha256-of-exact-field-verification-json-bytes>",
+  "classicArtifactSha256": "<sha256-of-trimmed-classic-report-comparison-input>",
+  "fieldRunCommit": "<40-character-lowercase-git-commit>",
+  "fieldRunCompletedAt": "<ISO-8601-timestamp>",
+  "operatedBy": "<github-user-who-ran-the-field-launch>",
+  "reviewedAt": "<ISO-8601-timestamp-after-proof-export>",
+  "reviewedBy": "<different-github-user-who-reviewed-the-proof>"
+}

@@ -143,3 +143,89 @@ export function pickLatestRelease(releases) {
   return null;
 }
 
+function releaseArtifactBaseName(value) {
+  return String(value || '').split(/[\\/]/).pop();
+}
+
+function releaseTrustRecord(trust, platform = null) {
+  const normalized = String(trust || '').trim().toLowerCase();
+  const platformName = platform || null;
+  if (normalized === 'signed and notarized') {
+    return {
+      status: 'signed-and-notarized',
+      label: 'Signed and notarized',
+      signingStatus: 'signed',
+      notarizationStatus: 'notarized',
+      platform: platformName,
+      detail: 'Release notes mark this artifact as signed and notarized.',
+    };
+  }
+  if (normalized === 'signed') {
+    return {
+      status: 'signed',
+      label: 'Signed',
+      signingStatus: 'signed',
+      notarizationStatus: platform === 'darwin' ? 'not-reported' : 'not-applicable',
+      platform: platformName,
+      detail: platform === 'darwin'
+        ? 'Release notes mark this artifact as signed, but notarization is not reported.'
+        : 'Release notes mark this artifact as signed.',
+    };
+  }
+  if (normalized === 'unsigned test artifact') {
+    return {
+      status: 'unsigned-test-artifact',
+      label: 'Unsigned test artifact',
+      signingStatus: 'unsigned',
+      notarizationStatus: platform === 'darwin' ? 'not-notarized' : 'not-applicable',
+      platform: platformName,
+      detail: platform === 'darwin'
+        ? 'Release notes mark this macOS artifact as unsigned and not notarized.'
+        : 'Release notes mark this artifact as an unsigned test artifact.',
+    };
+  }
+  if (normalized === 'unsigned') {
+    return {
+      status: 'unsigned',
+      label: 'Unsigned',
+      signingStatus: 'unsigned',
+      notarizationStatus: platform === 'darwin' ? 'not-notarized' : 'not-applicable',
+      platform: platformName,
+      detail: platform === 'darwin'
+        ? 'Release notes mark this macOS artifact as unsigned and not notarized.'
+        : 'Release notes mark this artifact as unsigned.',
+    };
+  }
+  return {
+    status: 'unknown',
+    label: 'Signing unknown',
+    signingStatus: 'unknown',
+    notarizationStatus: 'unknown',
+    platform: platformName,
+    detail: 'Release notes do not disclose signing/notarization status for this artifact; verify before installing.',
+  };
+}
+
+/**
+ * Extract the selected artifact's trust status from Trebuchet release notes.
+ *
+ * scripts/release-lib.mjs emits a "Trust status" section with rows like:
+ *   - macOS arm64: unsigned test artifact (Trebuchet-1.2.3-arm64.dmg)
+ *
+ * The updater already chooses an OS/arch-specific asset. This helper binds
+ * the visible update prompt to that exact asset instead of showing a generic
+ * release-level claim.
+ */
+export function releaseTrustForArtifact(releaseNotes, assetName, platform = null) {
+  const wanted = releaseArtifactBaseName(assetName);
+  if (!wanted) return releaseTrustRecord(null, platform);
+  const lines = String(releaseNotes || '').split(/\r?\n/);
+  for (const line of lines) {
+    const match = line.match(/^\s*-\s*([^:]+):\s*([^()]+?)\s*\(([^)]*)\)\s*$/);
+    if (!match) continue;
+    const files = match[3].split(',').map((file) => releaseArtifactBaseName(file.trim()));
+    if (!files.includes(wanted)) continue;
+    return releaseTrustRecord(match[2], platform);
+  }
+  return releaseTrustRecord(null, platform);
+}

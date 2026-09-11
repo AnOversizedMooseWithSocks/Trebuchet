@@ -33,6 +33,7 @@ import assert from 'node:assert/strict';
 import { Connection, PublicKey } from '@solana/web3.js';
 
 import { smokeEnabled, SMOKE_RPC } from './helpers/smoke-guard.mjs';
+import { FALLBACK_FEE_TIERS, normalizeFeeTierList } from '../lpFeeTiers.js';
 
 // ---------------------------------------------------------------------------
 // Guard: skip everything if TREBUCHET_SMOKE_TEST_RPC is not set
@@ -125,31 +126,29 @@ describe('Token-2022 compat — known Token-2022 mints resolve on mainnet', asyn
 // Raydium CLMM fee tier discovery
 // ---------------------------------------------------------------------------
 
-describe('Raydium CLMM — fee tiers endpoint is reachable', async () => {
-  const url = 'https://api-v3.raydium.io/main/rpc/pool/info/list';
-  // Minimal probe: we just need to confirm the API responds. The real
-  // getClmmFeeTiers function in lpService.js uses this same endpoint.
-    let resp;
+describe('Raydium CLMM — production fee tiers match the offline fallback', async () => {
+  const url = 'https://api-v3.raydium.io/main/clmm-config';
+  let resp;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15_000);
   try {
     resp = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal });
-  } catch (e) {
-    console.log('  Raydium API unreachable: ' + e.message);
-    return;
   } finally {
     clearTimeout(timer);
   }
-  // The Raydium API may return non-200 on rate limits; that's fine — we
-  // just assert the harness doesn't crash on the HTTP layer.
-  if (resp.ok) {
-    const json = await resp.json();
-    console.log(`  Raydium API responded: ${typeof json === 'object' ? 'JSON object' : 'non-JSON'}`);
-  } else {
-    console.log(`  Raydium API returned HTTP ${resp.status} (rate-limited or unavailable)`);
+  assert.equal(resp.ok, true, `Raydium CLMM config returned HTTP ${resp.status}`);
+  const json = await resp.json();
+  assert.equal(json?.success, true, 'Raydium CLMM config response is not successful');
+  assert.ok(Array.isArray(json?.data) && json.data.length > 0, 'Raydium CLMM config has no rows');
+  const live = normalizeFeeTierList(json);
+  for (const expected of FALLBACK_FEE_TIERS) {
+    assert.deepEqual(
+      live.find((tier) => tier.index === expected.index),
+      expected,
+      `offline fee-tier fallback drifted for AmmConfig index ${expected.index}`,
+    );
   }
-  // Not asserting response shape — the point is that the HTTP call
-  // completes without a crash, not that the API always returns data.
+  console.log(`  Raydium API returned ${live.length} CLMM configs; fallback subset matches`);
 });
 
 // ---------------------------------------------------------------------------
@@ -229,11 +228,8 @@ describe("Funding estimator — USDC pool allocation math is sane", async () => 
 // Smoke harness self-test (always runs, confirms skip behavior)
 // ---------------------------------------------------------------------------
 
-test('smoke harness: skip behavior — tests are skipped without TREBUCHET_SMOKE_TEST_RPC', () => {
-  // This test always runs to verify the smoke guard mechanism itself.
-  // When the env var is unset, smokeEnabled() returns false and all
-  // `describe` tests above are skipped. This assertion just confirms
-  // the guard is wired correctly.
+test('smoke harness reflects the configured TREBUCHET_SMOKE_TEST_RPC state', () => {
   assert.equal(typeof smokeEnabled, 'function', 'smokeEnabled is a function');
-  assert.equal(SMOKE_RPC, null, 'SMOKE_RPC is null when env var is unset');
+  assert.equal(SMOKE_RPC, process.env.TREBUCHET_SMOKE_TEST_RPC || null);
+  assert.equal(enabled, Boolean(SMOKE_RPC));
 });

@@ -16,3 +16,5 @@ repo.zip
 
 _tutorial/
 test/e2e/videos/
+test/ui/actual/
+test/ui/diffs/*.png

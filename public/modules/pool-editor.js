@@ -13,6 +13,7 @@ function renderTokenPreview() {
   const symbol = symbolEl ? symbolEl.value.trim() : '';
   const description = descEl ? descEl.value.trim() : '';
   const logoFile = logoEl && logoEl.files && logoEl.files[0] ? logoEl.files[0] : null;
+  const animatedLogo = logoFile?.type === 'image/gif';
 
   // Manage the object URL lifecycle. Revoke any prior URL whenever we
   // replace or clear it. createObjectURL returns a new URL each call
@@ -146,11 +147,14 @@ function renderTokenPreview() {
     }, true);
   }
 
-  // Drive the 3D coin. Initialise once when the mount first exists, then
-  // update the front face whenever the uploaded logo changes. Guarded by
-  // coinPreviewEnabled and by the presence of the global (script load order
-  // / WebGL availability). updateCoinPreview() handles the rest.
-  updateCoinPreview(logoUrl, symbol);
+  // Drive the 3D coin for still images. An animated GIF stays on the flat
+  // <img> preview so the browser can advance every frame; baking it into the
+  // WebGL coin texture would freeze it on the first frame.
+  if (animatedLogo) {
+    destroyCoinPreview();
+  } else {
+    updateCoinPreview(logoUrl, symbol);
+  }
 
   // Also paint the small standalone logo thumbnail that sits next to
   // the file-picker. Same pattern as the preview card's logo: the

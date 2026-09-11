@@ -161,6 +161,16 @@ export function remove(publicKey) {
   if (filtered.length !== list.length) persist(filtered);
 }
 
+export function removePinEncrypted() {
+  const raw = readRaw();
+  const filteredRaw = raw.filter((entry) => !secretStore.isSecretPinToken(entry?.secretKeyEnc));
+  if (filteredRaw.length !== raw.length) {
+    fs.mkdirSync(configDir(), { recursive: true });
+    fs.writeFileSync(storeFile(), JSON.stringify(filteredRaw, null, 2) + '\n');
+  }
+  return raw.length - filteredRaw.length;
+}
+
 export function get(publicKey) {
   return load().find((entry) => entry.publicKey === publicKey) || null;
 }

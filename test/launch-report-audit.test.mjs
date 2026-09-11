@@ -29,8 +29,9 @@ const demoSrc = readFileSync(path.join(REPO, 'demoChainService.js'), 'utf8');
 //   2. Position tick ranges and pool parameters, which prove the
 //      concentrated-LP shape without an RPC lookup.
 //
-//   3. The frontend's machine-readable launchData payload (dataVersion 2)
-//      carrying per-position records and token-safety facts.
+//   3. The frontend's machine-readable launchData payload (dataVersion 5)
+//      carrying per-position records, token-safety facts, airdrop rows, and
+//      slice/ladder/support shape fields.
 // ---------------------------------------------------------------------------
 
 test('lpService records the Fee Key NFT mint at every lock site', () => {
@@ -84,9 +85,9 @@ test('lpService records concentration-proof fields', () => {
 test('buildLaunchReportData emits the v2 audit payload', () => {
   const fnStart = reportSrc.indexOf('function buildLaunchReportData(');
   assert.ok(fnStart >= 0, 'buildLaunchReportData must exist');
-  const fn = reportSrc.slice(fnStart, fnStart + 6000);
+  const fn = reportSrc.slice(fnStart, fnStart + 9000);
 
-  assert.ok(/dataVersion: 2,/.test(fn), 'payload must declare dataVersion 2');
+  assert.ok(/dataVersion: 5,/.test(fn), 'payload must declare dataVersion 5');
   // Token-safety facts.
   for (const field of [
     'mintAuthorityRenounced',
@@ -98,8 +99,30 @@ test('buildLaunchReportData emits the v2 audit payload', () => {
   }
   assert.ok(/metadataUri/.test(fn), 'token facts must include metadataUri');
   // Per-position audit fields.
-  for (const field of ['positionNftMint', 'feeKeyNftMint', 'tickLower', 'tickUpper', 'lockTx', 'openTx']) {
+  for (const field of [
+    'positionNftMint',
+    'feeKeyNftMint',
+    'tickLower',
+    'tickUpper',
+    'lockTx',
+    'openTx',
+    'sharePercent',
+    'supplyPercent',
+    'lowerMultiplier',
+    'upperMultiplier',
+    'depthPct',
+  ]) {
     assert.ok(fn.includes(field), `position records must include ${field}`);
+  }
+  // Per-recipient airdrop audit fields.
+  for (const field of ['lastAirdropResult', 'buildAirdropTransferPayload', 'plannedRecipientCount', 'deliveredCount', 'failedCount', 'transferred', 'failed']) {
+    assert.ok(fn.includes(field), `airdrop records must include ${field}`);
+  }
+  // Planned final sweep evidence. The report publishes before sweep, so it
+  // records the destination as planned transfer metadata rather than a
+  // completed sweep claim.
+  for (const field of ['getPlannedSweepDestinationWallet', 'destinationWallet', 'planned-before-sweep']) {
+    assert.ok(fn.includes(field), `transfer metadata must include ${field}`);
   }
   // All four position types feed the array.
   for (const t of ["'main'", "'ladder'", "'support'", "'bootstrap'"]) {
@@ -129,6 +152,7 @@ test('HTML report renders Fee Key NFTs and the verification section', () => {
   assert.ok(/Auditing this launch/.test(reportSrc), 'verification section must exist');
   assert.ok(/trebuchet-launch-report/.test(reportSrc), 'verification section must name the Arweave Data-Protocol tag');
   assert.ok(/Contract safety/.test(reportSrc), 'token section must include contract-safety facts');
+  assert.ok(/Planned sweep destination/.test(reportSrc), 'token section must render the planned sweep destination when known');
 });
 
 test('demo mode mirrors the audit fields (report parity)', () => {

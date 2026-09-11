@@ -63,6 +63,38 @@
 #include "base58.h"
 #include "vrf_ed25519.h"
 
+#ifdef TREBUCHET_OPENSSL_FAST
+#include <openssl/evp.h>
+#include <string.h>
+#endif
+
+/* Derive an Ed25519 keypair from a 32-byte seed (sk = seed || pk).
+ *
+ * With TREBUCHET_OPENSSL_FAST (make fast), the public-key derivation goes
+ * through OpenSSL's optimized Ed25519 code, roughly 30-50x faster than the
+ * portable tweetnacl implementation. That is the difference between a
+ * 6-character vanity grind taking days (tweetnacl, ~2K keys/s per core) and
+ * taking under an hour (OpenSSL, ~20-50K keys/s per core). Both backends
+ * produce byte-identical keypairs per RFC 8032; the fast build is verified
+ * against tweetnacl in the repo's keygen tests.
+ */
+static inline int keypair_from_seed(uint8_t pk[32], uint8_t sk[64], const uint8_t seed[32])
+{
+#ifdef TREBUCHET_OPENSSL_FAST
+    memcpy(sk, seed, 32);
+    EVP_PKEY *pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL, seed, 32);
+    if (!pkey) return -1;
+    size_t publen = 32;
+    int ok = EVP_PKEY_get_raw_public_key(pkey, pk, &publen);
+    EVP_PKEY_free(pkey);
+    if (!ok || publen != 32) return -1;
+    memcpy(sk + 32, pk, 32);
+    return 0;
+#else
+    return crypto_sign_keypair_from_seed(pk, sk, seed);
+#endif
+}
+
 /* ------------------------------------------------------------------ */
 /* Deterministic seed chain for provable grind history                 */
 /* ------------------------------------------------------------------ */
@@ -258,7 +290,7 @@ static void *grind_thread(void *arg) {
     for (int i = 0; i < 8; i++) thread_seed[i] ^= (uint8_t)(tid >> (i * 8));
     {
         uint8_t tmp_pk[32], tmp_sk[64];
-        crypto_sign_keypair_from_seed(tmp_pk, tmp_sk, thread_seed);
+        keypair_from_seed(tmp_pk, tmp_sk, thread_seed);
         memcpy(thread_seed, tmp_pk, 32);
     }
 
@@ -271,7 +303,7 @@ static void *grind_thread(void *arg) {
     int use_fast = gs->use_fast_match;
 
     while (!atomic_load_explicit(&gs->found, memory_order_relaxed)) {
-        crypto_sign_keypair_from_seed(pk, sk, seed);
+        keypair_from_seed(pk, sk, seed);
 
         int matched = 0;
 

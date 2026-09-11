@@ -35,6 +35,7 @@ import {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
   unpackMint,
+  getTokenMetadata as getToken2022Metadata,
 } from '@solana/spl-token';
 import Decimal from 'decimal.js';
 import { getRpcUrl } from './rpcConfig.js';
@@ -190,8 +191,8 @@ function singleflight(key, fn) {
 // Fetch the mint account and the Metaplex metadata account in a single
 // RPC call. Returns { decimals, symbol, programId } where symbol is null
 // if no Metaplex metadata exists for the mint.
-async function readOnChainBasics(mintAddress) {
-  const connection = new Connection(getRpcUrl(), 'confirmed');
+async function readOnChainBasics(mintAddress, rpcUrl = getRpcUrl()) {
+  const connection = new Connection(rpcUrl, 'confirmed');
   const mintPubkey = new PublicKey(mintAddress);
 
   const [metadataPDA] = PublicKey.findProgramAddressSync(
@@ -207,6 +208,7 @@ async function readOnChainBasics(mintAddress) {
   // getMint and getAccountInfo separately.
   const [mintInfo, metadataInfo] = await connection.getMultipleAccountsInfo(
     [mintPubkey, metadataPDA],
+    'confirmed',
   );
 
   if (!mintInfo) {
@@ -248,6 +250,31 @@ async function readOnChainBasics(mintAddress) {
     } catch (e) {
       console.warn(
         `tokenInfoService: failed to parse Metaplex metadata for ${mintAddress}: ${e.message}`,
+      );
+    }
+  }
+
+  // Trebuchet-native Token-2022 launches keep the canonical name, symbol,
+  // URI, and provenance commitment inside the mint via TokenMetadata. This
+  // path is independent of Metaplex/Helius indexing and therefore works as
+  // soon as the mint is finalized. A Metaplex PDA remains a fallback for
+  // third-party Token-2022 assets that use the older convention.
+  if (programIdPk.equals(TOKEN_2022_PROGRAM_ID)) {
+    try {
+      const inline = await getToken2022Metadata(
+        connection,
+        mintPubkey,
+        'confirmed',
+        TOKEN_2022_PROGRAM_ID,
+      );
+      if (inline) {
+        symbol = inline.symbol || symbol;
+        name = inline.name || name;
+        uri = inline.uri || uri;
+      }
+    } catch (e) {
+      console.warn(
+        `tokenInfoService: failed to read Token-2022 inline metadata for ${mintAddress}: ${e.message}`,
       );
     }
   }
@@ -819,8 +846,14 @@ async function _resolvePriceUsdUncached(mintAddress) {
  * Token-2022 not handled, etc.). A missing price/name/image is NOT a
  * hard failure — the caller surfaces it as "enter manually" in the UI.
  */
-export async function getTokenInfo(mintAddress) {
-  const cached = readCache(mintAddress);
+export async function getTokenInfo(
+  mintAddress,
+  { rpcUrl = null, includePrice = true, includeDisplayMeta = true } = {},
+) {
+  const configuredRpcUrl = getRpcUrl();
+  const selectedRpcUrl = rpcUrl || configuredRpcUrl;
+  const useConfiguredRpcCache = selectedRpcUrl === configuredRpcUrl;
+  const cached = useConfiguredRpcCache ? readCache(mintAddress) : null;
 
   // Static fields: read on-chain only when we don't have them in cache.
   // We track the on-chain Metaplex name and uri here as inputs to display
@@ -839,19 +872,21 @@ export async function getTokenInfo(mintAddress) {
     onChainName = cached.name ?? null;
     onChainUri = cached.uri ?? null;
   } else {
-    const onChain = await readOnChainBasics(mintAddress);
+    const onChain = await readOnChainBasics(mintAddress, selectedRpcUrl);
     symbol = onChain.symbol;
     decimals = onChain.decimals;
     programId = onChain.programId;
     onChainName = onChain.name;
     onChainUri = onChain.uri;
-    writeCacheStatic(mintAddress, {
-      symbol,
-      decimals,
-      programId,
-      name: onChainName,
-      uri: onChainUri,
-    });
+    if (useConfiguredRpcCache) {
+      writeCacheStatic(mintAddress, {
+        symbol,
+        decimals,
+        programId,
+        name: onChainName,
+        uri: onChainUri,
+      });
+    }
   }
 
   // Symbol fallback: if Metaplex metadata is missing, show a truncated
@@ -860,7 +895,19 @@ export async function getTokenInfo(mintAddress) {
   const displaySymbol = symbol || `${mintAddress.slice(0, 4)}…${mintAddress.slice(-4)}`;
 
   // Price: separate cache & TTL.
-  const priceUsd = await resolvePriceUsd(mintAddress);
+  const priceUsd = includePrice ? await resolvePriceUsd(mintAddress) : null;
+
+  if (!includeDisplayMeta) {
+    return {
+      symbol: displaySymbol,
+      decimals,
+      priceUsd,
+      programId,
+      name: onChainName || null,
+      imageUrl: null,
+      metadataUri: onChainUri || null,
+    };
+  }
 
   // Display meta (image + name) — composed from sources in descending
   // priority:
@@ -934,6 +981,7 @@ export async function getTokenInfo(mintAddress) {
     programId,
     name,
     imageUrl,
+    metadataUri: onChainUri || null,
   };
 }
 
@@ -952,15 +1000,16 @@ export async function getUsdPrice(mintAddress) {
  * working unchanged. Now also exposes name and imageUrl, which existing
  * callers ignore (they cherry-pick fields).
  */
-export async function getTokenMetadata(mintAddress) {
+export async function getTokenMetadata(mintAddress, options = {}) {
   try {
-    const info = await getTokenInfo(mintAddress);
+    const info = await getTokenInfo(mintAddress, options);
     return {
       symbol: info.symbol,
       decimals: info.decimals,
       priceUsd: info.priceUsd,
       name: info.name,
       imageUrl: info.imageUrl,
+      metadataUri: info.metadataUri,
     };
   } catch (e) {
     console.warn(`tokenInfoService: getTokenMetadata failed for ${mintAddress}:`, e.message);
