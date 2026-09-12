@@ -46,9 +46,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
-      # Outside the workspace: electron-builder's downloaded tools are CommonJS,
-      # and a cache under the repo would inherit package.json's "type": "module".
-      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+      # ELECTRON_BUILDER_CACHE is set by the "Locate electron-builder cache"
+      # step below, not here: it must live OUTSIDE the workspace (see that
+      # step), which needs the runner context — unavailable at job level.
       TREBUCHET_RELEASE_TARGET: ${{ matrix.target }}
       CSC_LINK: ${{ secrets.CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -115,6 +115,16 @@ jobs:
             exit 1
           fi
           npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+
+      # electron-builder downloads CommonJS helper tools (the icons bundle's
+      # icon-tool.js) into its cache and runs them with node. A cache under
+      # the workspace inherits package.json's "type": "module" and the tools
+      # fail with "require is not defined in ES module scope" (release
+      # 1.0.49). Keep the cache outside the workspace. Done as a step rather
+      # than job-level env because `runner.temp` is only available here.
+      - name: Locate electron-builder cache
+        shell: bash
+        run: echo "ELECTRON_BUILDER_CACHE=$RUNNER_TEMP/electron-builder-cache" >> "$GITHUB_ENV"
 
       - name: Restore Electron caches
         uses: actions/cache@v5
