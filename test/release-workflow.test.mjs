@@ -399,3 +399,24 @@ test('workflow env blocks only use contexts that are valid at that level', () =>
   assert.deepEqual(offenders, [],
     'these env entries use a context that GitHub does not allow at workflow/job level');
 });
+
+test('package.json "build" config validates against electron-builder\'s own schema', async () => {
+  // electron-builder rejects unknown keys anywhere in its config (schema has
+  // additionalProperties:false), and it does so at BUILD time on every
+  // platform — so one misplaced key fails macOS, Windows, and Linux builds
+  // at once. That happened: `desktopName` (a top-level package.json field)
+  // was put under build.linux. Validating here, against the schema shipped
+  // in node_modules, turns that into a unit-test failure instead.
+  const { default: Ajv } = await import('ajv');
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const schema = req('app-builder-lib/scheme.json');
+  const pkg = JSON.parse(read('package.json'));
+  const ajv = new Ajv({ strict: false, allErrors: true });
+  const ok = ajv.validate(schema, pkg.build);
+  assert.ok(ok, 'electron-builder config errors:\n' + JSON.stringify(ajv.errors, null, 2));
+  // And the desktop-association fields sit where electron-builder expects.
+  assert.equal(pkg.desktopName, 'trebuchet', 'desktopName is a TOP-LEVEL package.json field');
+  assert.equal(pkg.build.linux.syncDesktopName, true);
+  assert.equal(pkg.build.linux.desktopName, undefined, 'desktopName must not be under build.linux');
+});
