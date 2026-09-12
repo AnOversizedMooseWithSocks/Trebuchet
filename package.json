@@ -212,7 +212,9 @@
       ],
       "category": "Development",
       "executableName": "Trebuchet",
-      "artifactName": "Trebuchet-${version}-${arch}.${ext}"
+      "artifactName": "Trebuchet-${version}-${arch}.${ext}",
+      "desktopName": "trebuchet",
+      "syncDesktopName": true
     },
     "deb": {
       "packageName": "trebuchet-desktop",

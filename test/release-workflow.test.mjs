@@ -348,3 +348,23 @@ test('update-check API URL matches the canonical repo case from package.json', (
       `prereleases and 404s while every release is unsigned`,
   );
 });
+
+test('electron-builder cache never sits inside the ESM project scope', () => {
+  // electron-builder downloads CommonJS helper tools (the icons bundle's
+  // icon-tool.js) into its cache and runs them with node. A cache inside
+  // this repo inherits package.json's "type": "module" and the tools die
+  // with "require is not defined in ES module scope" — which failed
+  // release 1.0.49. Two layers: the workflows keep the cache outside the
+  // workspace, and the build script marks any in-project cache as
+  // CommonJS scope in case a workflow points it back inside.
+  for (const wf of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+    const src = read(wf);
+    assert.doesNotMatch(src, /ELECTRON_BUILDER_CACHE: \$\{\{ github\.workspace \}\}/,
+      `${wf} must not put the electron-builder cache inside the workspace`);
+    assert.match(src, /ELECTRON_BUILDER_CACHE: \$\{\{ runner\.temp \}\}/,
+      `${wf} must point the cache at runner.temp`);
+  }
+  const build = read('scripts/release-build.mjs');
+  assert.match(build, /type: 'commonjs'/,
+    'release-build must write a commonjs package.json marker into an in-project cache');
+});

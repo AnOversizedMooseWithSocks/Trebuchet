@@ -85,7 +85,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
-      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+      # Outside the workspace: electron-builder's downloaded tools are CommonJS,
+      # and a cache under the repo would inherit package.json's "type": "module".
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
     strategy:
       fail-fast: false
       matrix:
