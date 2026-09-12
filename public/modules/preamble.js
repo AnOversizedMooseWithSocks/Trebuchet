@@ -373,12 +373,33 @@ const SPLIT_MAX_COUNT = 10;
 const LADDER_DEFAULT_PERCENT = 50;
 const LADDER_MIN_PERCENT = 20;
 const LADDER_MAX_PERCENT = 80;
-// Minimum % of a pool's supply that must stay in the full-range main
-// position when bands are configured. Mirrors MIN_WIDE_BASE_BPS on the
-// server (50 bps). The main is the pool's continuous base layer; bands
-// stack on top. Without it the pool has no liquidity between bands or
-// above the top band, and price jumps through those regions untradeably.
-const MIN_MAIN_BASE_PERCENT = 0.5;
+// Continuous-liquidity rules (mirror lpConstants on the server). The main
+// position is the full-range base the bands stack on. It is glue, not a
+// reserve: if the bands leave GAPS, the base must exist (server requires
+// >= 1 whole token; here "any supply at all"); if the bands touch, no base
+// is needed. A THIN base is a warning — base-only stretches are high-impact.
+const THIN_BASE_WARN_PERCENT = 0.5;
+const BAND_GAP_TOLERANCE = 0.01;
+// Minimal bootstrap covers launch ± half its width; coverage starts here.
+const MINIMAL_BOOTSTRAP_UPPER_MULT = 1 + 30 / 200;
+
+// Sort manual bands by lower multiplier and report any stretch above the
+// bootstrap's upper edge that no band covers. Same logic as findBandGaps
+// on the server so the editor and the launch never disagree.
+function findManualBandGaps(bands, bootstrapMode) {
+  if (bootstrapMode === 'custom') return [];
+  const sorted = (bands || [])
+    .map((b) => ({ lower: Number(b.lowerMultiplier), upper: Number(b.upperMultiplier) }))
+    .filter((b) => Number.isFinite(b.lower) && Number.isFinite(b.upper) && b.upper > b.lower)
+    .sort((x, y) => x.lower - y.lower);
+  let cursor = MINIMAL_BOOTSTRAP_UPPER_MULT;
+  const gaps = [];
+  for (const b of sorted) {
+    if (b.lower > cursor * (1 + BAND_GAP_TOLERANCE)) gaps.push({ from: cursor, to: b.lower });
+    cursor = Math.max(cursor, b.upper);
+  }
+  return gaps;
+}
 const LADDER_DEFAULT_BANDS = 5;
 const LADDER_MIN_BANDS = 3;
 const LADDER_MAX_BANDS = 10;

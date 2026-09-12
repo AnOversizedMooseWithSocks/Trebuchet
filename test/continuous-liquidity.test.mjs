@@ -1,60 +1,119 @@
 // test/continuous-liquidity.test.mjs
 //
-// The full-range main position is the pool's continuous base; ladder and
-// custom bands stack on top of it. If bands consume all the supply, the
-// pool has zero liquidity between bands and above the top band — price
-// teleports through those regions with nothing to swap against. The app
-// used to ALLOW that ("no wide main positions to open ... bands will
-// provide all liquidity"). This pins the guard that refuses it.
+// The wide main position is the pool's full-range base; ladder/custom
+// bands stack on top of it. The base is GLUE, not a reserve:
+//   - bands with GAPS between them need a base of >= 1 whole token, or
+//     price teleports across the empty stretch with nothing to swap against
+//   - contiguous bands need no base at all
+//   - a THIN base is a warning (high impact between bands), never a block
+// The app used to allow a gapped ladder with NO main position.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import BN from 'bn.js';
-import { assertWideBaseKept } from '../lpService.js';
-import { MIN_WIDE_BASE_BPS } from '../lpConstants.js';
+import { checkContinuousLiquidity, findBandGaps } from '../lpService.js';
+import { MIN_BASE_TOKENS_WHEN_GAPPED, THIN_BASE_WARN_BPS } from '../lpConstants.js';
 
-const SUPPLY = new BN('1000000000000'); // 1e12 raw
+const DEC = 9;
+const ONE = new BN(10).pow(new BN(DEC));
+const SUPPLY = ONE.mul(new BN(1_000_000)); // 1M whole tokens
 
-const scenario = (bandsBps, mode = 'manual') => {
-  const ladder = SUPPLY.mul(new BN(bandsBps)).div(new BN(10_000));
-  return { mainBaseRaw: SUPPLY, ladderTotalBaseRaw: ladder, wideBaseRaw: SUPPLY.sub(ladder), ladderMode: mode };
+// Bands as the customize UI specifies them: launch-price multipliers.
+const TOUCHING = [
+  { lowerMultiplier: 1.0, upperMultiplier: 2 }, { lowerMultiplier: 2, upperMultiplier: 4 }, { lowerMultiplier: 4, upperMultiplier: 10 },
+];
+const GAPPED = [
+  { lowerMultiplier: 1.0, upperMultiplier: 2 }, { lowerMultiplier: 4, upperMultiplier: 10 }, // nothing 2x -> 4x
+];
+
+const args = ({ bands, ladderMode = 'manual', baseTokens, bootstrapMode = 'minimal' }) => {
+  const wide = ONE.mul(new BN(Math.floor(baseTokens))).add(new BN(Math.round((baseTokens % 1) * 1e9)));
+  return {
+    mainBaseRaw: SUPPLY, wideBaseRaw: wide, ladderTotalBaseRaw: SUPPLY.sub(wide),
+    ladderMode, bands, bootstrapMode, tokenDecimals: DEC, poolLabel: 'Pool 1 (SOL)', allocIdx: 0,
+  };
 };
 
-test('no bands -> nothing to check (the main is the whole supply)', () => {
-  assert.doesNotThrow(() => assertWideBaseKept(scenario(10_000, 'off')));
+// ---- gap detection ----------------------------------------------------------
+
+test('findBandGaps: touching bands have no gaps', () => {
+  assert.equal(findBandGaps({ ladderMode: 'manual', bands: TOUCHING }).hasGaps, false);
 });
 
-test('bands taking 80% leave a healthy base -> allowed', () => {
-  assert.doesNotThrow(() => assertWideBaseKept(scenario(8_000)));
+test('findBandGaps: a stretch no band covers is a gap, reported in multiples of launch', () => {
+  const r = findBandGaps({ ladderMode: 'manual', bands: GAPPED });
+  assert.equal(r.hasGaps, true);
+  assert.equal(r.gaps[0].to, 4);
 });
 
-test('bands taking exactly the floor complement -> allowed (limit is inclusive)', () => {
-  assert.doesNotThrow(() => assertWideBaseKept(scenario(10_000 - MIN_WIDE_BASE_BPS)));
+test('findBandGaps: tick-alignment slivers within tolerance are not gaps', () => {
+  const almost = [{ lowerMultiplier: 1.0, upperMultiplier: 2 }, { lowerMultiplier: 2.005, upperMultiplier: 4 }];
+  assert.equal(findBandGaps({ ladderMode: 'manual', bands: almost }).hasGaps, false);
 });
 
-test('bands taking ALL the supply -> refused, naming the consequence and the fix', () => {
+test('findBandGaps: a band starting above the minimal bootstrap edge leaves a gap below it', () => {
+  // Minimal bootstrap covers launch ±15%; a first band at 1.5x leaves 1.15x -> 1.5x empty.
+  const r = findBandGaps({ ladderMode: 'manual', bands: [{ lowerMultiplier: 1.5, upperMultiplier: 3 }] });
+  assert.equal(r.hasGaps, true);
+});
+
+test('findBandGaps: a custom (full-range) bootstrap means nothing can be a gap', () => {
+  assert.equal(findBandGaps({ ladderMode: 'manual', bands: GAPPED, bootstrapMode: 'custom' }).hasGaps, false);
+});
+
+test('findBandGaps: the simple ladder is gapped by design', () => {
+  assert.equal(findBandGaps({ ladderMode: 'simple', bands: [{}] }).hasGaps, true);
+});
+
+test('findBandGaps: ladder off -> no gaps', () => {
+  assert.equal(findBandGaps({ ladderMode: 'off', bands: GAPPED }).hasGaps, false);
+});
+
+// ---- the rule ---------------------------------------------------------------
+
+test('contiguous bands with an EMPTY base are allowed — no glue needed', () => {
+  const r = checkContinuousLiquidity(args({ bands: TOUCHING, baseTokens: 0 }));
+  assert.equal(r.hasGaps, false);
+  assert.equal(r.warning, null);
+});
+
+test('gapped bands with an empty base are refused, naming the gap and the fix', () => {
   assert.throws(
-    () => assertWideBaseKept({ ...scenario(10_000), poolLabel: 'Pool 2 (USDC)', allocIdx: 1 }),
+    () => checkContinuousLiquidity(args({ bands: GAPPED, baseTokens: 0 })),
     (e) => {
       assert.equal(e.failedPhase, 'pre_flight');
-      assert.equal(e.failedAllocationIndex, 1);
-      assert.match(e.message, /Pool 2 \(USDC\)/);
-      assert.match(e.message, /100\.00%/, 'reports what the bands took');
-      assert.match(e.message, /NO liquidity between bands/i, 'names the consequence');
+      assert.match(e.message, /2\.00× → 4\.00×/, 'names where the gap is');
+      assert.match(e.message, /at least 1 token/, 'names the minimal fix');
       assert.match(e.message, /No SOL was spent/);
       return true;
     },
   );
 });
 
-test('bands leaving less than the floor -> refused', () => {
-  assert.throws(() => assertWideBaseKept(scenario(10_000 - MIN_WIDE_BASE_BPS + 1)), /full-range base/);
+test('gapped bands with just under one token in the base are refused', () => {
+  assert.throws(() => checkContinuousLiquidity(args({ bands: GAPPED, baseTokens: 0.999 })), /less than 1 token/);
 });
 
-test('simple ladder mode is guarded the same way as manual', () => {
-  assert.throws(() => assertWideBaseKept(scenario(10_000, 'simple')), /full-range base/);
+test('gapped bands with exactly one token in the base are ALLOWED — with a thin-base warning', () => {
+  const r = checkContinuousLiquidity(args({ bands: GAPPED, baseTokens: MIN_BASE_TOKENS_WHEN_GAPPED }));
+  assert.equal(r.hasGaps, true);
+  assert.match(r.warning, /under 0\.5% of supply/, 'one token is glue, not depth — say so');
+  assert.match(r.warning, /small order will move the price/);
 });
 
-test('the floor is the product rule: 0.5% of the pool supply', () => {
-  assert.equal(MIN_WIDE_BASE_BPS, 50);
+test('gapped bands with a comfortable base produce no warning', () => {
+  // 1% of a 1M-token supply = 10,000 tokens, above the 0.5% thin threshold.
+  const r = checkContinuousLiquidity(args({ bands: GAPPED, baseTokens: 10_000 }));
+  assert.equal(r.hasGaps, true);
+  assert.equal(r.warning, null);
+});
+
+test('the simple ladder needs the base too, since its bands are spaced apart', () => {
+  assert.throws(() => checkContinuousLiquidity(args({ bands: [{}], ladderMode: 'simple', baseTokens: 0 })), /no liquidity between/);
+  assert.doesNotThrow(() => checkContinuousLiquidity(args({ bands: [{}], ladderMode: 'simple', baseTokens: 5 })));
+});
+
+test('constants are the product rule: 1 token when gapped, warn under 0.5%', () => {
+  assert.equal(MIN_BASE_TOKENS_WHEN_GAPPED, 1);
+  assert.equal(THIN_BASE_WARN_BPS, 50);
 });

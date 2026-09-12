@@ -2633,11 +2633,12 @@
             <p>
                 <strong>Real supply control, at launch, without hiding anything.</strong> You choose
                 the opening market cap <em>and</em> how much is for sale there — a 10% float at open
-                if that's the scarcity you want. A thin <strong>full-range base</strong> runs from the
-                launch price to the top of the range, so the pool is tradeable at every price and
-                never has a hole. The bulk goes into bands stacked on that base: more at 4×, more
-                still at 10×, the biggest tranche at 25× — and between 4× and 10× only the thin base
-                trades, so the price has to <em>earn</em> its way across. Each band is a commitment
+                if that's the scarcity you want. The bulk goes into bands you place — more at 4×, more
+                still at 10×, the biggest tranche at 25× — and if you leave space between bands, a
+                thin <strong>full-range base</strong> connects them so the pool is tradeable at every
+                price. That base can be a handful of tokens; its only job is to make sure there is
+                never a hole. Between 4× and 10× only the base trades, so the price has to
+                <em>earn</em> its way across. Each band is a commitment
                 to sell at that price and not before. Supply isn't locked away in a wallet holders
                 have to trust; it's <em>in the pool</em>, where anyone can see it and nobody can move
                 it early. The bands <em>are</em> the raise, paid by real buyers at real prices as the
@@ -2649,9 +2650,11 @@
 
             <h3><span class="num">[ 05 ]</span>What Trebuchet gives you</h3>
             <p>
-                The <strong>main position</strong> is the full-range base — always present, so a
-                pool can never be configured with a price gap. The <strong>ladder</strong> option
-                builds bands on top of it for you — a supply percentage spread across rising price
+                The <strong>main position</strong> is the full-range base. Trebuchet checks your
+                bands for gaps and, if there are any, requires the base to hold at least one token —
+                so a pool can never be configured with a hole in it — and warns you when the base is
+                thin enough that price will move sharply between bands. The <strong>ladder</strong>
+                option builds bands on top of it for you — a supply percentage spread across rising price
                 multiples — or you set each band's range and share by hand. A <strong>support</strong> position places a buy wall beneath the launch price
                 with a depth you choose. The <strong>main position</strong> is the tranche live at
                 opening, sliceable so Fee Keys can be split among a team. And every one of those
@@ -2701,7 +2704,7 @@
 
                     <!-- bracket over the held bands -->
                     <path d="M150 66 L150 58 L420 58 L420 66" fill="none" stroke="#9a2424" stroke-width="1"/>
-                    <text x="285" y="52" font-size="9" text-anchor="middle" fill="#9a2424">85% held above launch · sells only when earned</text>
+                    <text x="285" y="52" font-size="9" text-anchor="middle" fill="#9a2424">90% held above launch · sells only when earned</text>
 
                     <!-- support wall under launch (quote side) -->
                     <rect x="52" y="226" width="34" height="34" fill="#1c1610" opacity="0.14" stroke="#1c1610" stroke-width="1"/>
@@ -2715,7 +2718,7 @@
                     <!-- THE BASE: thin, continuous, launch -> top of range. Always present. -->
                     <rect x="98" y="246" width="322" height="14" fill="#9a2424" opacity="0.22" stroke="#9a2424" stroke-width="0.8"/>
                     <path d="M98 246 L420 246" stroke="#9a2424" stroke-width="1" stroke-dasharray="3 2"/>
-                    <text x="259" y="257" font-size="8" text-anchor="middle" fill="#6e1818">5% full-range base — the pool is tradeable at every price</text>
+                    <text x="259" y="257" font-size="8" text-anchor="middle" fill="#6e1818">thin full-range base · a few tokens · keeps every price tradeable</text>
 
                     <!-- FLOAT at open, stacked on the base -->
                     <rect x="98" y="216" width="38" height="30" fill="#9a2424" opacity="0.55" stroke="#9a2424" stroke-width="1"/>
@@ -2751,7 +2754,7 @@
                     <text x="230" y="318" font-size="10" text-anchor="middle" fill="#6e1818">→ scarce at open, revealed as it climbs, tradeable at every price</text>
                 </g>
             </svg>
-            <p class="cap"><span class="rubric">FIG. 2</span> &nbsp;·&nbsp; Same 100% of supply, two pools. Left: everything for sale at a giveaway price, or matching capital to open higher. Right: a thin full-range base keeps the pool tradeable at every price, a 10% float opens at your chosen valuation, and 85% is committed in bands above it — zero SOL required.</p>
+            <p class="cap"><span class="rubric">FIG. 2</span> &nbsp;·&nbsp; Same 100% of supply, two pools. Left: everything for sale at a giveaway price, or matching capital to open higher. Right: a 10% float opens at your chosen valuation, 90% is committed in bands above it, and a base of a few tokens keeps the pool tradeable across the stretches between bands — zero SOL required.</p>
         </div>
 
         <table class="supply-table">

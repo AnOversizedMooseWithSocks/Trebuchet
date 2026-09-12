@@ -3248,10 +3248,11 @@ function updateContinueToFundingState() {
   }
   if (!mc || mc <= 0) reasons.push('Target market cap must be > 0');
 
-  // Continuous-liquidity guard (custom mode). Bands are discrete ranges
-  // stacked on the full-range main; if they take nearly all the supply the
-  // pool has gaps with no liquidity. The server refuses this too; catching
-  // it here means the user sees it while editing, not at launch.
+  // Continuous-liquidity check (custom mode). The main position is the
+  // full-range base the bands stack on. It is glue: required only when the
+  // bands leave gaps; a thin base is a warning, not a block. The server
+  // applies the same rule (>= 1 token when gapped); catching it here means
+  // the user sees it while editing, not at launch.
   if (simpleConfig.mode !== 'default') {
     for (let i = 0; i < pools.length; i++) {
       const p = pools[i];
@@ -3260,10 +3261,22 @@ function updateContinueToFundingState() {
       if (bands.length === 0) continue;
       const mainPct = Array.isArray(p.distribution)
         ? p.distribution.reduce((s, x) => s + (Number(x.sharePercent) || 0), 0) : 0;
-      if (mainPct < MIN_MAIN_BASE_PERCENT) {
+      const bootstrapMode = (p.bootstrapConfig && p.bootstrapConfig.mode) || 'minimal';
+      const gaps = findManualBandGaps(bands, bootstrapMode);
+      if (gaps.length === 0) continue; // contiguous bands: no base needed
+      const g = gaps[0];
+      if (mainPct <= 0) {
         reasons.push(
-          `Pool ${i + 1}: keep at least ${MIN_MAIN_BASE_PERCENT}% of supply in the main position — ` +
-          'it is the full-range base under the bands; without it the pool has price gaps with no liquidity',
+          `Pool ${i + 1}: the bands leave a price range with no liquidity ` +
+          `(${g.from.toFixed(2)}× → ${g.to.toFixed(2)}× of launch) and the main position is empty. ` +
+          'Put a little supply in the main position — it is the full-range base that connects the bands — ' +
+          'or move the bands so they touch',
+        );
+      } else if (mainPct < THIN_BASE_WARN_PERCENT) {
+        warnings.push(
+          `Pool ${i + 1}: the main position holds under ${THIN_BASE_WARN_PERCENT}% of supply. ` +
+          'That keeps the pool tradeable everywhere, but between bands only that thin base is trading, ' +
+          'so small orders will move the price a long way there. Fine if that scarcity is intended.',
         );
       }
     }

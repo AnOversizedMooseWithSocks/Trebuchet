@@ -119,6 +119,7 @@ import {
   computeLadderTicksManual,
   computeMainTicks,
   computeSupportTicks,
+  MINIMAL_BOOTSTRAP_WIDTH_PCT,
   SUPPORT_DEPTH_PCT_DEFAULT,
   driftExceedsThreshold,
   driftPercent,
@@ -158,7 +159,9 @@ import {
   WSOL_MINT,
   MIN_QUOTE_LIQUIDITY_USD,
   MAX_PROBE_PRICE_IMPACT_PCT,
-  MIN_WIDE_BASE_BPS,
+  MIN_BASE_TOKENS_WHEN_GAPPED,
+  THIN_BASE_WARN_BPS,
+  BAND_GAP_TOLERANCE,
   COST_POOL_RENT_SOL,
   COST_TICK_ARRAY_SOL,
   COST_POSITION_SOL,
@@ -438,43 +441,94 @@ export function unrecordedPositionsAtRange(onChainPositions, tickLower, tickUppe
 }
 
 // ---------------------------------------------------------------------------
-// Continuous-liquidity guard.
+// Continuous-liquidity check.
 //
 // The wide "main" position spans from just above the launch price to the
-// top of the tick range — it is the pool's continuous base layer. Ladder
-// and custom bands are discrete ranges stacked ON TOP of it. If the bands
-// consume (nearly) all of a pool's supply there is no base, and the pool has
-// zero liquidity between bands and above the top band. In a CLMM, price
-// jumps through a zero-liquidity range on the first trade with nothing to
-// swap against (Raydium: "liquidity runs out at that tick and the next
-// price range takes over") — effectively untradeable there. The base only
-// needs to EXIST at every price; MIN_WIDE_BASE_BPS of the pool's supply is
-// enough for the bands to be the bulk of the supply without being the only
-// supply.
+// top of the tick range — the pool's base layer that ladder/custom bands
+// stack on. The base is GLUE, not a reserve: its job is to connect the
+// discrete band positions so price can move between them. In a CLMM a
+// zero-liquidity stretch has nothing to swap against; price teleports
+// across it on the first trade (Raydium: "liquidity runs out at that tick
+// and the next price range takes over") — effectively untradeable there.
 //
-// Throws a pre_flight-tagged error (no SOL spent) naming the pool and the
-// exact fix. Pure over BN inputs so it's unit-testable without a launch.
+// Rules (see lpConstants):
+//   - bands leave GAPS  -> the base must hold >= MIN_BASE_TOKENS_WHEN_GAPPED
+//                          whole tokens. Hard requirement; one token is
+//                          enough to make the range continuous.
+//   - bands contiguous  -> no base required.
+//   - base is THIN      -> warn (base-only stretches are high-impact), never block.
+//
+// Gap detection works in launch-price-multiplier space, which is how manual
+// bands are specified. Coverage starts at the bootstrap's upper edge
+// (minimal bootstrap: launch +MINIMAL_BOOTSTRAP_WIDTH_PCT/2 %; custom
+// bootstrap: full range, so nothing can be a gap). The simple ladder places
+// its bands on alternating log-spaced units BY DESIGN — the gaps between
+// them are intentional and rely on the base — so simple mode always counts
+// as gapped.
+//
+// Pure over plain inputs; throws a pre_flight-tagged error (no SOL spent) or
+// returns { hasGaps, warning }.
 // ---------------------------------------------------------------------------
-export function assertWideBaseKept({
-  mainBaseRaw, wideBaseRaw, ladderTotalBaseRaw, ladderMode, poolLabel = 'Pool', allocIdx = 0,
+export function findBandGaps({ ladderMode, bands = [], bootstrapMode = 'minimal' }) {
+  if (ladderMode === 'off' || bands.length === 0) return { hasGaps: false, gaps: [] };
+  if (ladderMode === 'simple') return { hasGaps: true, gaps: [{ reason: 'simple ladder bands are spaced apart by design' }] };
+  if (bootstrapMode === 'custom') return { hasGaps: false, gaps: [] }; // full-range bootstrap covers everything
+  const sorted = bands
+    .map((b) => ({ lower: Number(b.lowerMultiplier), upper: Number(b.upperMultiplier) }))
+    .filter((b) => Number.isFinite(b.lower) && Number.isFinite(b.upper) && b.upper > b.lower)
+    .sort((x, y) => x.lower - y.lower);
+  if (sorted.length === 0) return { hasGaps: false, gaps: [] };
+  // Minimal bootstrap: ±(width/2)% around launch, so coverage starts at 1 + width/200.
+  let cursor = 1 + MINIMAL_BOOTSTRAP_WIDTH_PCT / 200;
+  const gaps = [];
+  for (const b of sorted) {
+    if (b.lower > cursor * (1 + BAND_GAP_TOLERANCE)) gaps.push({ from: cursor, to: b.lower });
+    cursor = Math.max(cursor, b.upper);
+  }
+  return { hasGaps: gaps.length > 0, gaps };
+}
+
+export function checkContinuousLiquidity({
+  mainBaseRaw, wideBaseRaw, ladderTotalBaseRaw, ladderMode, bands = [], bootstrapMode = 'minimal',
+  tokenDecimals = 9, poolLabel = 'Pool', allocIdx = 0,
 }) {
-  if (ladderMode === 'off') return; // no bands -> the main IS the whole supply
-  const minWideRaw = mainBaseRaw.mul(new BN(MIN_WIDE_BASE_BPS)).div(new BN(10_000));
-  if (!wideBaseRaw.lt(minWideRaw)) return;
-  const bandsPct = mainBaseRaw.isZero() ? 0
-    : Number(ladderTotalBaseRaw.mul(new BN(10_000)).div(mainBaseRaw).toString()) / 100;
-  const floorPct = (MIN_WIDE_BASE_BPS / 100).toFixed(2);
-  const err = new Error(
-    `${poolLabel}: the ladder/custom bands take ${bandsPct.toFixed(2)}% of this pool's supply, ` +
-    `leaving less than ${floorPct}% for the full-range base position. Bands are discrete price ` +
-    `ranges stacked on top of the base; without a base the pool has NO liquidity between bands ` +
-    `or above the top band, and price would jump through those regions with nothing to trade ` +
-    `against. Reduce the bands' total supply so at least ${floorPct}% stays in the main position. ` +
-    `No SOL was spent.`,
-  );
-  err.failedPhase = 'pre_flight';
-  err.failedAllocationIndex = allocIdx;
-  throw err;
+  const result = { hasGaps: false, warning: null };
+  if (ladderMode === 'off') return result;
+
+  const { hasGaps, gaps } = findBandGaps({ ladderMode, bands, bootstrapMode });
+  result.hasGaps = hasGaps;
+  const oneTokenRaw = new BN(10).pow(new BN(tokenDecimals));
+  const minBaseRaw = oneTokenRaw.mul(new BN(MIN_BASE_TOKENS_WHEN_GAPPED));
+
+  if (hasGaps && wideBaseRaw.lt(minBaseRaw)) {
+    const bandsPct = mainBaseRaw.isZero() ? 0
+      : Number(ladderTotalBaseRaw.mul(new BN(10_000)).div(mainBaseRaw).toString()) / 100;
+    const where = gaps[0] && gaps[0].from !== undefined
+      ? ` (first gap: ${gaps[0].from.toFixed(2)}× → ${gaps[0].to.toFixed(2)}× of launch)`
+      : '';
+    const err = new Error(
+      `${poolLabel}: the bands leave price ranges with no liquidity between them${where}, and ` +
+      `the full-range base position holds less than ${MIN_BASE_TOKENS_WHEN_GAPPED} token ` +
+      `(bands take ${bandsPct.toFixed(2)}% of supply). Without a base to connect the bands, price ` +
+      `would jump across those ranges with nothing to trade against. Either leave at least ` +
+      `${MIN_BASE_TOKENS_WHEN_GAPPED} token in the main position, or make the bands touch. ` +
+      `No SOL was spent.`,
+    );
+    err.failedPhase = 'pre_flight';
+    err.failedAllocationIndex = allocIdx;
+    throw err;
+  }
+
+  // Thin-base warning: allowed, but the base-only stretches are high-impact.
+  const thinRaw = mainBaseRaw.mul(new BN(THIN_BASE_WARN_BPS)).div(new BN(10_000));
+  if (hasGaps && wideBaseRaw.lt(thinRaw)) {
+    result.warning =
+      `${poolLabel}: the full-range base holds under ${(THIN_BASE_WARN_BPS / 100).toFixed(1)}% of supply. ` +
+      `That is enough to keep the pool tradeable everywhere, but in the stretches between bands ` +
+      `only the base is trading, so a small order will move the price a long way there. ` +
+      `Add a little more to the main position if you want smoother price movement between bands.`;
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -4895,11 +4949,20 @@ export async function createPoolsAndPositions({
       // between bands or above the top one, and price jumps through those
       // regions with nothing to trade against. Refuse before any SOL is
       // spent; the message says exactly how much to give back to the base.
-      assertWideBaseKept({
-        mainBaseRaw, wideBaseRaw, ladderTotalBaseRaw, ladderMode,
-        poolLabel: `Pool ${allocIdx + 1} (${quoteToken.symbol || quoteToken.address})`,
-        allocIdx,
-      });
+      {
+        const liq = checkContinuousLiquidity({
+          mainBaseRaw, wideBaseRaw, ladderTotalBaseRaw, ladderMode,
+          bands: ladderMode === 'manual' ? (ladderCfg.bands || []) : [],
+          bootstrapMode: (alloc.bootstrap && alloc.bootstrap.mode) || 'minimal',
+          tokenDecimals,
+          poolLabel: `Pool ${allocIdx + 1} (${quoteToken.symbol || quoteToken.address})`,
+          allocIdx,
+        });
+        if (liq.warning) {
+          console.warn(`  ${liq.warning}`);
+          onProgress && onProgress({ stage: 'base_liquidity_thin', allocationIndex: allocIdx, message: liq.warning });
+        }
+      }
 
       console.log(
         `  raw split: total=${allocatedSupplyRaw.toString()}, ` +
