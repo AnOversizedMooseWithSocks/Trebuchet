@@ -1073,9 +1073,20 @@ function syncDemoChrome() {
   window.addEventListener('resize', syncDemoBannerHeight);
 
   // Persist a new demoMode value and switch the app into it. Switching mode
-  // discards the current launch and starts over, so we always confirm first.
+  // discards the current launch and starts over, so we always confirm first —
+  // EXCEPT when enabling from a pristine state (step 1, no wallet generated):
+  // there is nothing to lose yet, and greeting a first-time user's "Try a
+  // demo launch" click with a data-will-be-lost warning is needless friction.
   async function setDemoMode(enabled) {
     const want = !!enabled;
+
+    // Pristine = step 1, no wallet generated, currently in real mode.
+    // Enabling demo from here loses nothing, so skip the data-will-be-lost
+    // dialog — greeting a first-time user's "Try a demo launch" click with
+    // a scary warning is needless friction. Every other transition (any
+    // progress made, or disabling) still confirms below.
+    const pristine = currentStep === 1 && !tempWallet && !demoModeActive;
+    const needsConfirm = !(want && pristine);
 
     // If a REAL launch is mid-flight (steps 2..5, and we're currently in real
     // mode), the ephemeral wallet has been stashed for recovery — surface that
@@ -1088,25 +1099,28 @@ function syncDemoChrome() {
           'can still recover it from the pending-wallets panel.</p>'
         : '';
 
-    // Always warn: changing mode resets the app to defaults and restarts the
-    // launch from the beginning, discarding anything entered so far.
-    const proceed = await confirmDialog({
-      title: want ? 'Enable demo mode?' : 'Disable demo mode?',
-      body:
-        '<p>Switching demo mode resets the app to defaults and restarts the ' +
-        'launch from the beginning, with demo mode ' +
-        (want ? '<strong>enabled</strong>' : '<strong>disabled</strong>') +
-        '.</p><p>Any wallet, token, or pool data you have entered for the ' +
-        'current launch will be lost.</p>' +
-        recoveryNote,
-      confirmLabel: want ? 'Enable & restart' : 'Disable & restart',
-      danger: true,
-    });
-    if (!proceed) {
-      // User backed out — put the checkbox back the way it was.
-      const toggle = document.getElementById('demoModeToggle');
-      if (toggle) toggle.checked = !want;
-      return;
+    // Warn before switching: changing mode resets the app to defaults and
+    // restarts the launch from the beginning, discarding anything entered
+    // so far. (Skipped for the pristine enable — see above.)
+    if (needsConfirm) {
+      const proceed = await confirmDialog({
+        title: want ? 'Enable demo mode?' : 'Disable demo mode?',
+        body:
+          '<p>Switching demo mode resets the app to defaults and restarts the ' +
+          'launch from the beginning, with demo mode ' +
+          (want ? '<strong>enabled</strong>' : '<strong>disabled</strong>') +
+          '.</p><p>Any wallet, token, or pool data you have entered for the ' +
+          'current launch will be lost.</p>' +
+          recoveryNote,
+        confirmLabel: want ? 'Enable & restart' : 'Disable & restart',
+        danger: true,
+      });
+      if (!proceed) {
+        // User backed out — put the checkbox back the way it was.
+        const toggle = document.getElementById('demoModeToggle');
+        if (toggle) toggle.checked = !want;
+        return;
+      }
     }
 
     try {
@@ -1236,3 +1250,98 @@ setupSecretPinGate();
 // Recovery PIN gate have run by this point. If any of them gated itself,
 // this call is a no-op; the trigger will fire when the last blocker clears.
 _evaluateStartupGates();
+
+// ---------------------------------------------------------------------------
+// First-launch welcome card.
+//
+// The card (see #welcomeCard in index.html) fronts the two things a new
+// user needs to know before anything else: demo mode exists and is the
+// recommended first step, and a real launch needs a dedicated RPC. It is
+// visible while the showWelcomeCard user pref is true and demo mode is
+// off — once demo is active the sticky amber banner owns that state, and
+// showing both would be noise. Dismissal persists showWelcomeCard:false.
+// ---------------------------------------------------------------------------
+(function setupWelcomeCard() {
+  const card = document.getElementById('welcomeCard');
+  if (!card) return;
+
+  // Visibility: all fetches are best-effort. If prefs can't be read we
+  // default to SHOWING the card (a new install with a broken prefs read
+  // is exactly a first-time user); if the demo status can't be read we
+  // fall back to the in-memory flag set by setupDemoMode's own fetch.
+  //
+  // Recovery state outranks onboarding: someone with an incomplete launch
+  // or a pending recovery wallet is not a first-timer, and their money
+  // comes before a getting-started card — the recovery panels should be
+  // the first thing they see, not sit below it. If either recovery
+  // lookup fails we treat it as "none" (the panels themselves surface
+  // independently either way).
+  Promise.allSettled([
+    fetch('/api/user-prefs').then((r) => r.json()),
+    fetch('/api/demo/status').then((r) => r.json()),
+    fetch('/api/pending-wallets').then((r) => r.json()),
+    fetch('/api/launch-journals').then((r) => r.json()),
+  ]).then(([prefsRes, demoRes, walletsRes, journalsRes]) => {
+    const prefs = prefsRes.status === 'fulfilled' ? prefsRes.value : {};
+    const demoActive = demoRes.status === 'fulfilled'
+      ? !!(demoRes.value && demoRes.value.active)
+      : !!demoModeActive;
+    const pendingCount = walletsRes.status === 'fulfilled'
+      ? (walletsRes.value?.wallets?.length || 0)
+      : 0;
+    const journalCount = journalsRes.status === 'fulfilled'
+      ? (journalsRes.value?.journals?.length || 0)
+      : 0;
+    const hasRecoveryState = pendingCount > 0 || journalCount > 0;
+    const wantCard = prefs.showWelcomeCard !== false;
+    card.classList.toggle('hidden', !wantCard || demoActive || hasRecoveryState);
+  });
+
+  // "Try a demo launch" — drive the settings checkbox and fire its change
+  // handler so the exact same setDemoMode path runs (persist, verify,
+  // reload). From a pristine state that path skips the reset warning.
+  // The persist + verify round-trips take a beat before the reload, so
+  // show a spinner immediately — a dead-looking button on a first-timer's
+  // very first click reads as "the app is broken".
+  bind('welcomeTryDemoBtn', 'click', (e) => {
+    const btn = e.currentTarget;
+    btn.classList.add('is-loading');
+    btn.disabled = true;
+    const toggle = document.getElementById('demoModeToggle');
+    if (!toggle) return;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    // If enabling fails or is cancelled, setDemoMode reverts the checkbox
+    // and the page never reloads — poll for that and restore the button.
+    // (A one-shot timeout isn't enough: the mid-launch confirm dialog can
+    // stay open arbitrarily long before the user cancels.) On success the
+    // reload wipes this interval with the page. The 60s cap restores the
+    // button even if something failed without reverting the checkbox.
+    let waited = 0;
+    const poll = setInterval(() => {
+      waited += 500;
+      if (!toggle.checked || waited >= 60000) {
+        btn.classList.remove('is-loading');
+        btn.disabled = false;
+        clearInterval(poll);
+      }
+    }, 500);
+  });
+
+  // "Set up my RPC" — expand the settings panel and land on the RPC
+  // section (helper lives in rpc-panel.js next to the panel logic).
+  bind('welcomeOpenRpcBtn', 'click', () => openSettingsToRpc());
+
+  // "Don't show this again" — persist and hide. Fire-and-forget on the
+  // POST: if it fails the card reappears next session, which is annoying
+  // but harmless, and the hide itself should feel instant.
+  bind('welcomeHideLink', 'click', (e) => {
+    e.preventDefault();
+    card.classList.add('hidden');
+    fetch('/api/user-prefs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ showWelcomeCard: false }),
+    }).catch(() => {});
+  });
+})();

@@ -106,13 +106,80 @@ export function createLaunchReportUmi(launchWallet, options = {}) {
   return setMetadataUploaderIdentity(createMetadataUmi(options), launchWallet);
 }
 
+// Retry policy for the Irys uploads. Uploads are one-shot HTTP calls to a
+// gateway; a transient failure (timeout, 5xx, connection reset) should not
+// cost the user their permanent report when a second attempt lands fine.
+// Duplicate-artifact note: if an attempt actually succeeded but the response
+// was lost, the retry publishes a second identical artifact. That's benign —
+// artifacts share the same Mint tag and signer, and any consumer picks the
+// newest Unix-Time — and it's the right trade against losing the report.
+const UPLOAD_RETRY_ATTEMPTS = 3;
+const UPLOAD_RETRY_BASE_DELAY_MS = 2000;
+
+// Overall wall-clock budget for the whole publish. The per-request Irys
+// timeout (metadataUploadService.DEFAULT_IRYS_TIMEOUT_MS) bounds a single
+// hung request, but retries multiply it; this caps the total so the step-6
+// flow — which runs the SWEEP right after this — can never be stalled
+// indefinitely by a misbehaving gateway. On expiry the publish reports
+// failure (non-fatal, retryable later) and the launch proceeds.
+const PUBLISH_DEADLINE_MS = 3 * 60 * 1000;
+
+async function uploadWithRetry(umi, files, {
+  label,
+  attempts = UPLOAD_RETRY_ATTEMPTS,
+  baseDelayMs = UPLOAD_RETRY_BASE_DELAY_MS,
+  logger = console,
+  onProgress,
+} = {}) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await umi.uploader.upload(files);
+    } catch (err) {
+      lastErr = err;
+      logger.warn?.(
+        `Launch report: ${label} upload attempt ${attempt}/${attempts} failed: ${err?.message || err}`,
+      );
+      onProgress?.({ stage: 'report_upload_retry', label, attempt, error: err?.message || String(err) });
+      if (attempt < attempts) {
+        // Simple doubling backoff (x1, x2, x4 of the base delay).
+        await new Promise((r) => setTimeout(r, baseDelayMs * (2 ** (attempt - 1))));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // Publish the launch report. Returns one of:
 //   { skipped: true,  reason }                       — opt-out or nothing to key on
 //   { skipped: false, failed: true,  error }          — upload failed (non-fatal)
 //   { skipped: false, failed: false, jsonUri, htmlUri } — published
 //
 // Never throws: a publish failure must not surface as a launch failure.
-export async function publishLaunchReport({
+export async function publishLaunchReport(args) {
+  const deadlineMs = Number.isFinite(args?.deadlineMs) ? args.deadlineMs : PUBLISH_DEADLINE_MS;
+  let deadlineHandle = null;
+  const deadline = new Promise((resolve) => {
+    deadlineHandle = setTimeout(() => resolve({
+      skipped: false,
+      failed: true,
+      error: `publish exceeded its ${Math.round(deadlineMs / 1000)}s deadline; `
+        + 'the launch continues — the report can be retried afterwards',
+      deadlineExceeded: true,
+    }), deadlineMs);
+    // Deliberately NOT unref'd: while an upload hangs, this timer is the
+    // only thing guaranteed to keep the event loop alive long enough to
+    // fire the deadline. The clearTimeout in the finally below stops it
+    // from outliving a normal resolution.
+  });
+  try {
+    return await Promise.race([publishLaunchReportInner(args), deadline]);
+  } finally {
+    clearTimeout(deadlineHandle);
+  }
+}
+
+async function publishLaunchReportInner({
   enabled,
   umi,
   reportHtml,
@@ -123,6 +190,7 @@ export async function publishLaunchReport({
   appVersion = null,
   onProgress,
   logger = console,
+  uploadRetry = {},
 }) {
   // Opt-out short-circuit. No umi is touched, no network call is made.
   if (!enabled) {
@@ -166,7 +234,9 @@ export async function publishLaunchReport({
         'launch-report.html',
         { tags: buildReportTags({ kind: 'html', mint, quoteMint, poolIds, appVersion, unixTime }) },
       );
-      [htmlUri] = await umi.uploader.upload([htmlFile]);
+      [htmlUri] = await uploadWithRetry(umi, [htmlFile], {
+        label: 'HTML', logger, onProgress, ...uploadRetry,
+      });
       logger.log?.('Launch report (HTML) published:', htmlUri);
       onProgress?.({ stage: 'report_html_published', htmlUri });
     }
@@ -178,7 +248,9 @@ export async function publishLaunchReport({
       'launch-report.json',
       { tags: buildReportTags({ kind: 'json', mint, quoteMint, poolIds, appVersion, unixTime }) },
     );
-    const [jsonUri] = await umi.uploader.upload([jsonFile]);
+    const [jsonUri] = await uploadWithRetry(umi, [jsonFile], {
+      label: 'JSON', logger, onProgress, ...uploadRetry,
+    });
     logger.log?.('Launch report (JSON) published:', jsonUri);
     onProgress?.({ stage: 'report_json_published', jsonUri, htmlUri });
 

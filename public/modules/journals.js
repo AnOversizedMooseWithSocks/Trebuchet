@@ -65,6 +65,8 @@ function launchJournalStageLabel(journal) {
     supply_minted: 'Supply minted',
     mint_authority_revoked: 'Mint authority revoked',
     metadata_update_authority_revoked: 'Metadata authority revoked',
+    metadata_authority_kept: 'Metadata authority kept (user option)',
+    metadata_authority_transferred: 'Metadata authority handed to destination',
     token_safety_verified: 'Token safety verified',
     token_created: 'Token created',
     token_create_failed: 'Token creation failed',
@@ -681,10 +683,46 @@ function buildLaunchJournalRow(journal, wallet) {
     // summary AND the wallet secret — so the confirmation spells out that the
     // recovery phrase is permanently deleted. With no wallet attached it's the
     // harmless journal-only dismiss.
+    //
+    // For the secret-attached case, also check the live balance first and
+    // put the concrete numbers in the dialog: discarding the key of a
+    // wallet that still holds funds is irreversible money loss. Best
+    // effort — a failed lookup falls back to the generic warning rather
+    // than blocking the dismissal (same pattern as pending-wallets.js).
+    let balanceLine = '';
+    if (hasSecret && journal.walletPublicKey) {
+      try {
+        const resp = await fetch('/api/check-balance-detailed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ publicKey: journal.walletPublicKey }),
+        });
+        const data = await resp.json();
+        if (data.success && data.balance) {
+          const sol = Number(data.balance.sol || 0);
+          const tokenCount = Object.values(data.balance.tokens || {})
+            .filter((t) => { try { return BigInt(t.amountRaw) > 0n; } catch (_) { return false; } })
+            .length;
+          // Mirror the server's dust rule (walletRecovery.js).
+          if (sol >= 0.001 || tokenCount > 0) {
+            const parts = [];
+            if (sol > 0) parts.push(`<strong>${sol.toFixed(6)} SOL</strong>`);
+            if (tokenCount > 0) parts.push(`<strong>${tokenCount} token balance${tokenCount === 1 ? '' : 's'}</strong>`);
+            balanceLine =
+              `<p class="has-text-danger">This wallet still holds ${parts.join(' and ')}. ` +
+              `Discarding the recovery entry makes those funds unrecoverable unless ` +
+              `you have saved the recovery phrase somewhere else.</p>`;
+          } else {
+            balanceLine = '<p>On-chain check: this wallet is empty (dust only).</p>';
+          }
+        }
+      } catch (_) { /* offline / RPC error — keep the generic warning */ }
+    }
     const ok = await confirmDialog({
       title: hasSecret ? 'Dismiss and discard wallet?' : 'Dismiss launch journal?',
       body: hasSecret
         ? `<p>Remove the recovery entry for <strong>${escapeHtml(tokenLabel)}</strong>?</p>` +
+          balanceLine +
           `<p>This permanently deletes the recovery phrase / secret key for the launch wallet ` +
           `(<span class="is-family-monospace">${escapeHtml(walletShort)}</span>) and clears the ` +
           `journal summary. Make sure you've moved any funds out of this wallet, or are certain ` +

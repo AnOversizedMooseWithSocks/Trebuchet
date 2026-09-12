@@ -12,6 +12,14 @@ bind('transferAssetsBtn', 'click', () => {
     log("Destination address doesn't look like a valid Solana address", 'danger');
     return;
   }
+  // Sweeping the launch wallet to itself is always a mistake (pays fees,
+  // moves nothing, and leaves the wallet reading as non-empty). Easy for
+  // someone to do by copying the wrong address off this very page.
+  if (tempWallet && dest === tempWallet.publicKey) {
+    log('That is the launch wallet\'s own address. Enter the wallet you want '
+      + 'the funds sent TO — for example your Phantom or Solflare address.', 'danger');
+    return;
+  }
   showTransferConfirmModal(dest);
 });
 
@@ -477,6 +485,12 @@ async function runTransfer() {
           ...(demoModeActive ? { tempWalletSecretKey: tempWallet.secretKey } : {}),
           destinationWallet: dest,
           tokenMint: createdTokenInfo ? createdTokenInfo.mint : '',
+          // Keep-authority launches: tell the server to hand the metadata
+          // update authority to the destination BEFORE sweeping — the
+          // launch wallet (the current authority) is destroyed after this.
+          ...(createdTokenInfo && createdTokenInfo.metadataAuthorityKept
+            ? { keepMetadataAuthorityMint: createdTokenInfo.mint }
+            : {}),
           // No airdrop payload: it already ran in step 6a. The server
           // keeps its in-process airdrop branch as a safety net for old
           // clients, but this client never exercises it.
@@ -556,10 +570,23 @@ async function runTransfer() {
       const airdropFailed = lastAirdropResult?.failed || [];
       const hasPartialFailure =
         data.solSweepError
+        || data.solSweepSkipped
         || tokenErrors.length > 0
         || nftErrors.length > 0
         || airdropFailed.length > 0;
 
+      if (data.solSweepSkipped) {
+        // Deliberate skip, not a failure: some asset transfer didn't complete,
+        // so the server kept the SOL in the launch wallet ON PURPOSE — it's
+        // the fee money a retry needs. Say that plainly, because "SOL wasn't
+        // transferred" reads as theft to a worried user.
+        log(
+          'Some assets could not be transferred yet, so your SOL was kept in the ' +
+          'launch wallet on purpose — it pays the fees for the retry. ' +
+          'Nothing has been lost. Click Transfer Assets again to retry.',
+          'warning',
+        );
+      }
       if (data.solSweepError) {
         log(`SOL sweep failed: ${data.solSweepError}`, 'warning');
         log(

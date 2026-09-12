@@ -588,8 +588,11 @@ export async function handleCreateToken(req, res) {
       mintAndFreezeAuthoritiesSafe: true,
       mintAuthorityRenounced: true,
       freezeAuthorityDisabled: true,
-      metadataUpdateAuthorityRevoked: true,
-      metadataImmutable: true,
+      // Mirror the user's metadata-authority choice so the demo walkthrough
+      // shows the same downstream behavior a real launch would.
+      metadataUpdateAuthorityRevoked: req.body.keepMetadataAuthority !== 'true',
+      metadataImmutable: req.body.keepMetadataAuthority !== 'true',
+      metadataAuthorityKept: req.body.keepMetadataAuthority === 'true',
       warning: null,
     });
   } catch (error) {

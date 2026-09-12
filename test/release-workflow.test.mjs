@@ -12,11 +12,17 @@ import {
 
 const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
 
-test('release workflow is tag-driven and publishes checksums', () => {
+test('release workflow is tag-driven, test-gated, and publishes checksums', () => {
   const workflow = read('.github/workflows/release.yml');
   const publishScript = read('scripts/publish-release.mjs');
 
   assert.match(workflow, /tags:\s*\n\s*-\s*'v\*'/);
+  // The release build must be gated on the full suite: nothing else
+  // between a push to main and a published installer runs the tests
+  // (CI covers PRs only; auto-release dispatches this unconditionally).
+  assert.match(workflow, /test:\s*\n\s+name: Test \(release gate\)/);
+  assert.match(workflow, /run: npm test/);
+  assert.match(workflow, /needs: test/);
   assert.match(workflow, /node scripts\/release-build\.mjs/);
   assert.match(workflow, /node scripts\/publish-release\.mjs/);
   assert.match(workflow, /actions\/download-artifact@v5/);
@@ -32,8 +38,11 @@ test('release workflow is tag-driven and publishes checksums', () => {
 test('ci only runs package smoke builds before release', () => {
   const workflow = read('.github/workflows/ci.yml');
 
-  assert.match(workflow, /on:\s*\n\s+pull_request:\s*\n\s+workflow_dispatch:/);
-  assert.doesNotMatch(workflow, /\n\s+push:/);
+  // Trigger set: PRs, manual dispatch, AND direct pushes to main. The
+  // push trigger exists because most commits land on main without a PR
+  // in this repo; without it those commits never run the suite in CI.
+  assert.match(workflow, /push:\s*\n\s+branches: \[main\]/);
+  assert.match(workflow, /pull_request:\s*\n\s+workflow_dispatch:/);
   assert.doesNotMatch(workflow, /needs:\s+test/);
   assert.doesNotMatch(workflow, /macos-15-intel/);
   assert.doesNotMatch(workflow, /Install Linux packaging dependencies/);

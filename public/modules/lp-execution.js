@@ -50,6 +50,10 @@ bind('createTokenBtn', 'click', async () => {
       }
       const logoFile = document.getElementById('tokenLogo').files[0];
       if (logoFile) formData.append('logo', logoFile);
+      // Metadata-authority choice. Checkbox CHECKED means revoke (the
+      // long-standing default); the server flag is the inverse: keep.
+      const revokeMeta = document.getElementById('revokeMetadataToggle');
+      formData.append('keepMetadataAuthority', String(!!(revokeMeta && !revokeMeta.checked)));
 
       const resp = await fetch('/api/create-token', { method: 'POST', body: formData });
       const data = await resp.json();
@@ -79,6 +83,9 @@ bind('createTokenBtn', 'click', async () => {
         freezeAuthorityDisabled: data.freezeAuthorityDisabled === true,
         metadataUpdateAuthorityRevoked: data.metadataUpdateAuthorityRevoked === true,
         metadataImmutable: data.metadataImmutable === true,
+        // True when the user opted to keep the update authority; step 6
+        // reads this to trigger the authority handoff before the sweep.
+        metadataAuthorityKept: data.metadataAuthorityKept === true,
       };
 
       document.getElementById('tokenMintAddress').textContent = data.tokenMint;
@@ -286,7 +293,18 @@ function renderPreflightModalBody(resolvedPrices) {
     // sourceHtml is interpolated raw (not via escapeHtml) so the link can
     // render — non-link branches escape their own content where needed.
     let sourceHtml;
-    if (rp.source === 'raydium-probe') {
+    if (typeof rp.source === 'string' && rp.source.startsWith('on-chain:')) {
+      // The primary source now: read from the pool account itself, not an
+      // indexer. Name the anchor pair so the user knows what the price is
+      // measured against. "(shared)" is appended by the creation loop when
+      // a second pool reuses the first's resolution — preserve it.
+      const rest = rp.source.slice('on-chain:'.length);
+      const anchor = rest.replace(/\s*\(shared\)\s*$/, '');
+      const shared = /\(shared\)/.test(rest) ? ' (shared)' : '';
+      sourceHtml =
+        '<span title="Price read directly from the on-chain pool account — the exact source the launch uses.">' +
+        'on-chain ' + escapeHtml(anchor) + ' pool' + shared + '</span>';
+    } else if (rp.source === 'raydium-probe') {
       sourceHtml = 'verified from Raydium';
     } else if (rp.source === 'sol') {
       sourceHtml = 'SOL/USD oracle';

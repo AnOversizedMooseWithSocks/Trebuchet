@@ -44,19 +44,33 @@ test('lpService records the Fee Key NFT mint at every lock site', () => {
   );
   // One recording per position type: main (pos), ladder (lp), support (sp),
   // bootstrap (bs).
+  // Locks now run through executeSdkTx (in-flight retry). The recording
+  // reads the builder result off the retry value; on ADOPTION (a lock that
+  // landed on a prior attempt but whose confirmation timed out) the builder
+  // result is gone and the label is null — the Fee Key itself still reaches
+  // the destination because the sweep enumerates every NFT by address.
   for (const v of ['pos', 'lp', 'sp', 'bs']) {
     assert.ok(
-      lpSrc.includes(`${v}.feeKeyNftMint = feeKeyMintFromLockResult(lockRes);`),
+      lpSrc.includes(`${v}.feeKeyNftMint = lockR.skipped`) &&
+        new RegExp(`${v}\\.feeKeyNftMint = lockR\\.skipped[\\s\\S]{0,400}\\(lockR\\.value\\.feeKey \\|\\| null\\)[\\s\\S]{0,80}feeKeyMintFromLockResult\\(lockR\\.value\\.res\\)`).test(lpSrc),
       `lock phase must record feeKeyNftMint on '${v}' records`,
     );
   }
 });
 
 test('Phase 4 transfers the Fee Key NFT, not the escrowed position NFT', () => {
-  assert.ok(
-    /const feeKeyMint = pos\.feeKeyNftMint \|\| pos\.nftMint;/.test(lpSrc),
-    'transferFeeKeys must prefer the recorded Fee Key mint (position NFT is escrowed after lock)',
-  );
+  // The previous form of this pin asserted `feeKeyNftMint || pos.nftMint` —
+  // i.e. it REQUIRED the fallback to the escrowed position NFT that the
+  // test's own title says must never be transferred. With lock adoption
+  // able to leave feeKeyNftMint null, that fallback became reachable, so
+  // Phase 4 now recovers the Fee Key from the lock program and, failing
+  // that, records a clear failure instead of attempting a doomed transfer.
+  assert.doesNotMatch(lpSrc, /const feeKeyMint = pos\.feeKeyNftMint \|\| pos\.nftMint;/,
+    'transferFeeKeys must NEVER fall back to the escrowed position NFT');
+  assert.match(lpSrc, /let feeKeyMint = pos\.feeKeyNftMint \|\| null;[\s\S]{0,300}findLockFeeKeyForPosition\(raydium, pos\.nftMint\)/,
+    'a missing Fee Key mint is recovered from the lock program before giving up');
+  assert.match(lpSrc, /Fee Key mint could not be identified for this locked position/,
+    'and an unrecoverable one is recorded as a clear, actionable failure');
   assert.ok(
     /nftMint: feeKeyMint,\r?\n\s*recipient: pos\.recipient,/.test(lpSrc),
     'the transfer call must use the Fee Key mint',
@@ -140,4 +154,19 @@ test('demo mode mirrors the audit fields (report parity)', () => {
     /const demoFeeKeyMint = pos\.feeKeyNftMint \|\| pos\.nftMint;/.test(demoSrc),
     'demo Phase 4 must remove the Fee Key mint from the wallet',
   );
+});
+
+test('the lock retry probe requires POSITIVE on-chain evidence of a lock', () => {
+  // Regression pin for the most dangerous failure direction in the launch:
+  // inferring "already locked" from the position's ABSENCE in the wallet.
+  // Absence also happens when the RPC hasn't indexed the position yet;
+  // treating it as locked skips the lock, leaves liquidity unlocked, and
+  // reports it locked. The probe must ask the lock program for a lock
+  // account naming this position, and adopt only when one exists.
+  assert.doesNotMatch(lpSrc, /function positionNoLongerOwned/,
+    'the absence-based lock probe must not exist');
+  assert.match(lpSrc, /async function positionLockedOnChain\(raydium, nftMint\)[\s\S]{0,400}findLockFeeKeyForPosition\(raydium, nftMint\)/,
+    'the lock probe must consult the lock program for positive evidence');
+  const probeUses = (lpSrc.match(/alreadyDone: \(\) => positionLockedOnChain\(raydium, \w+\.nftMint\)/g) || []).length;
+  assert.equal(probeUses, 4, 'all four lock sites use the positive-evidence probe');
 });

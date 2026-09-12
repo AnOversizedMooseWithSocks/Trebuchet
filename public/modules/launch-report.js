@@ -1268,7 +1268,16 @@ function buildLaunchReportHtml({ logoDataUrl = null } = {}) {
        know exactly what to check. -->
   ${renderFactRow('Mint authority', tokenInfo.mintAuthorityRenounced ? 'Renounced — supply is permanently capped' : 'NOT renounced')}
   ${renderFactRow('Freeze authority', tokenInfo.freezeAuthorityDisabled ? 'Disabled — holders can never be frozen' : 'NOT disabled')}
-  ${renderFactRow('Metadata update authority', tokenInfo.metadataUpdateAuthorityRevoked ? 'Revoked — name/symbol/logo are permanent' : 'NOT revoked')}
+  ${renderFactRow('Metadata update authority', tokenInfo.metadataUpdateAuthorityRevoked
+    ? 'Revoked — name/symbol/logo are permanent'
+    // Distinguish a deliberate keep (the launcher opted to retain the
+    // ability to update name/logo, and the authority was handed to their
+    // destination wallet) from an unintended failure to revoke. Rendering
+    // both as a bare "NOT revoked" misreads a chosen configuration as a
+    // defect — in a permanent, public document.
+    : (tokenInfo.metadataAuthorityKept
+        ? 'Retained by the launcher — name/symbol/logo can be updated by the creator wallet (deliberate)'
+        : 'NOT revoked'))}
   ${renderFactRow('Token program', 'SPL Token (classic) — no Token-2022 extensions')}
   ` : ''}
 
@@ -1758,9 +1767,26 @@ function _resetCachedReport() {
 async function _getReportHtml() {
   if (_cachedReportHtml) return _cachedReportHtml;
   try {
-    const logoSrc = (createdTokenInfo && createdTokenInfo.imageUri)
-      ? createdTokenInfo.imageUri
-      : await readLogoAsDataUrl();
+    // Logo source order — embed-first, remote as fallback:
+    //
+    //   1. The selected file, embedded as a base64 data URL. Self-contained:
+    //      shows in the in-app previews, in the downloaded report offline,
+    //      and in the published report IMMEDIATELY. The remote Arweave copy
+    //      commonly 404s on gateways for minutes right after upload — which
+    //      is exactly when a proud launcher opens their report — and that
+    //      propagation lag was the "my logo doesn't show up" complaint.
+    //      With the 200×200 cap enforced upstream, the embed is small; the
+    //      byte guard below is a belt-and-suspenders check that falls back
+    //      to the remote URI rather than blowing the ~95KB publish budget.
+    //   2. The on-chain imageUri (Arweave), for restored sessions where the
+    //      file input no longer holds the file.
+    //   3. Nothing — the report renders its text placeholder.
+    const EMBED_MAX_CHARS = 60 * 1024; // data-URL length budget within the 95KB HTML cap
+    const dataUrl = await readLogoAsDataUrl();
+    const remoteUri = (createdTokenInfo && createdTokenInfo.imageUri) || null;
+    const logoSrc = (dataUrl && dataUrl.length <= EMBED_MAX_CHARS)
+      ? dataUrl
+      : (remoteUri || dataUrl);
     _cachedReportHtml = buildLaunchReportHtml({ logoDataUrl: logoSrc });
   } catch (e) {
     console.error('Failed to build report HTML for preview:', e);

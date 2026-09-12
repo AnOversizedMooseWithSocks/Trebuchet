@@ -57,7 +57,17 @@ const INSUFFICIENT_FUNDS_SIGNS = [
   /debit an account but found no record of a prior credit/i, // empty fee payer / source
   /insufficient\s+funds\s+for\s+rent/i,
   /Transfer:\s*insufficient\s+lamports/i,
-  /custom program error:\s*0x1771/i, // SPL Token: insufficient funds (0x1=1? -> 0x1771 is the token-prog insufficient-funds code in practice)
+  // NOTE: a `custom program error: 0x1771` pattern used to live here, labelled
+  // "the token-prog insufficient-funds code in practice" with the author's own
+  // question mark. It is not that. 0x1771 is 6001, and Anchor custom errors
+  // start at 6000 — so it is some ANCHOR program's second custom error (for
+  // the CLMM program, an approval/state error), not a lamport shortfall. SPL
+  // Token is not an Anchor program; its InsufficientFunds is plain 0x1, which
+  // is far too generic to match on safely since every program's error #1
+  // shares it. Both this class and 'deterministic' stop the retry, so removing
+  // the pattern changes no retry behaviour — it just stops the classifier from
+  // telling a user to add SOL when the actual failure was a program state
+  // error that more SOL will not fix.
 ];
 
 // Things that are worth another attempt: the transaction didn't land (or we

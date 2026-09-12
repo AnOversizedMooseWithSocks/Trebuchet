@@ -476,7 +476,14 @@ const MAX_TOKEN_SUPPLY = 10_000_000_000;
 // small enough to allow simple pixel-art logos while catching the
 // common "I picked the wrong file" case.
 const MAX_LOGO_BYTES = 100 * 1024;
-const MAX_LOGO_DIMENSION = 1024;
+// 200×200 ceiling (was 1024): the logo embeds base64 into the metadata
+// JSON and the launch-report HTML, both under hard upload budgets — at
+// 1024px a logo could single-handedly blow the report past the ~95KB
+// sponsored-upload cap, which is how "my logo doesn't show in the report"
+// happened. The server enforces the same rule authoritatively
+// (validators.js assertLogoConstraints); this check just fails friendlier
+// and earlier. Keep the two in sync.
+const MAX_LOGO_DIMENSION = 200;
 const MIN_LOGO_DIMENSION = 64;
 
 // State for the simple-config UI. `mode` is the master switch:
@@ -1157,6 +1164,216 @@ async function confirmDialog(opts = {}) {
   });
 }
 
+// ===========================================================================
+// Concept help / glossary
+// ---------------------------------------------------------------------------
+// One mechanism for explaining the app's harder concepts, so explanations
+// don't accumulate as one-off modals and ad-hoc links. Usage, anywhere in
+// the markup (static or dynamically rendered — the listener is delegated):
+//
+//   <a href="#" class="explain-link" data-explain="fee-key-nft">what's this?</a>
+//
+// Clicking any [data-explain] element opens the matching topic in the
+// generic confirm modal (single "Got it" button). Adding a new explainable
+// term is one dictionary entry plus one attribute — no extra wiring.
+//
+// Writing style for entries: plain language first, the proper term second.
+// Assume the reader has used a phone wallet and nothing else. Two to five
+// sentences; say what the thing is, why it matters to THEM, and what (if
+// anything) they need to do about it. No marketing.
+// ===========================================================================
+
+const HELP_TOPICS = {
+  'rpc-endpoint': {
+    title: 'What is an RPC endpoint?',
+    body:
+      '<p>An RPC endpoint is the server Trebuchet talks to when it reads from ' +
+      'or writes to the Solana blockchain — every balance check, token ' +
+      'creation, and pool transaction goes through it.</p>' +
+      '<p>The free public endpoint strictly limits how many requests you can ' +
+      'make. A launch needs a rapid burst of dozens, so on the public ' +
+      'endpoint it gets cut off partway through and fails. A dedicated ' +
+      'endpoint from a provider like Helius has limits high enough for a ' +
+      'launch, and their free tiers are more than sufficient.</p>',
+  },
+  'ephemeral-wallet': {
+    title: 'The launch wallet (and its recovery phrase)',
+    body:
+      '<p>Trebuchet creates a fresh, temporary wallet to run your launch. You ' +
+      'fund it, it does all the on-chain work, and at the end everything left ' +
+      'in it is swept to an address you choose. It exists so you never have ' +
+      'to paste your personal wallet\u2019s keys into anything.</p>' +
+      '<p>Its recovery phrase is the master key to that wallet. Trebuchet ' +
+      'stores it encrypted on this machine until the launch completes, but ' +
+      'you should also write it down: if this computer dies mid-launch, the ' +
+      'phrase is the only way to reach the funds.</p>',
+  },
+  'vanity-ca': {
+    title: 'What is a vanity CA?',
+    body:
+      '<p>Every token has a contract address (\u201cCA\u201d) \u2014 the long string people ' +
+      'paste into wallets and explorers to find it. Normally it\u2019s random.</p>' +
+      '<p>A vanity CA is one ground out by brute force until it starts or ' +
+      'ends with characters you chose (like your ticker). Purely cosmetic \u2014 ' +
+      'the token works identically either way \u2014 but it makes the address ' +
+      'recognizable at a glance. Longer patterns take exponentially longer ' +
+      'to find.</p>',
+  },
+  'market-cap': {
+    title: 'Target market cap and starting price',
+    body:
+      '<p>Market cap is the token\u2019s total supply multiplied by its price. The ' +
+      'target you enter here sets the token\u2019s <em>starting</em> price: price ' +
+      '= target market cap \u00f7 total supply.</p>' +
+      '<p>Example: 1 billion tokens with a $10,000 target start at $0.00001 ' +
+      'each. It\u2019s a starting point, not a promise \u2014 the moment trading ' +
+      'begins, the market sets the price.</p>',
+  },
+  'liquidity-pool': {
+    title: 'What is a liquidity pool?',
+    body:
+      '<p>A liquidity pool is what makes a token tradable. It\u2019s an on-chain ' +
+      'pot holding your token so buyers can swap SOL (or another token) for ' +
+      'it at a price that moves with supply and demand. No pool, no ' +
+      'trading.</p>' +
+      '<p>Trebuchet creates concentrated pools (Raydium \u201cCLMM\u201d) seeded ' +
+      'single-sided \u2014 only your token goes in, no upfront SOL on the other ' +
+      'side. The SOL side fills up naturally as people buy.</p>',
+  },
+  'fee-tier': {
+    title: 'What is a pool\u2019s fee tier?',
+    body:
+      '<p>Every trade in a pool pays a small percentage fee \u2014 the fee tier ' +
+      'is that percentage (for example 0.25% or 1%).</p>' +
+      '<p>Those fees are what your Fee Key NFTs collect after the launch. ' +
+      'Higher tiers earn more per trade but can discourage trading; the ' +
+      'defaults are sensible for most launches.</p>',
+  },
+  'bootstrap-position': {
+    title: 'What is the bootstrap position?',
+    body:
+      '<p>A newly created pool with only your token in it isn\u2019t tradable yet ' +
+      '\u2014 there\u2019s nothing on the other side to price against. The bootstrap ' +
+      'position is a small, deliberate deposit that crosses that line and ' +
+      'switches the pool live.</p>' +
+      '<p>Trebuchet defers every bootstrap until all pools\u2019 main liquidity is ' +
+      'in place, so trading can\u2019t start on one pool while the others are ' +
+      'still being built.</p>',
+  },
+  'burn-and-earn': {
+    title: 'Locking liquidity (Burn & Earn)',
+    body:
+      '<p>Locking, via Raydium\u2019s Burn &amp; Earn, permanently gives up the ' +
+      'ability to withdraw the liquidity \u2014 yours included. Nobody can ever ' +
+      'pull the pot out from under traders, which is the strongest ' +
+      '\u201cno rug\u201d guarantee a launch can make.</p>' +
+      '<p>In exchange for each locked position you receive a Fee Key NFT ' +
+      'that collects that position\u2019s trading fees forever. The liquidity is ' +
+      'locked; the income from it is not.</p>',
+  },
+  'fee-key-nft': {
+    title: 'What is a Fee Key NFT?',
+    body:
+      '<p>A Fee Key NFT is the receipt you get for permanently locking a ' +
+      'liquidity position. Whoever holds it collects the trading fees that ' +
+      'position earns, forever.</p>' +
+      '<p>It\u2019s a normal transferable NFT: keep it, sell it, or split several ' +
+      'among team members. In Trebuchet, 100% of them go to you \u2014 there is ' +
+      'no platform cut. Guard them like money, because they are.</p>',
+  },
+  'slippage': {
+    title: 'What is slippage?',
+    body:
+      '<p>Slippage is the gap between the price you saw when you submitted a ' +
+      'trade and the price you actually got \u2014 the market can move in the ' +
+      'second in between.</p>' +
+      '<p>A slippage tolerance says how much of that gap you\u2019ll accept ' +
+      'before the trade cancels itself instead of filling at a worse ' +
+      'price.</p>',
+  },
+  'network-fees': {
+    title: 'Network fees (and priority fees)',
+    body:
+      '<p>Every Solana transaction pays a tiny base fee, and Trebuchet adds a ' +
+      'small \u201cpriority fee\u201d tip on top \u2014 that\u2019s what gets transactions ' +
+      'processed promptly when the network is busy instead of being ' +
+      'dropped.</p>' +
+      '<p>Trebuchet measures the going rate right before each transaction and ' +
+      'bids slightly above it, with a hard cap. The whole overhead is ' +
+      'fractions of a cent per transaction and is already included in the ' +
+      'funding estimate.</p>',
+  },
+  'sweep': {
+    title: 'The final sweep',
+    body:
+      '<p>The last step of a launch empties the temporary launch wallet: Fee ' +
+      'Key NFTs, any airdrop you configured, leftover tokens, and remaining ' +
+      'SOL all move to one destination address you choose.</p>' +
+      '<p>Use a wallet you control \u2014 not an exchange deposit address, which ' +
+      'usually can\u2019t receive tokens or NFTs. Transfers on Solana are final, ' +
+      'so the address gets a full-screen confirmation before anything ' +
+      'moves.</p>',
+  },
+  'launch-report': {
+    title: 'The permanent launch report',
+    body:
+      '<p>After a launch finishes, Trebuchet can write a public record of it ' +
+      'to Arweave \u2014 permanent storage that can\u2019t be edited or deleted. ' +
+      'Anyone can look the report up from the token\u2019s address and verify how ' +
+      'the launch was configured: supply, pools, locks.</p>' +
+      '<p>Nothing is added to the token itself, and the report is signed by ' +
+      'the launch wallet so it can\u2019t be forged. It\u2019s optional \u2014 turn it off ' +
+      'in Settings to keep your launch private.</p>',
+  },
+  'metadata-authority': {
+    title: 'Permanent metadata vs. keeping the update authority',
+    body:
+      '<p>A token\u2019s metadata is its name, symbol, and logo. By default, ' +
+      'Trebuchet permanently revokes the ability to change them \u2014 nobody, ' +
+      'including you, can ever alter what the token looks like. Holders can ' +
+      'verify that on any explorer, and it\u2019s the more trusted setup.</p>' +
+      '<p>If you uncheck this, the update authority is instead handed to ' +
+      'your destination wallet at the end of the launch, so you can change ' +
+      'the name or logo later using standard Metaplex tools. The trade-off ' +
+      'is trust: explorers will show the metadata as still editable. Supply ' +
+      'is capped and liquidity locking works the same either way.</p>',
+  },
+  'preallocation': {
+    title: 'What is preallocation?',
+    body:
+      '<p>Preallocation reserves part of the token supply before it goes into ' +
+      'the pools \u2014 for an airdrop, a team share, or anything else you plan ' +
+      'to distribute yourself.</p>' +
+      '<p>Whatever you preallocate ends up in the final sweep to your ' +
+      'destination wallet instead of in the trading pools. More ' +
+      'preallocation means less liquidity backing the price, so keep it ' +
+      'modest.</p>',
+  },
+};
+
+// Show one topic in the generic confirm modal as an info dialog.
+function showHelpTopic(id) {
+  const topic = HELP_TOPICS[id];
+  if (!topic) {
+    console.warn(`help: unknown explain topic "${id}"`);
+    return;
+  }
+  confirmDialog({
+    title: topic.title,
+    body: topic.body,
+    confirmLabel: 'Got it',
+    hideCancel: true,
+  });
+}
+
+// Delegated listener: works for static markup AND anything rendered later
+// (pool rows, dynamically built panels) with no per-element wiring.
+document.addEventListener('click', (e) => {
+  const el = e.target.closest?.('[data-explain]');
+  if (!el) return;
+  e.preventDefault();
+  showHelpTopic(el.getAttribute('data-explain'));
+});
 // ===========================================================================
 // Update-check result handler
 // ===========================================================================
@@ -2458,6 +2675,24 @@ function togglePublicRpcWarning(activeUrl) {
   }
 
   banner.classList.toggle('hidden', !isPublic);
+  // Mirror the state onto the collapsed settings header so the entry
+  // point itself says setup is needed — the user shouldn't have to
+  // scroll to the danger banner to learn their RPC won't work.
+  const pill = document.getElementById('settingsSetupPill');
+  if (pill) pill.classList.toggle('hidden', !isPublic);
+}
+
+// Open the settings panel (if collapsed) and scroll to the RPC section.
+// Used by the welcome card's "Set up my RPC" button; kept here next to
+// toggleSettingsPanel so the expand logic stays in one module.
+function openSettingsToRpc() {
+  const panel = document.getElementById('rpcSettingsPanel');
+  if (panel && panel.classList.contains('hidden')) toggleSettingsPanel();
+  const anchor = document.getElementById('rpcSectionAnchor');
+  if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Put the cursor where the user's next action is.
+  const nameInput = document.getElementById('newRpcName');
+  if (nameInput) nameInput.focus({ preventScroll: true });
 }
 
 async function selectRpc(url) {
@@ -2663,9 +2898,6 @@ bind('generateWalletBtn', 'click', async () => {
       // address so the user doesn't have to re-enter anything to finish
       // a second demo run after a reset. No-op in real mode.
       applyDemoDestinationWallet();
-      if (typeof window.applySolflareDestinationWallet === 'function') {
-        window.applySolflareDestinationWallet({ silent: true });
-      }
 
       // Reset step summaries from any prior attempt
       for (let i = 2; i <= 6; i++) setStepSummary(i, '');
@@ -2843,374 +3075,6 @@ bind('tokenLogo', 'change', async (e) => {
 });
 
 const poolList = document.getElementById('poolList');
-// ===========================================================================
-// Solflare browser wallet
-// ===========================================================================
-
-let solflareWallet = null;
-let solflareWalletProvider = null;
-let walletStandardSolflareProvider = null;
-let walletStandardListenersStarted = false;
-const walletStandardWallets = [];
-const SOLFLARE_PROVIDER_WAIT_MS = 1500;
-
-function collectSolflareProviderCandidates() {
-  const candidates = [];
-  const add = (provider) => {
-    if (!provider || candidates.includes(provider)) return;
-    candidates.push(provider);
-  };
-
-  add(window.solflare);
-  add(window.solana);
-
-  const solanaProviders = window.solana?.providers;
-  if (Array.isArray(solanaProviders)) {
-    solanaProviders.forEach(add);
-  } else if (solanaProviders && typeof solanaProviders === 'object') {
-    Object.values(solanaProviders).forEach(add);
-  }
-
-  return candidates;
-}
-
-function isSolflareProvider(provider) {
-  if (!provider || typeof provider.connect !== 'function') return false;
-  const name = String(provider.name || provider.walletName || '').toLowerCase();
-  return (
-    provider === window.solflare ||
-    provider.isSolflare === true ||
-    name.includes('solflare')
-  );
-}
-
-function isSolflareStandardWallet(wallet) {
-  if (!wallet) return false;
-  const name = String(wallet.name || '').toLowerCase();
-  const hasSolanaChain = Array.isArray(wallet.chains)
-    && wallet.chains.some((chain) => String(chain).startsWith('solana:'));
-  return name.includes('solflare') && hasSolanaChain;
-}
-
-function standardWalletAccountAddress(wallet) {
-  const account = wallet?.accounts?.[0];
-  return publicKeyToString(account?.address || account?.publicKey);
-}
-
-function standardWalletFeature(wallet, name) {
-  const feature = wallet?.features?.[name];
-  return feature && typeof feature === 'object' ? feature : null;
-}
-
-function createStandardSolflareProvider(wallet) {
-  if (walletStandardSolflareProvider?.wallet === wallet) return walletStandardSolflareProvider;
-
-  walletStandardSolflareProvider = {
-    isSolflare: true,
-    name: wallet.name,
-    wallet,
-    get publicKey() {
-      return standardWalletAccountAddress(wallet);
-    },
-    get isConnected() {
-      return Boolean(standardWalletAccountAddress(wallet));
-    },
-    async connect() {
-      const feature = standardWalletFeature(wallet, 'standard:connect');
-      if (!feature || typeof feature.connect !== 'function') {
-        throw new Error('Solflare does not expose a Wallet Standard connect method.');
-      }
-      const result = await feature.connect();
-      const account = (result?.accounts || wallet.accounts || [])[0];
-      return { publicKey: account?.address || account?.publicKey };
-    },
-    async disconnect() {
-      const feature = standardWalletFeature(wallet, 'standard:disconnect');
-      if (feature && typeof feature.disconnect === 'function') {
-        await feature.disconnect();
-      }
-    },
-  };
-
-  return walletStandardSolflareProvider;
-}
-
-function syncConnectedSolflareProvider(provider, { publicKey = null, logChange = false } = {}) {
-  const nextPublicKey = publicKey
-    || provider?.publicKey
-    || provider?.wallet?.accounts?.[0]?.address
-    || provider?.wallet?.accounts?.[0]?.publicKey;
-  if (nextPublicKey) {
-    setConnectedSolflareWallet(provider, nextPublicKey);
-    if (logChange) {
-      log(`Solflare account changed: ${shortSolflareAddress(solflareWallet.publicKey)}`, 'info');
-    }
-  } else {
-    clearSolflareWallet();
-  }
-}
-
-function getWalletStandardSolflareProvider() {
-  const wallet = walletStandardWallets.find(isSolflareStandardWallet);
-  return wallet ? createStandardSolflareProvider(wallet) : null;
-}
-
-function registerWalletStandardWallets(...wallets) {
-  for (const wallet of wallets) {
-    if (wallet && !walletStandardWallets.includes(wallet)) {
-      walletStandardWallets.push(wallet);
-    }
-  }
-}
-
-function startWalletStandardDiscovery() {
-  if (walletStandardListenersStarted || typeof window === 'undefined') return;
-  walletStandardListenersStarted = true;
-
-  const api = Object.freeze({ register: (...wallets) => registerWalletStandardWallets(...wallets) });
-  window.addEventListener('wallet-standard:register-wallet', (event) => {
-    if (typeof event.detail === 'function') {
-      event.detail(api);
-    }
-  });
-
-  try {
-    window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: api }));
-  } catch (e) {
-    console.warn(`Wallet Standard discovery failed: ${e.message}`);
-  }
-}
-
-function getSolflareProvider() {
-  startWalletStandardDiscovery();
-  return collectSolflareProviderCandidates().find(isSolflareProvider)
-    || getWalletStandardSolflareProvider()
-    || null;
-}
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForSolflareProvider(timeoutMs = SOLFLARE_PROVIDER_WAIT_MS) {
-  const deadline = Date.now() + timeoutMs;
-  let provider = getSolflareProvider();
-  while (!provider && Date.now() < deadline) {
-    await wait(100);
-    provider = getSolflareProvider();
-  }
-  return provider;
-}
-
-function publicKeyToString(publicKey) {
-  if (!publicKey) return '';
-  if (typeof publicKey === 'string') return publicKey;
-  if (typeof publicKey.toBase58 === 'function') return publicKey.toBase58();
-  if (typeof publicKey.toString === 'function') return publicKey.toString();
-  return '';
-}
-
-function shortSolflareAddress(address) {
-  return address ? `${address.slice(0, 6)}...${address.slice(-6)}` : '';
-}
-
-function setSolflareStatus(message, type = 'light') {
-  const status = document.getElementById('solflareStatus');
-  if (!status) return;
-  status.className = `tag is-${type}`;
-  status.textContent = message;
-}
-
-function syncSolflareButtons() {
-  const connected = Boolean(solflareWallet?.publicKey);
-  document.getElementById('connectSolflareBtn')?.classList.toggle('hidden', connected);
-  document.getElementById('disconnectSolflareBtn')?.classList.toggle('hidden', !connected);
-  document.getElementById('useSolflareDestinationBtn')?.classList.toggle('hidden', !connected);
-}
-
-function setConnectedSolflareWallet(provider, publicKey) {
-  const address = publicKeyToString(publicKey);
-  if (!address) throw new Error('Solflare did not return a public key.');
-
-  solflareWalletProvider = provider;
-  solflareWallet = {
-    publicKey: address,
-    connectedAt: new Date().toISOString(),
-  };
-  window.connectedSolflareWallet = solflareWallet;
-  setSolflareStatus(shortSolflareAddress(address), 'success');
-  syncSolflareButtons();
-  return solflareWallet;
-}
-
-function clearSolflareWallet(message = 'Not connected') {
-  solflareWallet = null;
-  solflareWalletProvider = null;
-  window.connectedSolflareWallet = null;
-  setSolflareStatus(message, 'light');
-  syncSolflareButtons();
-}
-
-function fillDestinationFromSolflare({ silent = false } = {}) {
-  const destination = document.getElementById('destinationWallet');
-  if (!destination || !solflareWallet?.publicKey) return false;
-
-  destination.value = solflareWallet.publicKey;
-  destination.dispatchEvent(new Event('input', { bubbles: true }));
-  if (!silent) {
-    log(`Destination wallet set to Solflare: ${shortSolflareAddress(solflareWallet.publicKey)}`, 'success');
-  }
-  return true;
-}
-
-async function connectSolflareWallet() {
-  setSolflareStatus('Looking...', 'light');
-  const provider = await waitForSolflareProvider();
-  if (!provider) {
-    setSolflareStatus('Solflare not found', 'warning');
-    log('Solflare was not detected. Unlock the extension, allow this site, then try again.', 'warning');
-    return;
-  }
-
-  const btn = document.getElementById('connectSolflareBtn');
-  await withRunState(async () => {
-    setLoading(btn, true);
-    try {
-      wireSolflareProviderEvents(provider);
-      const result = await provider.connect();
-      const wallet = setConnectedSolflareWallet(provider, provider.publicKey || result?.publicKey);
-      log(`Solflare connected: ${shortSolflareAddress(wallet.publicKey)}`, 'success');
-    } catch (e) {
-      const message = e?.message || 'Connection rejected';
-      setSolflareStatus('Connection failed', 'danger');
-      log(`Solflare connection failed: ${message}`, 'warning');
-    } finally {
-      setLoading(btn, false);
-    }
-  });
-}
-
-async function disconnectSolflareWallet() {
-  const provider = solflareWalletProvider || getSolflareProvider();
-  const btn = document.getElementById('disconnectSolflareBtn');
-  await withRunState(async () => {
-    setLoading(btn, true);
-    try {
-      if (provider && typeof provider.disconnect === 'function') {
-        await provider.disconnect();
-      }
-      clearSolflareWallet();
-      log('Solflare disconnected.');
-    } catch (e) {
-      log(`Solflare disconnect failed: ${e.message}`, 'warning');
-    } finally {
-      setLoading(btn, false);
-    }
-  });
-}
-
-function getSolflareSigner() {
-  if (!solflareWallet?.publicKey || !solflareWalletProvider) return null;
-  const standardWallet = solflareWalletProvider.wallet;
-  if (standardWallet) {
-    const account = standardWallet.accounts?.[0] || null;
-    const signTransaction = standardWalletFeature(standardWallet, 'solana:signTransaction');
-    const signAndSendTransaction = standardWalletFeature(standardWallet, 'solana:signAndSendTransaction');
-    const signMessage = standardWalletFeature(standardWallet, 'solana:signMessage');
-    return {
-      publicKey: account?.publicKey || account?.address || solflareWallet.publicKey,
-      address: solflareWallet.publicKey,
-      signTransaction: signTransaction && typeof signTransaction.signTransaction === 'function'
-        ? signTransaction.signTransaction.bind(signTransaction)
-        : null,
-      signAllTransactions: null,
-      signAndSendTransaction: signAndSendTransaction
-        && typeof signAndSendTransaction.signAndSendTransaction === 'function'
-        ? signAndSendTransaction.signAndSendTransaction.bind(signAndSendTransaction)
-        : null,
-      signMessage: signMessage && typeof signMessage.signMessage === 'function'
-        ? signMessage.signMessage.bind(signMessage)
-        : null,
-    };
-  }
-
-  return {
-    publicKey: solflareWalletProvider.publicKey,
-    address: solflareWallet.publicKey,
-    signTransaction: typeof solflareWalletProvider.signTransaction === 'function'
-      ? solflareWalletProvider.signTransaction.bind(solflareWalletProvider)
-      : null,
-    signAllTransactions: typeof solflareWalletProvider.signAllTransactions === 'function'
-      ? solflareWalletProvider.signAllTransactions.bind(solflareWalletProvider)
-      : null,
-    signAndSendTransaction: typeof solflareWalletProvider.signAndSendTransaction === 'function'
-      ? solflareWalletProvider.signAndSendTransaction.bind(solflareWalletProvider)
-      : null,
-    signMessage: typeof solflareWalletProvider.signMessage === 'function'
-      ? solflareWalletProvider.signMessage.bind(solflareWalletProvider)
-      : null,
-  };
-}
-
-function wireSolflareProviderEvents(provider = getSolflareProvider()) {
-  if (!provider || provider._trebuchetSolflareWired) return;
-
-  provider._trebuchetSolflareWired = true;
-  if (provider.wallet) {
-    const events = standardWalletFeature(provider.wallet, 'standard:events');
-    if (events && typeof events.on === 'function') {
-      const unsubscribe = events.on('change', () => {
-        syncConnectedSolflareProvider(provider, { logChange: true });
-      });
-      if (typeof unsubscribe === 'function') {
-        provider._trebuchetSolflareUnsubscribe = unsubscribe;
-      }
-    }
-    return;
-  }
-
-  if (typeof provider.on !== 'function') return;
-
-  provider.on('connect', (publicKey) => {
-    try {
-      syncConnectedSolflareProvider(provider, { publicKey: provider.publicKey || publicKey });
-    } catch {
-      clearSolflareWallet();
-    }
-  });
-  provider.on('disconnect', () => clearSolflareWallet());
-  provider.on('accountChanged', (publicKey) => {
-    if (publicKey) {
-      setConnectedSolflareWallet(provider, publicKey);
-      log(`Solflare account changed: ${shortSolflareAddress(solflareWallet.publicKey)}`, 'info');
-    } else {
-      clearSolflareWallet();
-    }
-  });
-}
-
-bind('connectSolflareBtn', 'click', connectSolflareWallet);
-bind('disconnectSolflareBtn', 'click', disconnectSolflareWallet);
-bind('useSolflareDestinationBtn', 'click', () => {
-  if (!fillDestinationFromSolflare()) {
-    log('Connect Solflare before using it as the destination wallet.', 'warning');
-  }
-});
-
-window.getConnectedSolflareWallet = () => solflareWallet;
-window.getSolflareSigner = getSolflareSigner;
-window.applySolflareDestinationWallet = fillDestinationFromSolflare;
-
-window.addEventListener?.('solana#initialized', () => {
-  wireSolflareProviderEvents();
-});
-wireSolflareProviderEvents();
-const initialSolflareProvider = getSolflareProvider();
-if (initialSolflareProvider?.isConnected && initialSolflareProvider.publicKey) {
-  setConnectedSolflareWallet(initialSolflareProvider, initialSolflareProvider.publicKey);
-} else {
-  clearSolflareWallet();
-}
 function addPool(initial = {}) {
   // Default supplyPercent to whatever's left of the 100% budget so we never
   // create a new pool that pushes the total over 100. Callers that pass an
@@ -5434,6 +5298,18 @@ function renderSimpleConfig() {
   const autoFitRaised = simpleConfig.preallocationAutoFit !== false
     && Math.abs(preallocPct - preallocPctInputValue) > 0.05;
 
+  // Airdrop shortfall: the airdrop list needs MORE tokens than the
+  // effective preallocation reserves. Reachable two ways — auto-fit is
+  // off and the typed percent is too low, or auto-fit is on but the list
+  // needs more than the 99% clamp. Either way the launch proceeds happily
+  // and the airdrop then runs the wallet dry partway down the list, so
+  // some recipients silently get nothing. Warn at config time, where it
+  // is still a one-number fix.
+  const airdropNeedPct = airdropRequiredPreallocationPercent();
+  const airdropShortfallPct = (Number.isFinite(airdropNeedPct) && airdropNeedPct > preallocPct + 0.05)
+    ? Number((airdropNeedPct - preallocPct).toFixed(2))
+    : null;
+
   // Compute display values for the preallocation row. Token amount uses
   // the total supply input (or 0 if unset). USD value uses the
   // targetMarketCap input. Both gracefully degrade to a dash when the
@@ -5619,7 +5495,14 @@ function renderSimpleConfig() {
             <strong>Preallocate supply</strong>
           </label>
           <div class="simple-config-slider">
-            <input class="input is-small" type="number" min="0" max="99" step="1"
+            <!-- step="any", NOT "1": auto-fit computes this value ceil'd to
+                 one decimal (e.g. 12.5% to cover an airdrop), so the app
+                 itself puts off-grid values here. With step="1" the browser
+                 marks the field :invalid and the spinner arrows SNAP to the
+                 integer grid — click up on 12.5 and it jumps to 13, losing
+                 the auto-fit floor. That snapping is the "values jump
+                 around" symptom. -->
+            <input class="input is-small" type="number" min="0" max="99" step="any"
                    id="simplePreallocPctInput"
                    style="width: 6rem;"
                    value="${preallocPct.toFixed(preallocPct % 1 === 0 ? 0 : 1)}" ${preallocDisabled}>
@@ -5636,6 +5519,12 @@ function renderSimpleConfig() {
           </label>`}
           <div class="simple-config-slider-value" id="simplePreallocDisplay" style="font-style: italic; color: var(--text-muted, #666);">${escapeHtml(preallocDisplayText)}</div>
           <span class="is-size-7 has-text-warning-dark ml-2" id="simplePreallocAutoFitHint" style="font-style: normal;${autoFitRaised ? '' : ' display: none;'}">⇡ auto-fit: ${preallocPctInputValue}% → ${preallocPct.toFixed(preallocPct % 1 === 0 ? 0 : 1)}% to cover airdrop</span>
+        </div>
+        <div id="simpleAirdropShortfallWarning" class="notification is-danger is-light py-2 px-3 mt-2 mb-0 is-size-7${airdropShortfallPct ? '' : ' hidden'}">
+          <strong>⚠ Your airdrop needs more tokens than you've preallocated.</strong>
+          The list requires about ${airdropShortfallPct ? airdropNeedPct.toFixed(1) : '0'}% of supply but only ${preallocPct.toFixed(preallocPct % 1 === 0 ? 0 : 1)}% is reserved.
+          If you launch like this the airdrop will run out partway down the list and later recipients will receive nothing.
+          Turn on <strong>Auto-fit airdrop</strong>, raise the preallocation percentage, or shorten the list.
         </div>
         <div id="simplePreallocWarning" class="notification is-warning is-light py-2 px-3 mt-2 mb-0 is-size-7${preallocChecked && !simpleConfig.supportEnabled ? '' : ' hidden'}">
           <strong>⚠ Preallocation is unbacked.</strong>
@@ -5752,7 +5641,13 @@ function renderSimpleConfig() {
             <strong>Add support position</strong>
           </label>
           <div class="simple-config-slider">
-            <input class="input is-small" type="number" min="0" step="0.1"
+            <!-- step="any", NOT "0.1": auto-back computes this from the
+                 preallocation's USD value and it renders to three decimals
+                 (e.g. 12.346), which is off the 0.1 grid. Same failure as
+                 the preallocation field above — :invalid styling plus
+                 spinner arrows snapping the value to the nearest grid
+                 point instead of incrementing from it. -->
+            <input class="input is-small" type="number" min="0" step="any"
                    id="simpleSupportSolInput"
                    style="width: 7rem;"
                    value="${Number(displayedSupportSol).toFixed(Math.abs(displayedSupportSol) >= 10 ? 1 : 3)}" ${supportSolDisabled}>
@@ -8211,7 +8106,21 @@ function renderResolvedInfoHtml(pool) {
     //   (null/anything else)     → no provenance known
     let sourceLabel = '';
     const src = pool.resolvedPriceSource;
-    if (src === 'raydium-probe' || src === 'raydium-probe (cached)') {
+    if (typeof src === 'string' && src.startsWith('on-chain:')) {
+      // Read directly from the pool account on-chain — the same source the
+      // launch itself uses. Show the anchor pair and the depth so the user
+      // can judge how real the market behind the number is.
+      const anchor = src.slice('on-chain:'.length);
+      const depth = Number(pool.resolvedPriceLiquidityUsd);
+      const depthTxt = Number.isFinite(depth) && depth > 0
+        ? ` · $${Math.round(depth).toLocaleString()} deep` : '';
+      const poolsTxt = (pool.resolvedPricePoolsQualified && pool.resolvedPricePoolsDiscovered)
+        ? ` (${pool.resolvedPricePoolsQualified}/${pool.resolvedPricePoolsDiscovered} pools qualified)` : '';
+      sourceLabel =
+        ` <span class="has-text-success is-size-7" title="Price read from the pool account itself, ` +
+        `not from an indexer. This is the exact source the launch uses.">` +
+        `· on-chain ${escapeHtml(anchor)} pool${depthTxt}${poolsTxt}</span>`;
+    } else if (src === 'raydium-probe' || src === 'raydium-probe (cached)') {
       sourceLabel = ' <span class="has-text-success is-size-7">· verified from Raydium</span>';
     } else if (src === 'sol') {
       sourceLabel = ' <span class="has-text-grey is-size-7">· from SOL/USD oracle</span>';
@@ -8254,6 +8163,15 @@ function renderResolvedInfoHtml(pool) {
       }
     }
     techLine = `<div class="resolved-info-tech">${pool.resolvedDecimals} decimals · ${priceTxt}${sourceLabel}</div>`;
+    // On-chain pools that DISAGREE with each other: the launch will refuse
+    // this token outright, so say so here at pick time instead of at
+    // launch time. The message from the server already names the spread.
+    if (pool.resolvedPriceWarning) {
+      techLine +=
+        `<div class="notification is-danger is-light py-1 px-2 mt-1 is-size-7">` +
+        `<strong>⚠ Price conflict on-chain.</strong> ${escapeHtml(pool.resolvedPriceWarning)} ` +
+        `The launch will refuse this quote token until the pools agree.</div>`;
+    }
   } else {
     // Symbol+decimals came back from on-chain reads but neither
     // GeckoTerminal nor Jupiter could give us a USD price. Common for
@@ -8645,7 +8563,7 @@ function buildPoolNode(pool, idx) {
       <label class="label is-small">Allocation</label>
       <div class="field has-addons">
         <div class="control">
-          <input class="input is-small" type="number" min="0" max="100" step="0.01" data-field="supplyPercent" value="${pool.supplyPercent}">
+          <input class="input is-small" type="number" min="0" max="100" step="any" data-field="supplyPercent" value="${pool.supplyPercent}">
         </div>
         <div class="control"><a class="button is-small is-static">%</a></div>
       </div>
@@ -9118,7 +9036,7 @@ function buildSupportNode(pool, poolIdx) {
     </p>
     <div class="slice-row support-row" ${isCustom ? '' : 'style="opacity:0.5;pointer-events:none;"'}>
       <span class="slice-label">Support</span>
-      <input class="input is-small" type="number" min="0" step="0.01"
+      <input class="input is-small" type="number" min="0" step="any"
              data-support-sol-value value="${solValue}" ${isCustom ? '' : 'disabled'}
              style="width: 8rem;">
       <span style="line-height:30px;">SOL, down to&nbsp;-</span>
@@ -9272,7 +9190,7 @@ function buildBootstrapNode(pool, poolIdx) {
     </p>
     <div class="slice-row bootstrap-row" ${isCustom ? '' : 'style="opacity:0.5;pointer-events:none;"'}>
       <span class="slice-label">Bootstrap</span>
-      <input class="input is-small" type="number" min="0" step="0.001"
+      <input class="input is-small" type="number" min="0" step="any"
              data-bs-sol-value value="${solValue}" ${isCustom ? '' : 'disabled'}
              style="width: 8rem;">
       <span style="line-height:30px;">SOL of starting liquidity</span>
@@ -9870,7 +9788,7 @@ function buildBandRow(pool, poolIdx, band, bandIdx, rerenderBands, updateWarning
 
   row.innerHTML = `
     <span class="slice-label">Band ${bandIdx + 1}</span>
-    <input class="input is-small slice-share" type="number" min="0" max="100" step="0.01"
+    <input class="input is-small slice-share" type="number" min="0" max="100" step="any"
            data-field="supplyPercent" value="${Number(band.supplyPercent)}">
     <span style="line-height:30px;">% of pool</span>
     <span class="is-size-7 has-text-grey position-total-hint" data-position-total-hint="band">${escapeHtml(formatPositionSupplyHint(pool, band.supplyPercent))}</span>
@@ -9992,7 +9910,7 @@ function buildSliceNode(pool, poolIdx, slice, sliceIdx) {
   const labelText = isOnlySlice ? 'Slice' : `Slice ${sliceIdx + 1}/${pool.distribution.length}`;
   node.innerHTML = `
     <span class="slice-label">${labelText}</span>
-    <input class="input is-small slice-share" type="number" min="0" max="100" step="0.01" value="${slice.sharePercent}">
+    <input class="input is-small slice-share" type="number" min="0" max="100" step="any" value="${slice.sharePercent}">
     <span style="line-height:30px;">% of pool</span>
     <span class="is-size-7 has-text-grey position-total-hint" data-position-total-hint="slice">${escapeHtml(formatPositionSupplyHint(pool, slice.sharePercent))}</span>
     <label class="checkbox is-small" style="line-height:30px;">
@@ -10129,6 +10047,10 @@ function applyResolvedInfoToPool(pool, info) {
   // "from external indexer" alongside the price.
   if (info.priceSource !== undefined) {
     pool.resolvedPriceSource = info.priceSource;
+    pool.resolvedPriceLiquidityUsd = info.priceLiquidityUsd ?? null;
+    pool.resolvedPricePoolsQualified = info.pricePoolsQualified ?? null;
+    pool.resolvedPricePoolsDiscovered = info.pricePoolsDiscovered ?? null;
+    pool.resolvedPriceWarning = info.priceWarning ?? null;
   }
 
   // Mark resolution as succeeded so the retry hint goes away.
@@ -10667,6 +10589,22 @@ function updateContinueToFundingState() {
     reasons.push(`Token supply must not exceed ${MAX_TOKEN_SUPPLY.toLocaleString()}`);
   }
   if (!mc || mc <= 0) reasons.push('Target market cap must be > 0');
+
+  // Airdrop shortfall BLOCKS, not just warns. Launching with an airdrop
+  // that needs more tokens than are preallocated runs the wallet dry
+  // partway down the list; recipients after the cutoff get nothing on the
+  // first pass. The red notice in the preallocation section explains the
+  // fix options; this is what stops the launch until one is applied.
+  if (simpleConfig.mode === 'default' && typeof airdropRequiredPreallocationPercent === 'function') {
+    const needPct = airdropRequiredPreallocationPercent();
+    const havePct = Number(simpleConfig.preallocationPercent) || 0;
+    if (Number.isFinite(needPct) && needPct > havePct + 0.05) {
+      reasons.push(
+        `Airdrop needs ~${needPct.toFixed(1)}% of supply but only ${havePct.toFixed(1)}% is ` +
+        'preallocated — enable auto-fit, raise the preallocation, or shorten the list',
+      );
+    }
+  }
 
   btn.disabled = reasons.length > 0;
   btn.title = reasons.join('; ');
@@ -13412,7 +13350,16 @@ function buildLaunchReportHtml({ logoDataUrl = null } = {}) {
        know exactly what to check. -->
   ${renderFactRow('Mint authority', tokenInfo.mintAuthorityRenounced ? 'Renounced — supply is permanently capped' : 'NOT renounced')}
   ${renderFactRow('Freeze authority', tokenInfo.freezeAuthorityDisabled ? 'Disabled — holders can never be frozen' : 'NOT disabled')}
-  ${renderFactRow('Metadata update authority', tokenInfo.metadataUpdateAuthorityRevoked ? 'Revoked — name/symbol/logo are permanent' : 'NOT revoked')}
+  ${renderFactRow('Metadata update authority', tokenInfo.metadataUpdateAuthorityRevoked
+    ? 'Revoked — name/symbol/logo are permanent'
+    // Distinguish a deliberate keep (the launcher opted to retain the
+    // ability to update name/logo, and the authority was handed to their
+    // destination wallet) from an unintended failure to revoke. Rendering
+    // both as a bare "NOT revoked" misreads a chosen configuration as a
+    // defect — in a permanent, public document.
+    : (tokenInfo.metadataAuthorityKept
+        ? 'Retained by the launcher — name/symbol/logo can be updated by the creator wallet (deliberate)'
+        : 'NOT revoked'))}
   ${renderFactRow('Token program', 'SPL Token (classic) — no Token-2022 extensions')}
   ` : ''}
 
@@ -13902,9 +13849,26 @@ function _resetCachedReport() {
 async function _getReportHtml() {
   if (_cachedReportHtml) return _cachedReportHtml;
   try {
-    const logoSrc = (createdTokenInfo && createdTokenInfo.imageUri)
-      ? createdTokenInfo.imageUri
-      : await readLogoAsDataUrl();
+    // Logo source order — embed-first, remote as fallback:
+    //
+    //   1. The selected file, embedded as a base64 data URL. Self-contained:
+    //      shows in the in-app previews, in the downloaded report offline,
+    //      and in the published report IMMEDIATELY. The remote Arweave copy
+    //      commonly 404s on gateways for minutes right after upload — which
+    //      is exactly when a proud launcher opens their report — and that
+    //      propagation lag was the "my logo doesn't show up" complaint.
+    //      With the 200×200 cap enforced upstream, the embed is small; the
+    //      byte guard below is a belt-and-suspenders check that falls back
+    //      to the remote URI rather than blowing the ~95KB publish budget.
+    //   2. The on-chain imageUri (Arweave), for restored sessions where the
+    //      file input no longer holds the file.
+    //   3. Nothing — the report renders its text placeholder.
+    const EMBED_MAX_CHARS = 60 * 1024; // data-URL length budget within the 95KB HTML cap
+    const dataUrl = await readLogoAsDataUrl();
+    const remoteUri = (createdTokenInfo && createdTokenInfo.imageUri) || null;
+    const logoSrc = (dataUrl && dataUrl.length <= EMBED_MAX_CHARS)
+      ? dataUrl
+      : (remoteUri || dataUrl);
     _cachedReportHtml = buildLaunchReportHtml({ logoDataUrl: logoSrc });
   } catch (e) {
     console.error('Failed to build report HTML for preview:', e);
@@ -14231,8 +14195,18 @@ async function showLaunchSuccessModal() {
   if (summary.totalRecipient > 0) {
     summaryParts.push(`${summary.transferred} / ${summary.totalRecipient} Fee Key NFTs delivered`);
   }
+  // A demo run must not read as a real launch. "The launch is committed
+  // on-chain" in front of a first-time demo user says they just launched
+  // a real token — the opposite of true. Say what actually happened, and
+  // point at the natural next step.
+  const closingLine = demoModeActive
+    ? ' — all simulated. This was a demo: nothing was sent on-chain and no '
+      + 'SOL was spent. Ready for the real thing? Click "Disable demo" in '
+      + 'the amber bar at the top of the page, and set up your RPC in '
+      + 'Settings first.'
+    : '. Liquidity is live; the launch is committed on-chain.';
   document.getElementById('launchSuccessSummary').textContent =
-    summaryParts.join(' · ') + '. Liquidity is live; the launch is committed on-chain.';
+    summaryParts.join(' · ') + closingLine;
 
   // ---- Activate the modal ----
   // Add is-active first so the mount has dimensions before the coin
@@ -15862,6 +15836,10 @@ bind('createTokenBtn', 'click', async () => {
       }
       const logoFile = document.getElementById('tokenLogo').files[0];
       if (logoFile) formData.append('logo', logoFile);
+      // Metadata-authority choice. Checkbox CHECKED means revoke (the
+      // long-standing default); the server flag is the inverse: keep.
+      const revokeMeta = document.getElementById('revokeMetadataToggle');
+      formData.append('keepMetadataAuthority', String(!!(revokeMeta && !revokeMeta.checked)));
 
       const resp = await fetch('/api/create-token', { method: 'POST', body: formData });
       const data = await resp.json();
@@ -15891,6 +15869,9 @@ bind('createTokenBtn', 'click', async () => {
         freezeAuthorityDisabled: data.freezeAuthorityDisabled === true,
         metadataUpdateAuthorityRevoked: data.metadataUpdateAuthorityRevoked === true,
         metadataImmutable: data.metadataImmutable === true,
+        // True when the user opted to keep the update authority; step 6
+        // reads this to trigger the authority handoff before the sweep.
+        metadataAuthorityKept: data.metadataAuthorityKept === true,
       };
 
       document.getElementById('tokenMintAddress').textContent = data.tokenMint;
@@ -16098,7 +16079,18 @@ function renderPreflightModalBody(resolvedPrices) {
     // sourceHtml is interpolated raw (not via escapeHtml) so the link can
     // render — non-link branches escape their own content where needed.
     let sourceHtml;
-    if (rp.source === 'raydium-probe') {
+    if (typeof rp.source === 'string' && rp.source.startsWith('on-chain:')) {
+      // The primary source now: read from the pool account itself, not an
+      // indexer. Name the anchor pair so the user knows what the price is
+      // measured against. "(shared)" is appended by the creation loop when
+      // a second pool reuses the first's resolution — preserve it.
+      const rest = rp.source.slice('on-chain:'.length);
+      const anchor = rest.replace(/\s*\(shared\)\s*$/, '');
+      const shared = /\(shared\)/.test(rest) ? ' (shared)' : '';
+      sourceHtml =
+        '<span title="Price read directly from the on-chain pool account — the exact source the launch uses.">' +
+        'on-chain ' + escapeHtml(anchor) + ' pool' + shared + '</span>';
+    } else if (rp.source === 'raydium-probe') {
       sourceHtml = 'verified from Raydium';
     } else if (rp.source === 'sol') {
       sourceHtml = 'SOL/USD oracle';
@@ -18229,6 +18221,14 @@ bind('transferAssetsBtn', 'click', () => {
     log("Destination address doesn't look like a valid Solana address", 'danger');
     return;
   }
+  // Sweeping the launch wallet to itself is always a mistake (pays fees,
+  // moves nothing, and leaves the wallet reading as non-empty). Easy for
+  // someone to do by copying the wrong address off this very page.
+  if (tempWallet && dest === tempWallet.publicKey) {
+    log('That is the launch wallet\'s own address. Enter the wallet you want '
+      + 'the funds sent TO — for example your Phantom or Solflare address.', 'danger');
+    return;
+  }
   showTransferConfirmModal(dest);
 });
 
@@ -18694,6 +18694,12 @@ async function runTransfer() {
           ...(demoModeActive ? { tempWalletSecretKey: tempWallet.secretKey } : {}),
           destinationWallet: dest,
           tokenMint: createdTokenInfo ? createdTokenInfo.mint : '',
+          // Keep-authority launches: tell the server to hand the metadata
+          // update authority to the destination BEFORE sweeping — the
+          // launch wallet (the current authority) is destroyed after this.
+          ...(createdTokenInfo && createdTokenInfo.metadataAuthorityKept
+            ? { keepMetadataAuthorityMint: createdTokenInfo.mint }
+            : {}),
           // No airdrop payload: it already ran in step 6a. The server
           // keeps its in-process airdrop branch as a safety net for old
           // clients, but this client never exercises it.
@@ -18773,10 +18779,23 @@ async function runTransfer() {
       const airdropFailed = lastAirdropResult?.failed || [];
       const hasPartialFailure =
         data.solSweepError
+        || data.solSweepSkipped
         || tokenErrors.length > 0
         || nftErrors.length > 0
         || airdropFailed.length > 0;
 
+      if (data.solSweepSkipped) {
+        // Deliberate skip, not a failure: some asset transfer didn't complete,
+        // so the server kept the SOL in the launch wallet ON PURPOSE — it's
+        // the fee money a retry needs. Say that plainly, because "SOL wasn't
+        // transferred" reads as theft to a worried user.
+        log(
+          'Some assets could not be transferred yet, so your SOL was kept in the ' +
+          'launch wallet on purpose — it pays the fees for the retry. ' +
+          'Nothing has been lost. Click Transfer Assets again to retry.',
+          'warning',
+        );
+      }
       if (data.solSweepError) {
         log(`SOL sweep failed: ${data.solSweepError}`, 'warning');
         log(
@@ -19162,6 +19181,8 @@ function launchJournalStageLabel(journal) {
     supply_minted: 'Supply minted',
     mint_authority_revoked: 'Mint authority revoked',
     metadata_update_authority_revoked: 'Metadata authority revoked',
+    metadata_authority_kept: 'Metadata authority kept (user option)',
+    metadata_authority_transferred: 'Metadata authority handed to destination',
     token_safety_verified: 'Token safety verified',
     token_created: 'Token created',
     token_create_failed: 'Token creation failed',
@@ -19778,10 +19799,46 @@ function buildLaunchJournalRow(journal, wallet) {
     // summary AND the wallet secret — so the confirmation spells out that the
     // recovery phrase is permanently deleted. With no wallet attached it's the
     // harmless journal-only dismiss.
+    //
+    // For the secret-attached case, also check the live balance first and
+    // put the concrete numbers in the dialog: discarding the key of a
+    // wallet that still holds funds is irreversible money loss. Best
+    // effort — a failed lookup falls back to the generic warning rather
+    // than blocking the dismissal (same pattern as pending-wallets.js).
+    let balanceLine = '';
+    if (hasSecret && journal.walletPublicKey) {
+      try {
+        const resp = await fetch('/api/check-balance-detailed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ publicKey: journal.walletPublicKey }),
+        });
+        const data = await resp.json();
+        if (data.success && data.balance) {
+          const sol = Number(data.balance.sol || 0);
+          const tokenCount = Object.values(data.balance.tokens || {})
+            .filter((t) => { try { return BigInt(t.amountRaw) > 0n; } catch (_) { return false; } })
+            .length;
+          // Mirror the server's dust rule (walletRecovery.js).
+          if (sol >= 0.001 || tokenCount > 0) {
+            const parts = [];
+            if (sol > 0) parts.push(`<strong>${sol.toFixed(6)} SOL</strong>`);
+            if (tokenCount > 0) parts.push(`<strong>${tokenCount} token balance${tokenCount === 1 ? '' : 's'}</strong>`);
+            balanceLine =
+              `<p class="has-text-danger">This wallet still holds ${parts.join(' and ')}. ` +
+              `Discarding the recovery entry makes those funds unrecoverable unless ` +
+              `you have saved the recovery phrase somewhere else.</p>`;
+          } else {
+            balanceLine = '<p>On-chain check: this wallet is empty (dust only).</p>';
+          }
+        }
+      } catch (_) { /* offline / RPC error — keep the generic warning */ }
+    }
     const ok = await confirmDialog({
       title: hasSecret ? 'Dismiss and discard wallet?' : 'Dismiss launch journal?',
       body: hasSecret
         ? `<p>Remove the recovery entry for <strong>${escapeHtml(tokenLabel)}</strong>?</p>` +
+          balanceLine +
           `<p>This permanently deletes the recovery phrase / secret key for the launch wallet ` +
           `(<span class="is-family-monospace">${escapeHtml(walletShort)}</span>) and clears the ` +
           `journal summary. Make sure you've moved any funds out of this wallet, or are certain ` +
@@ -20073,10 +20130,47 @@ function wireRowButtons(wrap, wallet, pubShort, { hasMnemonic = false } = {}) {
   });
 
   wrap.querySelector('[data-action="dismiss"]').addEventListener('click', async () => {
+    // Check the live balance before letting the user discard the only
+    // stored copy of this wallet's key. Dismissing a wallet that still
+    // holds funds is irreversible money loss (unless the user saved the
+    // phrase elsewhere), so a generic "are you sure" isn't enough — say
+    // exactly what's in it. Best effort: if the balance lookup fails
+    // (offline, RPC down) fall back to the generic warning rather than
+    // blocking the dismissal.
+    let balanceLine = '';
+    try {
+      const resp = await fetch('/api/check-balance-detailed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ publicKey: wallet.publicKey }),
+      });
+      const data = await resp.json();
+      if (data.success && data.balance) {
+        const sol = Number(data.balance.sol || 0);
+        const tokenCount = Object.values(data.balance.tokens || {})
+          .filter((t) => { try { return BigInt(t.amountRaw) > 0n; } catch (_) { return false; } })
+          .length;
+        // Mirror the server's dust rule (walletRecovery.js): under
+        // 0.001 SOL with no token balances is unsweepable dust, not funds.
+        if (sol >= 0.001 || tokenCount > 0) {
+          const parts = [];
+          if (sol > 0) parts.push(`<strong>${sol.toFixed(6)} SOL</strong>`);
+          if (tokenCount > 0) parts.push(`<strong>${tokenCount} token balance${tokenCount === 1 ? '' : 's'}</strong>`);
+          balanceLine =
+            `<p class="has-text-danger">This wallet still holds ${parts.join(' and ')}. ` +
+            `Discarding the recovery entry makes those funds unrecoverable unless ` +
+            `you have saved the recovery phrase somewhere else.</p>`;
+        } else {
+          balanceLine = '<p>On-chain check: this wallet is empty (dust only).</p>';
+        }
+      }
+    } catch (_) { /* offline / RPC error — keep the generic warning */ }
+
     const ok = await confirmDialog({
       title: 'Discard recovery entry?',
       body:
         `<p>Discard recovery entry for <strong>${escapeHtml(pubShort)}</strong>?</p>` +
+        balanceLine +
         `<p>Only do this if you've already moved any funds out of this wallet, ` +
         `or you're sure none were ever sent there. This action cannot be undone.</p>`,
       confirmLabel: 'Discard',
@@ -21183,9 +21277,20 @@ function syncDemoChrome() {
   window.addEventListener('resize', syncDemoBannerHeight);
 
   // Persist a new demoMode value and switch the app into it. Switching mode
-  // discards the current launch and starts over, so we always confirm first.
+  // discards the current launch and starts over, so we always confirm first —
+  // EXCEPT when enabling from a pristine state (step 1, no wallet generated):
+  // there is nothing to lose yet, and greeting a first-time user's "Try a
+  // demo launch" click with a data-will-be-lost warning is needless friction.
   async function setDemoMode(enabled) {
     const want = !!enabled;
+
+    // Pristine = step 1, no wallet generated, currently in real mode.
+    // Enabling demo from here loses nothing, so skip the data-will-be-lost
+    // dialog — greeting a first-time user's "Try a demo launch" click with
+    // a scary warning is needless friction. Every other transition (any
+    // progress made, or disabling) still confirms below.
+    const pristine = currentStep === 1 && !tempWallet && !demoModeActive;
+    const needsConfirm = !(want && pristine);
 
     // If a REAL launch is mid-flight (steps 2..5, and we're currently in real
     // mode), the ephemeral wallet has been stashed for recovery — surface that
@@ -21198,25 +21303,28 @@ function syncDemoChrome() {
           'can still recover it from the pending-wallets panel.</p>'
         : '';
 
-    // Always warn: changing mode resets the app to defaults and restarts the
-    // launch from the beginning, discarding anything entered so far.
-    const proceed = await confirmDialog({
-      title: want ? 'Enable demo mode?' : 'Disable demo mode?',
-      body:
-        '<p>Switching demo mode resets the app to defaults and restarts the ' +
-        'launch from the beginning, with demo mode ' +
-        (want ? '<strong>enabled</strong>' : '<strong>disabled</strong>') +
-        '.</p><p>Any wallet, token, or pool data you have entered for the ' +
-        'current launch will be lost.</p>' +
-        recoveryNote,
-      confirmLabel: want ? 'Enable & restart' : 'Disable & restart',
-      danger: true,
-    });
-    if (!proceed) {
-      // User backed out — put the checkbox back the way it was.
-      const toggle = document.getElementById('demoModeToggle');
-      if (toggle) toggle.checked = !want;
-      return;
+    // Warn before switching: changing mode resets the app to defaults and
+    // restarts the launch from the beginning, discarding anything entered
+    // so far. (Skipped for the pristine enable — see above.)
+    if (needsConfirm) {
+      const proceed = await confirmDialog({
+        title: want ? 'Enable demo mode?' : 'Disable demo mode?',
+        body:
+          '<p>Switching demo mode resets the app to defaults and restarts the ' +
+          'launch from the beginning, with demo mode ' +
+          (want ? '<strong>enabled</strong>' : '<strong>disabled</strong>') +
+          '.</p><p>Any wallet, token, or pool data you have entered for the ' +
+          'current launch will be lost.</p>' +
+          recoveryNote,
+        confirmLabel: want ? 'Enable & restart' : 'Disable & restart',
+        danger: true,
+      });
+      if (!proceed) {
+        // User backed out — put the checkbox back the way it was.
+        const toggle = document.getElementById('demoModeToggle');
+        if (toggle) toggle.checked = !want;
+        return;
+      }
     }
 
     try {
@@ -21346,6 +21454,101 @@ setupSecretPinGate();
 // Recovery PIN gate have run by this point. If any of them gated itself,
 // this call is a no-op; the trigger will fire when the last blocker clears.
 _evaluateStartupGates();
+
+// ---------------------------------------------------------------------------
+// First-launch welcome card.
+//
+// The card (see #welcomeCard in index.html) fronts the two things a new
+// user needs to know before anything else: demo mode exists and is the
+// recommended first step, and a real launch needs a dedicated RPC. It is
+// visible while the showWelcomeCard user pref is true and demo mode is
+// off — once demo is active the sticky amber banner owns that state, and
+// showing both would be noise. Dismissal persists showWelcomeCard:false.
+// ---------------------------------------------------------------------------
+(function setupWelcomeCard() {
+  const card = document.getElementById('welcomeCard');
+  if (!card) return;
+
+  // Visibility: all fetches are best-effort. If prefs can't be read we
+  // default to SHOWING the card (a new install with a broken prefs read
+  // is exactly a first-time user); if the demo status can't be read we
+  // fall back to the in-memory flag set by setupDemoMode's own fetch.
+  //
+  // Recovery state outranks onboarding: someone with an incomplete launch
+  // or a pending recovery wallet is not a first-timer, and their money
+  // comes before a getting-started card — the recovery panels should be
+  // the first thing they see, not sit below it. If either recovery
+  // lookup fails we treat it as "none" (the panels themselves surface
+  // independently either way).
+  Promise.allSettled([
+    fetch('/api/user-prefs').then((r) => r.json()),
+    fetch('/api/demo/status').then((r) => r.json()),
+    fetch('/api/pending-wallets').then((r) => r.json()),
+    fetch('/api/launch-journals').then((r) => r.json()),
+  ]).then(([prefsRes, demoRes, walletsRes, journalsRes]) => {
+    const prefs = prefsRes.status === 'fulfilled' ? prefsRes.value : {};
+    const demoActive = demoRes.status === 'fulfilled'
+      ? !!(demoRes.value && demoRes.value.active)
+      : !!demoModeActive;
+    const pendingCount = walletsRes.status === 'fulfilled'
+      ? (walletsRes.value?.wallets?.length || 0)
+      : 0;
+    const journalCount = journalsRes.status === 'fulfilled'
+      ? (journalsRes.value?.journals?.length || 0)
+      : 0;
+    const hasRecoveryState = pendingCount > 0 || journalCount > 0;
+    const wantCard = prefs.showWelcomeCard !== false;
+    card.classList.toggle('hidden', !wantCard || demoActive || hasRecoveryState);
+  });
+
+  // "Try a demo launch" — drive the settings checkbox and fire its change
+  // handler so the exact same setDemoMode path runs (persist, verify,
+  // reload). From a pristine state that path skips the reset warning.
+  // The persist + verify round-trips take a beat before the reload, so
+  // show a spinner immediately — a dead-looking button on a first-timer's
+  // very first click reads as "the app is broken".
+  bind('welcomeTryDemoBtn', 'click', (e) => {
+    const btn = e.currentTarget;
+    btn.classList.add('is-loading');
+    btn.disabled = true;
+    const toggle = document.getElementById('demoModeToggle');
+    if (!toggle) return;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    // If enabling fails or is cancelled, setDemoMode reverts the checkbox
+    // and the page never reloads — poll for that and restore the button.
+    // (A one-shot timeout isn't enough: the mid-launch confirm dialog can
+    // stay open arbitrarily long before the user cancels.) On success the
+    // reload wipes this interval with the page. The 60s cap restores the
+    // button even if something failed without reverting the checkbox.
+    let waited = 0;
+    const poll = setInterval(() => {
+      waited += 500;
+      if (!toggle.checked || waited >= 60000) {
+        btn.classList.remove('is-loading');
+        btn.disabled = false;
+        clearInterval(poll);
+      }
+    }, 500);
+  });
+
+  // "Set up my RPC" — expand the settings panel and land on the RPC
+  // section (helper lives in rpc-panel.js next to the panel logic).
+  bind('welcomeOpenRpcBtn', 'click', () => openSettingsToRpc());
+
+  // "Don't show this again" — persist and hide. Fire-and-forget on the
+  // POST: if it fails the card reappears next session, which is annoying
+  // but harmless, and the hide itself should feel instant.
+  bind('welcomeHideLink', 'click', (e) => {
+    e.preventDefault();
+    card.classList.add('hidden');
+    fetch('/api/user-prefs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ showWelcomeCard: false }),
+    }).catch(() => {});
+  });
+})();
 // audio.js — sound effects and looping background music
 //
 // All sound here is built on plain HTMLAudioElement. There is deliberately NO

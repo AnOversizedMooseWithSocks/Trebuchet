@@ -26,12 +26,12 @@ export const moduleNames = [
   'preamble.js',          // file header, bind(), API-session fetch wrapper, state, constants, flywheels
   'activity-log.js',      // log(), startServerLogStream(), setLoading(), withRunState()
   'confirm-dialog.js',    // confirmDialog()
+  'help.js',              // HELP_TOPICS glossary + [data-explain] delegation
   'release-notes.js',     // renderReleaseNotes() — update check UI
   'step-orchestrator.js', // setStepState(), activateStep(), bindStepHeaders()
   'cancel-flow.js',       // openCancelConfirm(), showCancelledPanel()
   'rpc-panel.js',         // loadRpcConfig(), renderRpcConfig(), selectRpc()
   'wallet-gen.js',        // wallet generation UI, mnemonic grid
-  'solflare-wallet.js',   // Solflare browser wallet connection + signer bridge
   'token-config.js',      // addPool(), renderSimpleConfig() incl. Advanced options section
   'coin-preview.js',      // updateCoinPreview(), flywheel explainer modal
   'depth-chart.js',       // computeDepthProfile(), renderDepthChartSvg() — per-pool liquidity depth

@@ -70,6 +70,11 @@ const DEFAULTS = Object.freeze({
   // changes, capturing tutorial screenshots, and demonstrating the app
   // without chain risk. Off by default; intentional opt-in only.
   demoMode: false,
+  // First-launch welcome card (demo-mode champion + RPC-setup explainer at
+  // the top of the page). Shown until the user dismisses it via "Don't show
+  // this again"; the renderer's setupWelcomeCard() reads this on load and
+  // the dismiss link writes false.
+  showWelcomeCard: true,
   // Intro splash video. The short animation that plays on startup. On by
   // default; can be turned off in settings so the app opens straight to the
   // UI (handy once the novelty wears off, or on slow hardware). Read by the

@@ -134,6 +134,8 @@ import { getRpcUrl } from './rpcConfig.js';
 // re-export and would leave these undefined locally (which silently sent every
 // SOL price into the fallback path).
 import { getTokenMetadata, getUsdPrice } from './tokenInfoService.js';
+import { landTxWithRetry } from './chainRetry.js';
+import { getOnChainPriceUsd } from './onChainPriceService.js';
 import { normalizeDistribution } from './lpDistribution.js';
 import {
   FALLBACK_FEE_TIERS,
@@ -154,7 +156,8 @@ import {
 // safe because the values currently agree byte-for-byte.
 import {
   WSOL_MINT,
-  FALLBACK_SOL_USD,
+  MIN_QUOTE_LIQUIDITY_USD,
+  MAX_PROBE_PRICE_IMPACT_PCT,
   COST_POOL_RENT_SOL,
   COST_TICK_ARRAY_SOL,
   COST_POSITION_SOL,
@@ -431,6 +434,170 @@ export function unrecordedPositionsAtRange(onChainPositions, tickLower, tickUppe
       Number(p.tickUpper) === Number(tickUpper) &&
       !recordedNftMints.has(p.nftMint),
   );
+}
+
+// ---------------------------------------------------------------------------
+// In-flight retry for Raydium SDK transactions.
+//
+// Every SDK transaction in this file used to be a bare
+// `execute({ sendAndConfirm: true })`: one confirmation timeout, one dropped
+// transaction, one RPC blip during Phase 1–3 ended the attempt and put a
+// failure in front of the user. The journal + Resume path made that SAFE (no
+// money lost) but it is exactly the "tool failed at a step" experience. The
+// token-creation and sweep paths were hardened with landTxWithRetry this
+// cycle; this brings the launch-critical LP path up to the same standard.
+//
+// Two rules, both essential:
+//   1. `build` is re-run on EVERY attempt. The SDK builds the transaction
+//      with the blockhash it fetches at build time, so retrying a stale
+//      builder output would rebroadcast an expired blockhash — the named
+//      retry anti-pattern. Rebuilding per attempt is what makes each retry
+//      a fresh transaction.
+//   2. `alreadyDone` reads on-chain state before every send. A confirmation
+//      timeout does not mean the transaction failed; it very often landed.
+//      Blindly re-sending createPool after a landed attempt errors on a
+//      duplicate PDA; blindly re-sending an open deposits the tokens twice.
+//      The probes are the SAME ones the Resume path uses to reconcile the
+//      journal against the chain, so in-flight retry and resume can never
+//      disagree about what already happened.
+//
+// Returns { skipped, value } exactly like landTxWithRetry: when `skipped` is
+// true the work was found already done on-chain and `value` is whatever the
+// probe captured (via `onAlreadyDone`), so the caller can adopt it.
+// ---------------------------------------------------------------------------
+async function executeSdkTx({ label, build, alreadyDone, onAlreadyDone }) {
+  let captured;
+  const r = await landTxWithRetry({
+    label,
+    alreadyDone: async () => {
+      if (!alreadyDone) return false;
+      const found = await alreadyDone();
+      if (found) {
+        captured = typeof onAlreadyDone === 'function' ? onAlreadyDone(found) : found;
+        return true;
+      }
+      return false;
+    },
+    send: async () => {
+      const res = await build(); // fresh build -> fresh blockhash
+      const tx = await res.execute({ sendAndConfirm: true });
+      return { res, tx };
+    },
+  });
+  if (r.skipped) return { skipped: true, value: captured };
+  return r;
+}
+
+// Probe helper for position opens: is there a position at exactly this range
+// that no one has accounted for yet? Returns the position (truthy) or null.
+async function findUnrecordedPositionAt(raydium, poolId, tickLower, tickUpper, recordedMints) {
+  try {
+    const onChain = await fetchOwnerClmmPositionsForPool(raydium, poolId);
+    const hits = unrecordedPositionsAtRange(onChain, tickLower, tickUpper, recordedMints);
+    return hits.length > 0 ? hits[0] : null;
+  } catch (e) {
+    // A probe failure must never block the send — fall through to sending,
+    // which is the pre-existing behaviour. (A false negative here at worst
+    // re-creates the old duplicate risk; a false positive would skip real
+    // work, which is worse.)
+    console.warn(`  position probe failed (${e.message}); proceeding to send`);
+    return null;
+  }
+}
+
+// Probe helper for locks. Returns the Fee Key mint (truthy) when a lock for
+// this position exists on-chain, else null.
+//
+// This deliberately requires POSITIVE evidence — a lock account that names
+// this position — rather than inferring a lock from the position's absence
+// in the wallet. Absence has a second cause: an RPC that hasn't indexed the
+// position yet. Treating that as "already locked" would SKIP the lock, leave
+// the liquidity unlocked, and report it locked — the one outcome a launch
+// tool must never produce, since the lock is the user's no-rug guarantee.
+// The failure direction here must be "lock again and hit a deterministic
+// already-locked error", never "silently don't lock". Probe failures fall
+// through to sending for the same reason.
+async function positionLockedOnChain(raydium, nftMint) {
+  try {
+    const feeKey = await findLockFeeKeyForPosition(raydium, nftMint);
+    return feeKey || null;
+  } catch (e) {
+    console.warn(`  lock probe failed (${e.message}); proceeding to send`);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wait until on-chain state is VISIBLE, instead of sleeping a fixed time.
+//
+// The launch used to `sleep(2000)` after creating a pool and `sleep(1500)`
+// between positions, assuming the RPC had caught up by then. On a lagging
+// node that assumption fails two ways: the read afterwards errors (launch
+// aborts — recoverable, annoying), or worse, it succeeds against a STALE
+// view. The post-create read feeds `tickCurrent` into every position's
+// tick math, so a stale read there misplaces the whole launch.
+//
+// `check` returns truthy when the state we need is visible. Polls every
+// `intervalMs` up to `timeoutMs`, then throws with a message that names
+// what never appeared — a real, diagnosable failure rather than a silent
+// stale read. Reads inside `check` should use 'finalized' commitment so
+// that "visible" also means "won't be rolled back".
+// ---------------------------------------------------------------------------
+// Wait until a just-opened position is visible in the wallet's on-chain
+// positions. Used between sequential opens instead of a fixed settle sleep:
+// the SDK's next build reads token-account balances, and it must see the
+// previous deposit or it sizes/funds the next position wrongly.
+async function waitForPositionVisible(raydium, poolId, nftMint) {
+  if (!nftMint) return; // adopted/recovered entries may lack a mint; nothing to wait on
+  await waitForVisible(`position ${nftMint}`, async () => {
+    const onChain = await fetchOwnerClmmPositionsForPool(raydium, poolId);
+    return onChain.some((p) => p.nftMint === nftMint);
+  });
+}
+
+async function waitForVisible(label, check, {
+  timeoutMs = 25_000, intervalMs = 750, errorGraceMs = 4_000,
+} = {}) {
+  const started = Date.now();
+  let lastErr = null;
+  let sawSuccessfulRead = false;
+  for (;;) {
+    try {
+      const v = await check();
+      sawSuccessfulRead = true;
+      if (v) return v;
+    } catch (e) {
+      lastErr = e; // transient read errors are expected while the node catches up
+    }
+    const elapsed = Date.now() - started;
+    // An endpoint that can't serve this read at all gets a SHORT grace, not
+    // the full timeout — otherwise a missing RPC method would add the whole
+    // timeout to every position of the launch.
+    const giveUp = sawSuccessfulRead ? elapsed >= timeoutMs : elapsed >= errorGraceMs;
+    if (giveUp) {
+      // Two different situations, two different responses:
+      //   - Reads SUCCEEDED but kept saying "not there": a genuine finding.
+      //     Proceeding would act on state we've confirmed is absent. Throw.
+      //   - Reads only ever ERRORED (endpoint can't serve this call, or a
+      //     test fake lacks it): we learned nothing either way. Blocking the
+      //     launch on a probe we couldn't even run is worse than the old
+      //     fixed-sleep behaviour — warn and let the caller proceed; the
+      //     dependent read that follows will fail on its own if the RPC is
+      //     truly down.
+      if (sawSuccessfulRead) {
+        throw new Error(
+          `${label} not visible on-chain after ${Math.round(timeoutMs / 1000)}s. ` +
+            'The RPC may be lagging — wait a moment and use Resume.',
+        );
+      }
+      console.warn(
+        `  could not verify ${label} is visible (probe kept erroring: ` +
+          `${lastErr ? lastErr.message : 'unknown'}); proceeding best-effort`,
+      );
+      return null;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
 }
 
 // Maximum allowed ratio between the user-committed quote-token USD price
@@ -732,6 +899,11 @@ export function resetTestFactories() {
   // too so one reset returns the entire module to production behavior.
   __estPriceOracleForTests = null;
   __estRouteDiscoveryForTests = null;
+  __launchProbeForTests = null;
+  __launchOracleForTests = null;
+  __launchOnChainForTests = null;
+  __readOnlySdk = null;
+  __readOnlySdkRpc = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -921,14 +1093,29 @@ export async function getMintCompatibilityWithRaydiumClmm(connection, mintPk) {
  * address. For arbitrary addresses we hit RPC for decimals unless an
  * override is supplied.
  */
-async function resolveQuoteToken(connection, spec, overrides = {}) {
+export async function resolveQuoteToken(connection, spec, overrides = {}) {
   // Symbol shortcut
   const upper = (spec || '').toUpperCase();
   if (KNOWN_QUOTES[upper]) {
     const base = { ...KNOWN_QUOTES[upper] };
-    // Allow per-call overrides for symbol/decimals even on known tokens
+    // Symbol is cosmetic — an override is fine. Decimals are NOT: SOL,
+    // USDC and USDT have fixed, well-known decimals baked into
+    // KNOWN_QUOTES, and decimals feed the starting-price math. Silently
+    // accepting a contradicting override here was the worst version of
+    // the problem described on resolveQuoteToken's mint branch below —
+    // this path doesn't even do an on-chain read to disagree with.
     if (overrides.decimals !== undefined && overrides.decimals !== null) {
-      base.decimals = Number(overrides.decimals);
+      const claimed = Number(overrides.decimals);
+      if (!Number.isInteger(claimed) || claimed !== base.decimals) {
+        throw new Error(
+          `${upper} has ${base.decimals} decimals, but a decimals override of ` +
+            `${JSON.stringify(overrides.decimals)} was supplied. Using it would set ` +
+            `this pool's starting price off by a factor of ` +
+            `10^${Math.abs(claimed - base.decimals) || '?'}, putting it at a different ` +
+            `market cap than the other pools. Clear the decimals override in the ` +
+            `pool's Advanced settings and try again. No SOL was spent.`,
+        );
+      }
     }
     if (overrides.symbol) base.symbol = overrides.symbol;
     return base;
@@ -957,13 +1144,34 @@ async function resolveQuoteToken(connection, spec, overrides = {}) {
     );
   }
 
-  // decimals: prefer caller override (helpful when Gecko returned them
-  // and we want to skip the extra round-trip), else use what we just read
-  // from the mint account.
-  const decimals =
-    overrides.decimals !== undefined && overrides.decimals !== null
-      ? Number(overrides.decimals)
-      : compat.decimals;
+  // decimals: the ON-CHAIN mint account is authoritative and we have
+  // already read it above (getMintCompatibilityWithRaydiumClmm does the
+  // round-trip), so an override can never save us a call — it can only
+  // disagree. SPL mint decimals are fixed at initialization and can never
+  // change, so a disagreement is definitively wrong, not merely stale.
+  //
+  // This matters enormously: decimals feed priceToSqrtPriceX64, so being
+  // off by N scales the pool's starting price by 10^N. A single wrong
+  // override lands ONE pool at a wildly wrong market cap while its
+  // siblings are correct — the launch then opens with pools at different
+  // prices, arbitrage drains the cheap side, and the chart shows an
+  // instant dump. Refuse before any SOL is spent rather than trusting a
+  // number the chain contradicts.
+  if (overrides.decimals !== undefined && overrides.decimals !== null) {
+    const claimed = Number(overrides.decimals);
+    if (!Number.isInteger(claimed) || claimed !== compat.decimals) {
+      throw new Error(
+        `Quote token ${spec} has ${compat.decimals} decimals on-chain, but a ` +
+          `decimals override of ${JSON.stringify(overrides.decimals)} was supplied. ` +
+          `Mint decimals are immutable, so the override is incorrect — using it ` +
+          `would set this pool's starting price off by a factor of ` +
+          `10^${Math.abs(claimed - compat.decimals) || '?'} and put this pool at a ` +
+          `different market cap than the others. Clear the decimals override in ` +
+          `the pool's Advanced settings and try again. No SOL was spent.`,
+      );
+    }
+  }
+  const decimals = compat.decimals;
 
   return {
     address: mintPk.toBase58(),
@@ -1102,10 +1310,17 @@ async function lpPriorityFeeMicroLamports(connection, writableAccounts) {
         .sort((a, b) => a - b);
       if (fees.length === 0) return LP_PRIORITY_FEE_FLOOR_MICROLAMPORTS;
       const idx = Math.min(fees.length - 1, Math.floor(fees.length * 0.75));
-      const p75 = fees[idx];
+      // Bid 10% OVER the observed p75, rounded up — never exactly at it.
+      // The sample prices the last ~150 blocks; a rising market means the
+      // going rate when our tx lands is higher than what we measured, and
+      // bidding exact is how launch-critical txs get dropped. Bounded by
+      // the ceiling clamp, so worst-case cost is unchanged. Integer math
+      // (×11 ÷10) keeps the result deterministic; ×1.1 in floats can
+      // overshoot by a stray unit.
+      const bid = Math.ceil((fees[idx] * 11) / 10);
       return Math.max(
         LP_PRIORITY_FEE_FLOOR_MICROLAMPORTS,
-        Math.min(LP_PRIORITY_FEE_CEIL_MICROLAMPORTS, p75),
+        Math.min(LP_PRIORITY_FEE_CEIL_MICROLAMPORTS, bid),
       );
     }
   } catch (e) {
@@ -1240,7 +1455,7 @@ async function createSinglePool({
     console.log(`Creating CLMM pool: ${launchedToken.address} / ${quoteToken.address}`);
     progress({ stage: 'pool_create_start' });
 
-    const createRes = await raydium.clmm.createPool({
+    const buildCreate = async () => raydium.clmm.createPool({
       programId: CLMM_PROGRAM_ID,
       mint1: launchedToken,
       mint2: quoteToken,
@@ -1249,11 +1464,29 @@ async function createSinglePool({
       txVersion: TxVersion.V0,
       computeBudgetConfig: await lpComputeBudgetConfig(raydium),
     });
-
-    createTx = await createRes.execute({ sendAndConfirm: true });
+    // The pool address is a PDA of (config, mintA, mintB) — deterministic,
+    // so one preliminary build yields the id we can probe for BEFORE any
+    // send. That probe is what lets a confirm-timeout-that-landed be
+    // adopted instead of re-sent into a duplicate-PDA error.
+    const preliminary = await buildCreate();
     // extInfo.address.id is already a base58 string (SDK calls .toString() internally
     // when building the extInfo). Don't call toBase58() on it.
-    poolId = createRes.extInfo.address.id;
+    poolId = preliminary.extInfo.address.id;
+    const createR = await executeSdkTx({
+      label: 'create pool',
+      build: buildCreate,
+      alreadyDone: async () => {
+        try {
+          const info = await connection.getAccountInfo(new PublicKey(poolId), 'finalized');
+          return !!(info && info.data && info.data.length > 0);
+        } catch (_) { return false; }
+      },
+      onAlreadyDone: () => ({ tx: { txId: null }, adopted: true }),
+    });
+    createTx = createR.value.tx;
+    if (createR.skipped) {
+      console.log(`  pool ${poolId} already exists on-chain (landed on a prior attempt); adopting`);
+    }
     console.log(`  pool created: ${poolId}, tx: ${createTx.txId}`);
     progress({ stage: 'pool_create_done', poolId, txId: createTx.txId });
   }
@@ -1261,11 +1494,35 @@ async function createSinglePool({
   // -----------------------------------------------------------------------
   // 2. Refresh pool info from RPC. Newly-created pools take ~5 minutes to
   //    appear in the API; getPoolInfoFromRpc reads on-chain state directly.
+  //    Wait until the pool account is FINALIZED-visible rather than sleeping
+  //    a fixed 2s: the read below feeds tickCurrent into every position's
+  //    tick math, and a stale read here would misplace the whole launch.
   // -----------------------------------------------------------------------
-  await new Promise((r) => setTimeout(r, 2000));
+  //    "Visible" is defined by the read we are about to depend on: the
+  //    SDK's pool-state decode returning a numeric tickCurrent. Polling
+  //    that exact read (rather than a raw account-exists check) means
+  //    success below is guaranteed to see the same state the poll saw.
+  let rpcData = await waitForVisible(`pool ${poolId}`, async () => {
+    const d = await raydium.clmm.getRpcClmmPoolInfo({ poolId });
+    return (d && Number.isFinite(Number(d.tickCurrent))) ? d : null;
+  });
+  if (!rpcData) {
+    // waitForVisible gives up quietly (returns null) when the probe only
+    // ever ERRORED — it can't tell "not there" from "can't ask". For this
+    // read we cannot proceed either way, so make one direct call: if the
+    // RPC is genuinely failing, the user gets its real error rather than a
+    // TypeError on rpcData.tickCurrent two lines down.
+    rpcData = await raydium.clmm.getRpcClmmPoolInfo({ poolId });
+    if (!rpcData || !Number.isFinite(Number(rpcData.tickCurrent))) {
+      throw new Error(
+        `Pool ${poolId} was created but its state could not be read from the RPC ` +
+          '(no current tick returned). The pool exists on-chain; wait a moment and use ' +
+          'Resume — nothing further was spent.',
+      );
+    }
+  }
 
   const { poolInfo, poolKeys } = await raydium.clmm.getPoolInfoFromRpc(poolId);
-  const rpcData = await raydium.clmm.getRpcClmmPoolInfo({ poolId });
 
   const tickSpacing = poolInfo.config.tickSpacing;
   const currentTick = rpcData.tickCurrent;
@@ -1561,33 +1818,51 @@ async function createSinglePool({
       } catch (e) {
         console.warn('    cache refresh failed (non-fatal):', e.message);
       }
-      // Brief settle so the previous lock tx is fully visible to the RPC
-      await new Promise((r) => setTimeout(r, 1500));
+      // Wait for the previous slice to be VISIBLE (not a fixed 1.5s): the
+      // next build reads the launched-token ATA balance and must see the
+      // previous deposit to size this slice correctly.
+      await waitForPositionVisible(raydium, poolId, mainPositions[mainPositions.length - 1]?.nftMint);
     }
 
     let openTx;
     let nftMint;
     try {
-      const openRes = await raydium.clmm.openPositionFromBase({
-        poolInfo,
-        poolKeys,
-        ownerInfo: { useSOLBalance: true },
-        tickLower: mainTicks.tickLower,
-        tickUpper: mainTicks.tickUpper,
-        base: launchedIsMintA ? 'MintA' : 'MintB',
-        baseAmount: sliceRaw,
-        // True single-sided: range is entirely on one side of the current tick
-        // so the position genuinely needs ZERO of the other token. Pass 0 here —
-        // when otherAmount is zero the SDK auto-creates the missing-side ATA.
-        // (If we pass nonzero, the SDK assumes the ATA already has that balance,
-        // which would fail for non-SOL quote pools where we haven't pre-created
-        // the ATA.)
-        otherAmountMax: new BN(0),
-        txVersion: TxVersion.V0,
-        computeBudgetConfig: await lpComputeBudgetConfig(raydium, poolInfo.id),
+      // Mints already accounted for this run (earlier slices at the same
+      // range, plus anything recovered) — the probe must not adopt those.
+      const recordedMain = new Set(mainPositions.map((p) => p.nftMint).filter(Boolean));
+      const openR = await executeSdkTx({
+        label: `main position slice ${i}`,
+        build: async () => raydium.clmm.openPositionFromBase({
+          poolInfo,
+          poolKeys,
+          ownerInfo: { useSOLBalance: true },
+          tickLower: mainTicks.tickLower,
+          tickUpper: mainTicks.tickUpper,
+          base: launchedIsMintA ? 'MintA' : 'MintB',
+          baseAmount: sliceRaw,
+          // True single-sided: range is entirely on one side of the current tick
+          // so the position genuinely needs ZERO of the other token. Pass 0 here —
+          // when otherAmount is zero the SDK auto-creates the missing-side ATA.
+          // (If we pass nonzero, the SDK assumes the ATA already has that balance,
+          // which would fail for non-SOL quote pools where we haven't pre-created
+          // the ATA.)
+          otherAmountMax: new BN(0),
+          txVersion: TxVersion.V0,
+          computeBudgetConfig: await lpComputeBudgetConfig(raydium, poolInfo.id),
+        }),
+        alreadyDone: () => findUnrecordedPositionAt(
+          raydium, poolId, mainTicks.tickLower, mainTicks.tickUpper, recordedMain,
+        ),
+        onAlreadyDone: (pos) => ({ tx: { txId: null }, nftMint: pos.nftMint, adopted: true }),
       });
-      openTx = await openRes.execute({ sendAndConfirm: true });
-      nftMint = openRes.extInfo?.nftMint?.toBase58();
+      if (openR.skipped) {
+        openTx = openR.value.tx;
+        nftMint = openR.value.nftMint;
+        console.log(`    slice ${i} already landed on-chain (nft=${nftMint}); adopting`);
+      } else {
+        openTx = openR.value.tx;
+        nftMint = openR.value.res.extInfo?.nftMint?.toBase58();
+      }
     } catch (err) {
       progress({
         stage: 'main_open_failed',
@@ -1839,31 +2114,48 @@ async function createSinglePool({
         } catch (e) {
           console.warn('    ladder cache refresh failed (non-fatal):', e.message);
         }
-        // Brief settle so the previous tx is fully visible to the RPC
-        await new Promise((r) => setTimeout(r, 1500));
+        // Same as the main-slice loop: wait for the previous open (band or,
+        // for the first band, the last main slice) to be visible.
+        const prevOpen = ladderPositions.length > 0
+          ? ladderPositions[ladderPositions.length - 1]
+          : mainPositions[mainPositions.length - 1];
+        await waitForPositionVisible(raydium, poolId, prevOpen?.nftMint);
       }
 
       let ladderTx;
       let ladderNftMint;
       try {
-        const ladderRes = await raydium.clmm.openPositionFromBase({
-          poolInfo,
-          poolKeys,
-          tickLower,
-          tickUpper,
-          base: launchedIsMintA ? 'MintA' : 'MintB',
-          baseAmount: bandBaseRaw,
-          // Single-sided in the launched token: the band starts above
-          // current tick (or below, for mintB), so the position holds 0
-          // of the other side at deposit time. otherAmountMax = 0 is
-          // exact and the SDK won't fund a non-existent ATA.
-          otherAmountMax: new BN(0),
-          ownerInfo: { useSOLBalance: false },
-          txVersion: TxVersion.V0,
-          computeBudgetConfig: await lpComputeBudgetConfig(raydium, poolInfo.id),
+        const recordedLadder = new Set(
+          [...mainPositions, ...ladderPositions].map((p) => p.nftMint).filter(Boolean),
+        );
+        const ladderR = await executeSdkTx({
+          label: `ladder band ${bi}`,
+          build: async () => raydium.clmm.openPositionFromBase({
+            poolInfo,
+            poolKeys,
+            tickLower,
+            tickUpper,
+            base: launchedIsMintA ? 'MintA' : 'MintB',
+            baseAmount: bandBaseRaw,
+            // Single-sided in the launched token: the band starts above
+            // current tick (or below, for mintB), so the position holds 0
+            // of the other side at deposit time. otherAmountMax = 0 is
+            // exact and the SDK won't fund a non-existent ATA.
+            otherAmountMax: new BN(0),
+            ownerInfo: { useSOLBalance: false },
+            txVersion: TxVersion.V0,
+            computeBudgetConfig: await lpComputeBudgetConfig(raydium, poolInfo.id),
+          }),
+          alreadyDone: () => findUnrecordedPositionAt(
+            raydium, poolId, tickLower, tickUpper, recordedLadder,
+          ),
+          onAlreadyDone: (pos) => ({ tx: { txId: null }, nftMint: pos.nftMint, adopted: true }),
         });
-        ladderTx = await ladderRes.execute({ sendAndConfirm: true });
-        ladderNftMint = ladderRes.extInfo?.nftMint?.toBase58();
+        ladderTx = ladderR.value.tx;
+        ladderNftMint = ladderR.skipped
+          ? ladderR.value.nftMint
+          : ladderR.value.res.extInfo?.nftMint?.toBase58();
+        if (ladderR.skipped) console.log(`      band ${bi} already landed (nft=${ladderNftMint}); adopting`);
       } catch (err) {
         progress({
           stage: 'ladder_open_failed',
@@ -2073,20 +2365,33 @@ async function createSinglePool({
     let supportTx;
     let supportNftMint;
     try {
-      const supportRes = await raydium.clmm.openPositionFromBase({
-        poolInfo,
-        poolKeys,
-        tickLower: supportTicks.tickLower,
-        tickUpper: supportTicks.tickUpper,
-        base: launchedIsMintA ? 'MintB' : 'MintA',
-        baseAmount: supportQuoteRaw,
-        otherAmountMax: new BN(0),
-        ownerInfo: { useSOLBalance: true },
-        txVersion: TxVersion.V0,
-        computeBudgetConfig: await lpComputeBudgetConfig(raydium, poolInfo.id),
+      const recordedSupport = new Set(
+        [...mainPositions, ...ladderPositions, ...supportPositions].map((p) => p.nftMint).filter(Boolean),
+      );
+      const supportR = await executeSdkTx({
+        label: 'support position',
+        build: async () => raydium.clmm.openPositionFromBase({
+          poolInfo,
+          poolKeys,
+          tickLower: supportTicks.tickLower,
+          tickUpper: supportTicks.tickUpper,
+          base: launchedIsMintA ? 'MintB' : 'MintA',
+          baseAmount: supportQuoteRaw,
+          otherAmountMax: new BN(0),
+          ownerInfo: { useSOLBalance: true },
+          txVersion: TxVersion.V0,
+          computeBudgetConfig: await lpComputeBudgetConfig(raydium, poolInfo.id),
+        }),
+        alreadyDone: () => findUnrecordedPositionAt(
+          raydium, poolId, supportTicks.tickLower, supportTicks.tickUpper, recordedSupport,
+        ),
+        onAlreadyDone: (pos) => ({ tx: { txId: null }, nftMint: pos.nftMint, adopted: true }),
       });
-      supportTx = await supportRes.execute({ sendAndConfirm: true });
-      supportNftMint = supportRes.extInfo?.nftMint?.toBase58();
+      supportTx = supportR.value.tx;
+      supportNftMint = supportR.skipped
+        ? supportR.value.nftMint
+        : supportR.value.res.extInfo?.nftMint?.toBase58();
+      if (supportR.skipped) console.log(`    support already landed (nft=${supportNftMint}); adopting`);
     } catch (err) {
       progress({
         stage: 'support_open_failed',
@@ -2385,20 +2690,35 @@ async function openBootstrapPosition({
       `isQuoteSol=${isQuoteSol})`,
   );
 
-  const bsRes = await raydium.clmm.openPositionFromBase({
-    poolInfo,
-    poolKeys,
-    ownerInfo: { useSOLBalance: true },
-    tickLower: bsTicks.tickLower,
-    tickUpper: bsTicks.tickUpper,
-    base: launchedIsMintA ? 'MintA' : 'MintB',
-    baseAmount: bootstrapBaseRaw,
-    otherAmountMax: bsOtherMax,
-    txVersion: TxVersion.V0,
-    computeBudgetConfig: await lpComputeBudgetConfig(raydium, poolInfo.id),
+  // The pre-send reconciliation above already handled "landed on a prior
+  // attempt". This retry handles the in-flight case: the same probe, run
+  // again before any RE-send, so a confirm-timeout that actually landed is
+  // adopted rather than opened twice.
+  const recordedBs = new Set((priorNftMints || []).filter(Boolean));
+  const bsR = await executeSdkTx({
+    label: 'bootstrap position',
+    build: async () => raydium.clmm.openPositionFromBase({
+      poolInfo,
+      poolKeys,
+      ownerInfo: { useSOLBalance: true },
+      tickLower: bsTicks.tickLower,
+      tickUpper: bsTicks.tickUpper,
+      base: launchedIsMintA ? 'MintA' : 'MintB',
+      baseAmount: bootstrapBaseRaw,
+      otherAmountMax: bsOtherMax,
+      txVersion: TxVersion.V0,
+      computeBudgetConfig: await lpComputeBudgetConfig(raydium, poolInfo.id),
+    }),
+    alreadyDone: () => findUnrecordedPositionAt(
+      raydium, poolId, bsTicks.tickLower, bsTicks.tickUpper, recordedBs,
+    ),
+    onAlreadyDone: (pos) => ({ tx: { txId: null }, nftMint: pos.nftMint, adopted: true }),
   });
-  const bsTx = await bsRes.execute({ sendAndConfirm: true });
-  const bsNftMint = bsRes.extInfo?.nftMint?.toBase58();
+  const bsTx = bsR.value.tx;
+  const bsNftMint = bsR.skipped
+    ? bsR.value.nftMint
+    : bsR.value.res.extInfo?.nftMint?.toBase58();
+  if (bsR.skipped) console.log(`  bootstrap already landed in-flight (nft=${bsNftMint}); adopting`);
   console.log(`  bootstrap opened: nft=${bsNftMint}, tx=${bsTx.txId}`);
   progress({
     stage: 'bootstrap_open_done',
@@ -2647,14 +2967,35 @@ async function lockAllPositions({ raydium, results, onProgress }) {
       }
       console.log(`[${symbol}] locking main slice ${i + 1}/${r.mainPositions.length}: nft=${pos.nftMint}`);
       try {
-        const lockRes = await raydium.clmm.lockPosition({
-          ownerPosition: { nftMint: new PublicKey(pos.nftMint) },
-          txVersion: TxVersion.V0,
+        const lockR = await executeSdkTx({
+          label: `lock ${pos.nftMint}`,
+          build: async () => raydium.clmm.lockPosition({
+            ownerPosition: { nftMint: new PublicKey(pos.nftMint) },
+            // Locks were the one SDK call in this file sent WITHOUT a priority
+            // fee — the same dynamic, pool-scoped config every other builder
+            // here passes. LockPosition accepts computeBudgetConfig (verified
+            // against the SDK's type defs in node_modules).
+            computeBudgetConfig: await lpComputeBudgetConfig(raydium, r.poolId),
+            txVersion: TxVersion.V0,
+          }),
+          alreadyDone: () => positionLockedOnChain(raydium, pos.nftMint),
+          onAlreadyDone: (feeKey) => ({ tx: { txId: null }, adopted: true, feeKey }),
         });
-        const lockTx = await lockRes.execute({ sendAndConfirm: true });
+        const lockTx = lockR.value.tx;
         pos.locked = true;
         pos.txIds.lock = lockTx.txId;
-        pos.feeKeyNftMint = feeKeyMintFromLockResult(lockRes);
+        // On adoption (lock landed on a prior attempt but its confirmation
+        // timed out) the builder result that carried the Fee Key mint is
+        // gone. That is not a loss: the sweep enumerates EVERY NFT in the
+        // wallet by address and moves it, so the Fee Key still reaches the
+        // destination — it just can't be labelled per-slice here.
+        pos.feeKeyNftMint = lockR.skipped
+          // Adopted: the probe that proved the lock exists also returned its
+          // Fee Key mint, so the per-slice label survives and Phase 4 can route
+          // this Fee Key to its recipient.
+          ? (lockR.value.feeKey || null)
+          : feeKeyMintFromLockResult(lockR.value.res);
+        if (lockR.skipped) console.log(`  lock for ${pos.nftMint} already landed on-chain; adopting`);
         console.log(`  locked: tx=${lockTx.txId}`);
         progress({
           stage: 'main_lock_done',
@@ -2735,14 +3076,32 @@ async function lockAllPositions({ raydium, results, onProgress }) {
       }
       console.log(`[${symbol}] locking ladder band ${bi + 1}/${r.ladderPositions.length}: nft=${lp.nftMint}`);
       try {
-        const lockRes = await raydium.clmm.lockPosition({
-          ownerPosition: { nftMint: new PublicKey(lp.nftMint) },
-          txVersion: TxVersion.V0,
+        const lockR = await executeSdkTx({
+          label: `lock ${lp.nftMint}`,
+          build: async () => raydium.clmm.lockPosition({
+            ownerPosition: { nftMint: new PublicKey(lp.nftMint) },
+            // Same priority-fee config as the main-position locks above.
+            computeBudgetConfig: await lpComputeBudgetConfig(raydium, r.poolId),
+            txVersion: TxVersion.V0,
+          }),
+          alreadyDone: () => positionLockedOnChain(raydium, lp.nftMint),
+          onAlreadyDone: (feeKey) => ({ tx: { txId: null }, adopted: true, feeKey }),
         });
-        const lockTx = await lockRes.execute({ sendAndConfirm: true });
+        const lockTx = lockR.value.tx;
         lp.locked = true;
         lp.txIds.lock = lockTx.txId;
-        lp.feeKeyNftMint = feeKeyMintFromLockResult(lockRes);
+        // On adoption (lock landed on a prior attempt but its confirmation
+        // timed out) the builder result that carried the Fee Key mint is
+        // gone. That is not a loss: the sweep enumerates EVERY NFT in the
+        // wallet by address and moves it, so the Fee Key still reaches the
+        // destination — it just can't be labelled per-slice here.
+        lp.feeKeyNftMint = lockR.skipped
+          // Adopted: the probe that proved the lock exists also returned its
+          // Fee Key mint, so the per-slice label survives and Phase 4 can route
+          // this Fee Key to its recipient.
+          ? (lockR.value.feeKey || null)
+          : feeKeyMintFromLockResult(lockR.value.res);
+        if (lockR.skipped) console.log(`  lock for ${lp.nftMint} already landed on-chain; adopting`);
         console.log(`  locked: tx=${lockTx.txId}`);
         progress({
           stage: 'ladder_lock_done',
@@ -2816,14 +3175,32 @@ async function lockAllPositions({ raydium, results, onProgress }) {
       }
       console.log(`[${symbol}] locking support position ${si + 1}/${r.supportPositions.length}: nft=${sp.nftMint}`);
       try {
-        const lockRes = await raydium.clmm.lockPosition({
-          ownerPosition: { nftMint: new PublicKey(sp.nftMint) },
-          txVersion: TxVersion.V0,
+        const lockR = await executeSdkTx({
+          label: `lock ${sp.nftMint}`,
+          build: async () => raydium.clmm.lockPosition({
+            ownerPosition: { nftMint: new PublicKey(sp.nftMint) },
+            // Same priority-fee config as the main-position locks above.
+            computeBudgetConfig: await lpComputeBudgetConfig(raydium, r.poolId),
+            txVersion: TxVersion.V0,
+          }),
+          alreadyDone: () => positionLockedOnChain(raydium, sp.nftMint),
+          onAlreadyDone: (feeKey) => ({ tx: { txId: null }, adopted: true, feeKey }),
         });
-        const lockTx = await lockRes.execute({ sendAndConfirm: true });
+        const lockTx = lockR.value.tx;
         sp.locked = true;
         sp.txIds.lock = lockTx.txId;
-        sp.feeKeyNftMint = feeKeyMintFromLockResult(lockRes);
+        // On adoption (lock landed on a prior attempt but its confirmation
+        // timed out) the builder result that carried the Fee Key mint is
+        // gone. That is not a loss: the sweep enumerates EVERY NFT in the
+        // wallet by address and moves it, so the Fee Key still reaches the
+        // destination — it just can't be labelled per-slice here.
+        sp.feeKeyNftMint = lockR.skipped
+          // Adopted: the probe that proved the lock exists also returned its
+          // Fee Key mint, so the per-slice label survives and Phase 4 can route
+          // this Fee Key to its recipient.
+          ? (lockR.value.feeKey || null)
+          : feeKeyMintFromLockResult(lockR.value.res);
+        if (lockR.skipped) console.log(`  lock for ${sp.nftMint} already landed on-chain; adopting`);
         console.log(`  locked: tx=${lockTx.txId}`);
         progress({
           stage: 'support_lock_done',
@@ -2878,14 +3255,32 @@ async function lockAllPositions({ raydium, results, onProgress }) {
     if (bs && bs.nftMint && !bs.locked) {
       console.log(`[${symbol}] locking bootstrap: nft=${bs.nftMint}`);
       try {
-        const lockRes = await raydium.clmm.lockPosition({
-          ownerPosition: { nftMint: new PublicKey(bs.nftMint) },
-          txVersion: TxVersion.V0,
+        const lockR = await executeSdkTx({
+          label: `lock ${bs.nftMint}`,
+          build: async () => raydium.clmm.lockPosition({
+            ownerPosition: { nftMint: new PublicKey(bs.nftMint) },
+            // Same priority-fee config as the main-position locks above.
+            computeBudgetConfig: await lpComputeBudgetConfig(raydium, r.poolId),
+            txVersion: TxVersion.V0,
+          }),
+          alreadyDone: () => positionLockedOnChain(raydium, bs.nftMint),
+          onAlreadyDone: (feeKey) => ({ tx: { txId: null }, adopted: true, feeKey }),
         });
-        const lockTx = await lockRes.execute({ sendAndConfirm: true });
+        const lockTx = lockR.value.tx;
         bs.locked = true;
         bs.txIds.lock = lockTx.txId;
-        bs.feeKeyNftMint = feeKeyMintFromLockResult(lockRes);
+        // On adoption (lock landed on a prior attempt but its confirmation
+        // timed out) the builder result that carried the Fee Key mint is
+        // gone. That is not a loss: the sweep enumerates EVERY NFT in the
+        // wallet by address and moves it, so the Fee Key still reaches the
+        // destination — it just can't be labelled per-slice here.
+        bs.feeKeyNftMint = lockR.skipped
+          // Adopted: the probe that proved the lock exists also returned its
+          // Fee Key mint, so the per-slice label survives and Phase 4 can route
+          // this Fee Key to its recipient.
+          ? (lockR.value.feeKey || null)
+          : feeKeyMintFromLockResult(lockR.value.res);
+        if (lockR.skipped) console.log(`  lock for ${bs.nftMint} already landed on-chain; adopting`);
         console.log(`  bootstrap locked: tx=${lockTx.txId}`);
         progress({
           stage: 'bootstrap_lock_done',
@@ -3011,11 +3406,30 @@ async function transferFeeKeys({ raydium, ownerKeypair, results, onProgress }) {
       }
       // The Fee Key is the lock NFT Burn & Earn minted in Phase 3 — the
       // original position NFT moved into the lock program's escrow when the
-      // lock executed, so it's no longer in the wallet. Prefer the recorded
-      // feeKeyNftMint; the pos.nftMint fallback only matters for journals
-      // written before the field existed (those transfers fail into
-      // transferFailures, same as they would have before).
-      const feeKeyMint = pos.feeKeyNftMint || pos.nftMint;
+      // lock executed, so it's no longer in the wallet. If the recorded
+      // feeKeyNftMint is missing (an adopted lock whose Fee Key lookup
+      // failed, or a journal from before the field existed), ask the lock
+      // program once more here. Never fall back to pos.nftMint: that is the
+      // escrowed POSITION NFT, and "transferring" it can only fail — with
+      // an error that reads as if the Fee Key were lost.
+      let feeKeyMint = pos.feeKeyNftMint || null;
+      if (!feeKeyMint) {
+        try { feeKeyMint = await findLockFeeKeyForPosition(raydium, pos.nftMint); } catch (_) { feeKeyMint = null; }
+        if (feeKeyMint) pos.feeKeyNftMint = feeKeyMint;
+      }
+      if (!feeKeyMint) {
+        console.warn(`[${symbol}] main slice ${i + 1}: locked, but the Fee Key mint could not be identified`);
+        transferFailures.push({
+          allocationIndex: allocIdx,
+          sliceIndex: i,
+          nftMint: pos.nftMint,
+          recipient: pos.recipient,
+          error: 'Fee Key mint could not be identified for this locked position. The Fee Key '
+            + 'is still in the launch wallet and will be swept to your destination wallet; '
+            + 'send it to the recipient from there.',
+        });
+        continue;
+      }
       console.log(`[${symbol}] transferring Fee Key (slice ${i + 1}) nft=${feeKeyMint} to ${pos.recipient}...`);
       try {
         const txId = await transferNftToRecipient({
@@ -3103,13 +3517,17 @@ async function transferFeeKeys({ raydium, ownerKeypair, results, onProgress }) {
 //
 // `quoteToken` shape:  { address: base58, symbol: string, decimals: number }
 // `alloc` shape:       { quoteUsdOverride?: number | string | null, ... }
-async function resolveQuoteUsdForCreate({
+export async function resolveQuoteUsdForCreate({
   quoteToken,
   alloc,
   solUsd,
+  // Optional. When present, the on-chain pool read runs FIRST (see below).
+  // Preflight and creation both have one; unit callers may omit it.
+  raydium = null,
 }) {
   let quoteUsd;
   let source;
+  let onChainInfo = null;
 
   if (quoteToken.address === WSOL_MINT) {
     // SOL pool: caller already resolved (and validated) SOL/USD.
@@ -3131,10 +3549,46 @@ async function resolveQuoteUsdForCreate({
     //     canonical source to a slower mirror on every Raydium hiccup,
     //     and the user wouldn't know.
     //   - Other / unknown: refuse, same reasoning.
+    // ---- 1. On-chain pool state — the authoritative source. ------------
+    // Read the asset's Raydium pools directly: price from sqrtPriceX64 or
+    // vault reserves, in-range from active liquidity, depth from reserves
+    // (or Raydium's TVL as a filter for CLMM). The deepest in-range pool
+    // with >= $100 sets the price; disagreement across pools is refused.
+    // This is what the aggregators are an *index of*; going to the source
+    // removes the class of "an indexer reported a dust pool's last trade
+    // as the price" outright. Falls through to the Trade-API probe only
+    // when there is no qualifying pool to read.
     let probeResult;
     let probeFailedNoRoute = false;
-    try {
-      probeResult = await probeRaydiumPriceStrict({
+    if (raydium) {
+      try {
+        onChainInfo = await _launchOnChainPrice({
+          mint: quoteToken.address,
+          solUsd,
+          deps: onChainPriceDeps(raydium),
+        });
+        quoteUsd = onChainInfo.priceUsd;
+        source = `on-chain:${onChainInfo.anchorSymbol}`;
+        console.log(
+          `  ${quoteToken.symbol || quoteToken.address}: on-chain price $${quoteUsd.toFixed(8)} ` +
+          `from ${onChainInfo.kind} pool ${onChainInfo.poolId} (${onChainInfo.anchorSymbol} pair, ` +
+          `$${onChainInfo.liquidityUsd.toFixed(0)} deep; ${onChainInfo.qualifyingCount}/` +
+          `${onChainInfo.discoveredCount} pools qualified, spread ${onChainInfo.spreadPct.toFixed(2)}%)`,
+        );
+      } catch (ocErr) {
+        // POOL_SPREAD is a positive finding — the market disagrees with
+        // itself — and must NOT be papered over by a fallback source.
+        if (ocErr.code === 'POOL_SPREAD') throw ocErr;
+        // NO_POOLS / NO_LIQUID_POOL / read failures: nothing usable on
+        // chain; try the next source.
+        console.log(`  on-chain price unavailable for ${quoteToken.symbol || quoteToken.address}: ${ocErr.message}`);
+      }
+    }
+
+    if (quoteUsd) {
+      // Resolved on-chain; skip the probe and aggregator entirely.
+    } else try {
+      probeResult = await _launchProbe({
         quoteMint: quoteToken.address,
         quoteDecimals: quoteToken.decimals,
         solUsd,
@@ -3179,7 +3633,10 @@ async function resolveQuoteUsdForCreate({
       }
     }
 
-    if (probeFailedNoRoute) {
+    if (quoteUsd) {
+      // Already resolved on-chain above. Nothing to do here — the probe
+      // and aggregator branches below are for when the chain had nothing.
+    } else if (probeFailedNoRoute) {
       // No Raydium route — fall back to the aggregator chain.
       // getUsdPrice cascades through Jupiter → Gecko → DexScreener,
       // which is the same chain that powered the price the user saw
@@ -3190,7 +3647,7 @@ async function resolveQuoteUsdForCreate({
       // branch above handles.
       let aggregatorPrice = null;
       try {
-        aggregatorPrice = await getUsdPrice(quoteToken.address);
+        aggregatorPrice = await _launchGetUsdPrice(quoteToken.address);
       } catch (_) { /* handled below */ }
       if (!aggregatorPrice || !aggregatorPrice.gt(0)) {
         const symbolHint =
@@ -3205,9 +3662,65 @@ async function resolveQuoteUsdForCreate({
           `override field, or pick a different quote token. No SOL was spent.`,
         );
       }
+      // Depth gate. The aggregators return a price for almost any
+      // indexed token, including ones whose only market is a dust pool —
+      // exactly the case for unverified low-cap tokens (the kind Phantom
+      // flags as spam and prices at $0). That price is the last tiny
+      // trade, not a market rate, and using it as a LAUNCH reference puts
+      // this pool at a different market cap than its siblings. Refuse
+      // unless the winning pool's reported depth clears the floor.
+      //
+      // `liquidityUsd` is attached by the extractors in tokenInfoService
+      // for the pool they selected. Undefined means the source reported
+      // no depth at all — treated as unknown and refused for the same
+      // reason: we cannot show the user this price is real.
+      const backingLiquidity = aggregatorPrice.liquidityUsd;
+      const backingNum = backingLiquidity ? Number(backingLiquidity.toString()) : NaN;
+      if (!Number.isFinite(backingNum) || backingNum < MIN_QUOTE_LIQUIDITY_USD) {
+        const symbolHint =
+          quoteToken.symbol && quoteToken.symbol !== quoteToken.address
+            ? `${quoteToken.symbol} (${quoteToken.address})`
+            : quoteToken.address;
+        const depthText = Number.isFinite(backingNum)
+          ? `only about $${Math.round(backingNum).toLocaleString()} of liquidity`
+          : 'no reported liquidity';
+        throw new Error(
+          `Raydium has no route for ${symbolHint}, and the only market any ` +
+          `aggregator could find has ${depthText} behind it. A price from a ` +
+          `market that thin is the last small trade, not a real rate — using ` +
+          `it would open this pool at a different market cap than your other ` +
+          `pools, and arbitrage would drain it as soon as trading starts. ` +
+          `Pick a quote token with a real market, or set the price manually ` +
+          `in the Advanced override field if you are certain. No SOL was spent.`,
+        );
+      }
       quoteUsd = aggregatorPrice;
       source = 'oracle';
     } else {
+      // Depth gate for the Raydium path — the FIRST source tried, so this
+      // is the more likely way a dust-pool price reaches the launch. The
+      // probe's price impact on its fixed 0.01 SOL notional is the depth
+      // signal: a real market absorbs it with a fraction of a percent, a
+      // near-empty pool shows tens of percent. A price from such a pool
+      // is the last tiny trade, not a rate, and using it opens this pool
+      // at a different market cap than its siblings.
+      const impact = probeResult.priceImpactPct;
+      if (Number.isFinite(impact) && impact > MAX_PROBE_PRICE_IMPACT_PCT) {
+        const symbolHint =
+          quoteToken.symbol && quoteToken.symbol !== quoteToken.address
+            ? `${quoteToken.symbol} (${quoteToken.address})`
+            : quoteToken.address;
+        throw new Error(
+          `The only Raydium market for ${symbolHint} is too thin to price a ` +
+          `launch against: a 0.01 SOL probe moved its price by ${impact.toFixed(1)}% ` +
+          `(limit ${MAX_PROBE_PRICE_IMPACT_PCT}%). A price from a market that thin ` +
+          `is the last small trade, not a real rate — using it would open this pool ` +
+          `at a different market cap than your other pools, and arbitrage would ` +
+          `drain it as soon as trading starts. Pick a quote token with a real ` +
+          `market, or set the price manually in the Advanced override field if ` +
+          `you are certain. No SOL was spent.`,
+        );
+      }
       quoteUsd = probeResult.effectiveQuoteUsd;
       source = 'raydium-probe';
     }
@@ -3350,7 +3863,7 @@ export async function preflightCreatePoolsAndPositions({
   // SOL/USD lookup — same hard-stop rule as createPoolsAndPositions.
   let solUsd = null;
   try {
-    solUsd = await getUsdPrice(WSOL_MINT);
+    solUsd = await _launchGetUsdPrice(WSOL_MINT);
   } catch (e) {
     const err = new Error(
       `Couldn't resolve SOL/USD price (${e.message}). Check your network ` +
@@ -3385,6 +3898,23 @@ export async function preflightCreatePoolsAndPositions({
     ? __connectionFactoryOverride()
     : new Connection(getRpcUrl(), 'confirmed');
 
+  // SDK handle for the on-chain price step, so preflight resolves prices
+  // through the SAME source order the creation loop uses. If they differed
+  // (preflight via probe/aggregator, creation via on-chain pools) the drift
+  // guard would compare two different oracles and could refuse a healthy
+  // launch — or worse, the confirmed price would not be the launch price.
+  // Best-effort: if the SDK can't load (offline demo, CI without RPC), fall
+  // through with null and the fallback chain is used, exactly as before
+  // the on-chain source existed. A regression here previously surfaced as
+  // a ReferenceError in this function, which no test exercised — see
+  // test/launch-preflight.test.mjs.
+  let raydium = null;
+  try {
+    raydium = await readOnlySdk();
+  } catch (e) {
+    console.warn(`preflight: SDK unavailable for on-chain pricing (${e.message}); using fallback sources`);
+  }
+
   const resolvedPrices = [];
   for (let allocIdx = 0; allocIdx < allocations.length; allocIdx++) {
     const alloc = allocations[allocIdx];
@@ -3398,6 +3928,7 @@ export async function preflightCreatePoolsAndPositions({
         quoteToken,
         alloc,
         solUsd,
+        raydium,
       });
 
       // initialPrice = quote-per-launched = launchedTokenUsd / quoteUsd.
@@ -3427,6 +3958,60 @@ export async function preflightCreatePoolsAndPositions({
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Cross-pool consistency check.
+  //
+  // Every pool in a launch is meant to open at the SAME USD market cap.
+  // Each pool's initialPrice is computed independently as
+  // launchedTokenUsd / quoteUsd, so the implied mcap is only equal across
+  // pools if every quoteUsd is right. Nothing verified that before: a
+  // single bad quote price (a stale aggregator quote, a mispriced thin
+  // market) put one pool at a different mcap while its siblings were
+  // fine. On launch, arbitrage immediately drains the cheap side and the
+  // chart opens with what looks like an instant dump.
+  //
+  // Recomputing implied mcap per pool and comparing them catches exactly
+  // that, before any SOL is spent. Implied mcap = initialPrice * quoteUsd
+  // * totalSupply, which reduces to targetMarketCapUsd when quoteUsd is
+  // self-consistent — so this is really a guard against a quoteUsd that
+  // disagrees between the price used for the ratio and the price the
+  // market will actually trade at.
+  if (resolvedPrices.length > 1) {
+    const implied = resolvedPrices.map((rp) => ({
+      symbol: rp.quoteSymbol,
+      allocationIndex: rp.allocationIndex,
+      mcap: new Decimal(rp.initialPrice)
+        .mul(new Decimal(rp.quoteUsd))
+        .mul(new Decimal(tokenTotalSupply)),
+    }));
+    let lowest = implied[0];
+    let highest = implied[0];
+    for (const e of implied) {
+      if (e.mcap.lt(lowest.mcap)) lowest = e;
+      if (e.mcap.gt(highest.mcap)) highest = e;
+    }
+    // Tolerance is deliberately tight: these are all derived from the same
+    // launchedTokenUsd, so any material spread means a quote price is
+    // wrong rather than merely moving. 1% absorbs Decimal rounding.
+    if (lowest.mcap.gt(0)) {
+      const spreadPct = highest.mcap.sub(lowest.mcap).div(lowest.mcap).mul(100);
+      if (spreadPct.gt(1)) {
+        const err = new Error(
+          `Pools would open at different market caps: ${lowest.symbol} at ` +
+            `$${lowest.mcap.toFixed(0)} vs ${highest.symbol} at ` +
+            `$${highest.mcap.toFixed(0)} (${spreadPct.toFixed(1)}% apart). Every pool ` +
+            `must start at the same market cap — otherwise arbitrage will drain the ` +
+            `cheaper pool the moment trading opens and the chart will show an ` +
+            `immediate crash. This usually means one quote token's price could not ` +
+            `be read accurately. Re-check the quote tokens and try again. ` +
+            `No SOL was spent.`,
+        );
+        err.failedPhase = 'pre_flight';
+        throw err;
+      }
+    }
+  }
+
   return {
     resolvedPrices,
     solUsd: solUsd.toString(),
@@ -3453,7 +4038,9 @@ export async function preflightCreatePoolsAndPositions({
  *   supplyPercent: number (0-100),
  *   ammConfigIndex?:        number (default DEFAULT_AMM_CONFIG_INDEX),
  *   quoteUsdOverride?:      number (drift-guard reference, NOT a bypass),
- *   quoteDecimalsOverride?: number (skip RPC mint lookup if set),
+ *   quoteDecimalsOverride?: number (MUST equal the mint's on-chain decimals;
+ *                           supplying a different value is rejected — see
+ *                           resolveQuoteToken. It never skips the RPC read),
  *   quoteSymbolOverride?:   string (display only),
  *   distribution?: [
  *     { sharePercent: number, recipient?: string }, ...
@@ -3931,6 +4518,10 @@ export async function createPoolsAndPositions({
   // get it at all, something is fundamentally broken (network, all
   // aggregators down) and a launch shouldn't proceed.
   let solUsdForSupport = null;
+  // One resolved USD price per distinct quote mint per run (see the
+  // creation loop). Declared here, outside any try, so it exists even if
+  // the SOL price fetch below throws and is caught.
+  const quoteUsdByMint = new Map();
   try {
     solUsdForSupport = await getUsdPrice(WSOL_MINT);
   } catch (e) {
@@ -4075,13 +4666,29 @@ export async function createPoolsAndPositions({
       let quoteUsd;
       let quoteUsdSource = null;
       try {
-        const resolved = await resolveQuoteUsdForCreate({
-          quoteToken,
-          alloc,
-          solUsd: solUsdForSupport,
-        });
-        quoteUsd = resolved.quoteUsd;
-        quoteUsdSource = resolved.source;
+        // Resolve each DISTINCT quote token once per run and reuse it for
+        // every pool that shares it. Two pools on the same non-SOL quote
+        // used to probe separately, seconds apart, and could land a few
+        // percent apart — a smaller version of the "pools at different
+        // market caps" incident. Keyed by mint address; the drift guard
+        // (against the user's confirmed price) still ran on the first
+        // resolution, so a reused value is one that already passed it.
+        const cached = quoteUsdByMint.get(quoteToken.address);
+        if (cached) {
+          quoteUsd = cached.quoteUsd;
+          quoteUsdSource = `${cached.source} (shared)`;
+          console.log(`  reusing ${quoteToken.symbol || quoteToken.address} price resolved for an earlier pool this run`);
+        } else {
+          const resolved = await resolveQuoteUsdForCreate({
+            quoteToken,
+            alloc,
+            solUsd: solUsdForSupport,
+            raydium,
+          });
+          quoteUsd = resolved.quoteUsd;
+          quoteUsdSource = resolved.source;
+          quoteUsdByMint.set(quoteToken.address, { quoteUsd, source: resolved.source });
+        }
       } catch (priceErr) {
         if (!priceErr.failedPhase) {
           priceErr.failedPhase = 'pre_flight';
@@ -4455,11 +5062,23 @@ export async function createPoolsAndPositions({
   } catch (e) {
     console.warn('  cache refresh failed (non-fatal):', e.message);
   }
-  // Brief settle so the last open tx from Phase 1 is fully visible to
-  // the RPC before Phase 2 starts querying pool state for bootstrap
-  // building. (Phase 1 no longer locks anything — locking is deferred
-  // to Phase 3.)
-  await new Promise((r) => setTimeout(r, 1500));
+  // Wait until every Phase 1 position is VISIBLE before Phase 2 queries
+  // pool state to build bootstraps (was a fixed 1.5s sleep). Phase 2's
+  // reconciliation probe and its liquidity math both depend on seeing
+  // the full Phase 1 result. (Phase 1 no longer locks anything — locking
+  // is deferred to Phase 3.)
+  for (const r of results) {
+    const mints = [
+      ...(r.mainPositions || []), ...(r.ladderPositions || []), ...(r.supportPositions || []),
+    ]
+      // A LOCKED position is in the lock program's escrow by design and will
+      // never appear in the wallet again — on a resume after Phase 3 began,
+      // waiting for it here would time out per position. Only unlocked
+      // positions are expected in the wallet.
+      .filter((p) => p && p.nftMint && !p.locked)
+      .map((p) => p.nftMint);
+    for (const m of mints) await waitForPositionVisible(raydium, r.poolId, m);
+  }
 
   // Phase 2 runs every bootstrap independently — a single failure does
   // not abort the remaining attempts. The premise is that an OPEN main
@@ -4730,6 +5349,99 @@ let __estRouteDiscoveryForTests = null;
 
 export function setPriceOracleForTests(fn) { __estPriceOracleForTests = fn; }
 export function setRouteDiscoveryForTests(fn) { __estRouteDiscoveryForTests = fn; }
+
+// Seams for the LAUNCH price path (resolveQuoteUsdForCreate). These were the
+// last untested money-critical decisions in the file: the Raydium-probe depth
+// gate, the aggregator liquidity floor, the drift guard, and the cross-pool
+// mcap check all live behind network calls with no injection point. Same
+// pattern as the estimator seams above; cleared by resetTestFactories().
+let __launchProbeForTests = null;
+let __launchOracleForTests = null;
+export function setLaunchProbeForTests(fn) { __launchProbeForTests = fn; }
+export function setLaunchOracleForTests(fn) { __launchOracleForTests = fn; }
+function _launchProbe(opts) {
+  return __launchProbeForTests ? __launchProbeForTests(opts) : probeRaydiumPriceStrict(opts);
+}
+let __launchOnChainForTests = null;
+export function setLaunchOnChainPriceForTests(fn) { __launchOnChainForTests = fn; }
+function _launchOnChainPrice(opts) {
+  return __launchOnChainForTests ? __launchOnChainForTests(opts) : getOnChainPriceUsd(opts);
+}
+
+// One definition of "how we read pools through the SDK", shared by the
+// launch path and the display endpoint so the price the user SEES in the
+// pool editor and the price the launch USES come from the same code.
+export function onChainPriceDeps(raydium) {
+  return {
+    fetchPoolsByMints: async (m1, m2) => {
+      // Explicit liquidity-desc sort. The SDK's default is sort="default",
+      // and the response is PAGED at a fixed 100 per page — so without this
+      // the deepest pool could sit on a page we never fetch. Sorted by
+      // liquidity, page 1 holds the 100 deepest pools, which is all the
+      // selection needs (it picks the deepest qualifying one and checks
+      // spread among the deepest).
+      const r = await raydium.api.fetchPoolByMints({
+        mint1: m1, mint2: m2, sort: 'liquidity', order: 'desc',
+      });
+      return Array.isArray(r) ? r : (r && Array.isArray(r.data) ? r.data : []);
+    },
+    readClmm: async (id) => raydium.clmm.getRpcClmmPoolInfo({ poolId: id }),
+    // AMM v4 / stable pools — liquidityStateV4 layout.
+    readStandard: async (id) => {
+      const r = await raydium.liquidity.getRpcPoolInfos([id]);
+      const info = r && (r[id] || Object.values(r)[0]);
+      return info || null;
+    },
+    // CPMM pools — a DIFFERENT layout from AMM v4 even though the pool index
+    // labels both "Standard". onChainPriceService dispatches on programId.
+    readCpmm: async (id) => {
+      const r = await raydium.cpmm.getRpcPoolInfos([id]);
+      const info = r && (r[id] || Object.values(r)[0]);
+      return info || null;
+    },
+  };
+}
+
+// Read-only SDK for price lookups outside a launch (the pool editor's
+// quote-token display). Reads never sign, so the owner is a throwaway
+// keypair; cached so the editor's frequent lookups don't re-load the SDK.
+// Keyed by the RPC URL it was built against: the SDK captures its
+// Connection at load time, so a cache that ignored RPC changes would keep
+// reading through the OLD endpoint after the user switches — precisely
+// the moment they are most likely to be testing whether the new one works.
+let __readOnlySdk = null;
+let __readOnlySdkRpc = null;
+async function readOnlySdk() {
+  const rpc = __connectionFactoryOverride ? '__test__' : getRpcUrl();
+  if (!__readOnlySdk || __readOnlySdkRpc !== rpc) {
+    __readOnlySdk = await initSdk(Keypair.generate());
+    __readOnlySdkRpc = rpc;
+  }
+  return __readOnlySdk;
+}
+
+/**
+ * On-chain quote price for DISPLAY. Same source and same rules as the
+ * launch path (deepest in-range pool with >= $100, spread check), so the
+ * editor shows the number the launch will actually use. Returns null
+ * (never throws) when nothing qualifies — the caller falls back to its
+ * existing aggregator display and marks the source accordingly.
+ */
+export async function getQuoteTokenOnChainPrice({ mint, solUsd }) {
+  try {
+    const raydium = await readOnlySdk();
+    const r = await _launchOnChainPrice({ mint, solUsd, deps: onChainPriceDeps(raydium) });
+    return r;
+  } catch (e) {
+    // POOL_SPREAD is surfaced to the user as a warning by the caller, not
+    // hidden — return the error shape so it can be shown.
+    if (e && e.code === 'POOL_SPREAD') return { spreadError: e.message, spreadPct: e.spreadPct };
+    return null;
+  }
+}
+function _launchGetUsdPrice(mint) {
+  return __launchOracleForTests ? __launchOracleForTests(mint) : getUsdPrice(mint);
+}
 // NOTE: these two overrides are also cleared by the shared resetTestFactories()
 // defined near the SDK/connection seams above, so a single reset in afterEach
 // returns the whole module to production behavior.
@@ -4947,15 +5659,31 @@ export async function estimateRequiredFunding({
 
   // Look up SOL price once. We use it for sizing the SOL equivalent of
   // every auto-swap line; one lookup per estimate call rather than per
-  // allocation. Fallback constant if the price service is unavailable.
+  // allocation.
+  //
+  // No fallback price. This used to substitute a hardcoded FALLBACK_SOL_USD
+  // when the oracle was down — which turned "we don't know" into a
+  // confident number. At $200 assumed vs $250 real, every SOL-denominated
+  // cost in the estimate is understated by 20%: exactly the size of the
+  // safety buffer, so the user funds to the estimate and the launch runs
+  // short mid-phase. The launch path refuses without a live price; the
+  // estimate now does the same, and the UI shows the error where the
+  // number would have been.
   let solUsd;
+  let priceErr = null;
   try {
     // getUsdPrice returns a Decimal or null
-    const p = await _estGetUsdPrice(WSOL_MINT);
-    solUsd = p || new Decimal(FALLBACK_SOL_USD);
+    solUsd = await _estGetUsdPrice(WSOL_MINT);
   } catch (e) {
-    console.warn(`estimateRequiredFunding: SOL price fallback (${e.message})`);
-    solUsd = new Decimal(FALLBACK_SOL_USD);
+    priceErr = e;
+  }
+  if (!solUsd || !solUsd.isFinite || !solUsd.isFinite() || !solUsd.gt(0)) {
+    throw new Error(
+      'Could not fetch a live SOL price, so the funding estimate cannot be ' +
+      'computed' + (priceErr ? ` (${priceErr.message})` : '') + '. An estimate ' +
+      'built on a guessed price would understate what you need to fund. Check ' +
+      'your connection or RPC and try again.',
+    );
   }
 
   for (const [poolIdx, a] of allocations.entries()) {
@@ -5457,8 +6185,8 @@ export async function estimateRequiredFunding({
     quoteBreakdown,
     autoSwapPlan,
     resolvedPrices,
-    // SOL's USD price used for this estimate (from the WSOL oracle, or
-    // FALLBACK_SOL_USD if the oracle was unavailable). Exposed so the
+    // SOL's USD price used for this estimate (always the live WSOL oracle
+    // value — the estimate refuses to run without one). Exposed so the
     // frontend can value SOL-denominated airdrop contributions even when
     // the launch has no SOL-quoted pool to read a price from (e.g. a
     // flywheel-paired launch). Without this the airdrop allocation can't

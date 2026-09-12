@@ -42,6 +42,15 @@ import {
   getAccount,
 } from '@solana/spl-token';
 import { getRpcUrl } from './rpcConfig.js';
+import {
+  samplePriorityFeeMicroLamports,
+  computeBudgetIxs,
+  priorityFeeLamports,
+  CU_SOL_TRANSFER,
+  CU_TOKEN_TRANSFER,
+  PRIORITY_FEE_CEIL_MICROLAMPORTS,
+  SWEEP_FEE_PAD_LAMPORTS,
+} from './priorityFees.js';
 
 // Both token programs we need to query. Order matters only for log readability.
 const TOKEN_PROGRAMS = [
@@ -79,22 +88,27 @@ function makeConnection() {
  *     }
  *   }
  */
-export async function checkWalletBalanceMultiToken(publicKey) {
+export async function checkWalletBalanceMultiToken(publicKey, { commitment } = {}) {
   const connection = makeConnection();
   const pubKey = new PublicKey(publicKey);
 
   // SOL balance
-  const lamports = await connection.getBalance(pubKey);
+  const lamports = await connection.getBalance(pubKey, commitment);
   const sol = lamports / LAMPORTS_PER_SOL;
 
   // Token balances — query BOTH classic and Token-2022 programs and merge.
-  // Done in parallel since the two RPC calls are independent.
+  // Done in parallel since the two RPC calls are independent. The optional
+  // commitment matters for the sweep: enumerating at 'finalized' means a
+  // lagging RPC node can't hand us a stale list that misses a just-minted
+  // Fee Key NFT — the exact way an asset gets silently left behind.
   const respPairs = await Promise.all(
     TOKEN_PROGRAMS.map(async (prog) => ({
       programId: prog.id.toBase58(),
-      resp: await connection.getParsedTokenAccountsByOwner(pubKey, {
-        programId: prog.id,
-      }),
+      resp: await connection.getParsedTokenAccountsByOwner(
+        pubKey,
+        { programId: prog.id },
+        commitment,
+      ),
     })),
   );
 
@@ -106,6 +120,11 @@ export async function checkWalletBalanceMultiToken(publicKey) {
       const amountRaw = info.tokenAmount.amount;
       const amountUi = info.tokenAmount.uiAmount;
       const decimals = info.tokenAmount.decimals;
+      // The ACTUAL token account holding this balance. Transfers must move
+      // funds from this address — deriving the canonical ATA instead loses
+      // any balance sitting in a non-ATA account (aux accounts created by
+      // DEX/lock programs, or incoming transfers to secondary accounts).
+      const accountEntry = { address: acc.pubkey.toBase58(), amountRaw };
 
       // Aggregate duplicate accounts for the same mint (rare but possible)
       if (tokens[mint]) {
@@ -113,12 +132,14 @@ export async function checkWalletBalanceMultiToken(publicKey) {
           BigInt(tokens[mint].amountRaw) + BigInt(amountRaw)
         ).toString();
         tokens[mint].amountUi += amountUi || 0;
+        tokens[mint].accounts.push(accountEntry);
       } else {
         tokens[mint] = {
           amountRaw,
           amountUi: amountUi || 0,
           decimals,
           programId,
+          accounts: [accountEntry],
         };
       }
     }
@@ -140,19 +161,23 @@ export async function checkWalletBalanceMultiToken(publicKey) {
  * programId is critical — it's needed when building the transfer instruction,
  * since classic and Token-2022 use different program IDs.
  */
-export async function findOwnedNfts(publicKey, excludeMints = []) {
+export async function findOwnedNfts(publicKey, excludeMints = [], { commitment } = {}) {
   const connection = makeConnection();
   const pubKey = new PublicKey(publicKey);
   const excludeSet = new Set(excludeMints);
 
-  // Query both token programs in parallel
+  // Query both token programs in parallel. Commitment is caller-selectable
+  // for the same reason as checkWalletBalanceMultiToken: the sweep must
+  // enumerate at 'finalized' so a lagging node can't hide a fresh Fee Key.
   const respPairs = await Promise.all(
     TOKEN_PROGRAMS.map(async (prog) => ({
       programId: prog.id,
       programName: prog.name,
-      resp: await connection.getParsedTokenAccountsByOwner(pubKey, {
-        programId: prog.id,
-      }),
+      resp: await connection.getParsedTokenAccountsByOwner(
+        pubKey,
+        { programId: prog.id },
+        commitment,
+      ),
     })),
   );
 
@@ -257,11 +282,12 @@ export async function sweepNftsToDestination({
   const nfts = await findOwnedNfts(
     ownerKeypair.publicKey.toBase58(),
     excludeMints,
+    { commitment: 'finalized' }, // don't let a lagging node hide a fresh Fee Key
   );
 
   console.log(`Found ${nfts.length} NFT(s) to sweep to ${destinationWallet}`);
   for (const n of nfts) {
-    console.log(`  - ${n.mint} (${n.programName})`);
+    console.log(`  - ${n.mint} (${n.programName}) in ${n.ata}`);
   }
 
   const transferred = [];
@@ -279,6 +305,9 @@ export async function sweepNftsToDestination({
           amount: 1n,        // NFTs always have amount=1
           decimals: 0,       // NFTs always have decimals=0
           programId: nft.programId,
+          // Transfer from the account the NFT was actually FOUND in — not a
+          // derived ATA. See transferTokenWithProgram for why this matters.
+          sourceTokenAccount: nft.ata,
         }),
       );
       console.log(`  swept ${nft.mint} (${nft.programName}): ${txId}`);
@@ -327,9 +356,11 @@ export async function sweepAllTokensToDestination({
   const destPk = new PublicKey(destinationWallet);
   const excludeSet = new Set(excludeMints.filter(Boolean));
 
-  // Read everything the wallet holds, then partition.
+  // Read everything the wallet holds, then partition. 'finalized' so the
+  // list can't be a stale view from a lagging node.
   const { tokens } = await checkWalletBalanceMultiToken(
     ownerKeypair.publicKey.toBase58(),
+    { commitment: 'finalized' },
   );
 
   const fungibles = [];
@@ -350,42 +381,62 @@ export async function sweepAllTokensToDestination({
     `Found ${fungibles.length} fungible token type(s) to sweep to ${destinationWallet}`,
   );
   for (const t of fungibles) {
-    console.log(`  - ${t.mint} (${t.amountUi}, ${t.decimals}d)`);
+    console.log(`  - ${t.mint} (${t.amountUi}, ${t.decimals}d, ${(t.accounts || []).length} account(s))`);
   }
 
   const transferred = [];
   const errors = [];
 
   for (const t of fungibles) {
-    try {
-      const programId = t.programId === TOKEN_2022_PROGRAM_ID.toBase58()
-        ? TOKEN_2022_PROGRAM_ID
-        : TOKEN_PROGRAM_ID;
-      const txId = await withSweepRetries(
-        `token ${t.mint}`,
-        () => transferTokenWithProgram({
-          connection,
-          ownerKeypair,
-          mint: new PublicKey(t.mint),
-          destination: destPk,
-          amount: BigInt(t.amountRaw),
-          decimals: t.decimals,
-          programId,
-        }),
-      );
-      console.log(`  swept ${t.mint} (${t.amountUi}): ${txId}`);
+    // Transfer PER ACCOUNT, from the account each balance actually sits in.
+    // A mint's balance can be split across the ATA and auxiliary accounts;
+    // a single aggregate transfer from the derived ATA either fails
+    // ("insufficient funds": the ATA doesn't hold the aggregate) or leaves
+    // the auxiliary balances behind. Both failure shapes match user reports
+    // of tokens remaining after the sweep.
+    const accounts = (t.accounts && t.accounts.length > 0)
+      ? t.accounts
+      : [{ address: null, amountRaw: t.amountRaw }]; // legacy shape fallback
+    let mintHadError = false;
+    const txIds = [];
+    for (const acct of accounts) {
+      if (acct.amountRaw === '0') continue;
+      try {
+        const programId = t.programId === TOKEN_2022_PROGRAM_ID.toBase58()
+          ? TOKEN_2022_PROGRAM_ID
+          : TOKEN_PROGRAM_ID;
+        const txId = await withSweepRetries(
+          `token ${t.mint} (${acct.address || 'derived ATA'})`,
+          () => transferTokenWithProgram({
+            connection,
+            ownerKeypair,
+            mint: new PublicKey(t.mint),
+            destination: destPk,
+            amount: BigInt(acct.amountRaw),
+            decimals: t.decimals,
+            programId,
+            sourceTokenAccount: acct.address,
+          }),
+        );
+        txIds.push(txId);
+      } catch (err) {
+        mintHadError = true;
+        console.error(`  failed to sweep ${t.mint} from ${acct.address || 'derived ATA'}:`, err.message);
+        errors.push({ mint: t.mint, account: acct.address, error: err.message });
+      }
+      // Inter-item pacing — same rationale as the NFT sweep loop above.
+      await sleep(SWEEP_TX_PACING_MS);
+    }
+    if (!mintHadError && txIds.length > 0) {
+      console.log(`  swept ${t.mint} (${t.amountUi}) in ${txIds.length} tx(s)`);
       transferred.push({
         mint: t.mint,
         amount: t.amountUi,
         decimals: t.decimals,
-        txId,
+        txId: txIds[0],
+        txIds,
       });
-    } catch (err) {
-      console.error(`  failed to sweep ${t.mint}:`, err.message);
-      errors.push({ mint: t.mint, error: err.message });
     }
-    // Inter-item pacing — same rationale as the NFT sweep loop above.
-    await sleep(SWEEP_TX_PACING_MS);
   }
 
   return { transferred, errors };
@@ -409,11 +460,18 @@ export async function sweepSolToDestination({
   const destPk = new PublicKey(destinationWallet);
 
   const solBalance = await connection.getBalance(ownerKeypair.publicKey);
-  // Leave the account rent-exempt minimum plus a tiny cushion for the
-  // transfer tx fee itself. 5000 lamports is the base tx fee on Solana
-  // mainnet; we don't pay priority on the final sweep so this is enough.
+  // The final sweep now pays a priority fee too — during congestion the
+  // very last tx of a launch is not the one to leave un-prioritized. That
+  // means the reserve must cover base fee (5000 lamports/signature) PLUS
+  // the priority cost of this tx, or the sweep itself fails with
+  // "insufficient lamports". The rent-exempt minimum keeps the account
+  // alive after the sweep.
+  const microLamports = await samplePriorityFeeMicroLamports(connection);
+  const feeReserve = 5000
+    + priorityFeeLamports(CU_SOL_TRANSFER, microLamports)
+    + SWEEP_FEE_PAD_LAMPORTS; // never reserve exactly-enough; see priorityFees.js
   const minRentExemption = await connection.getMinimumBalanceForRentExemption(0);
-  const transferAmount = solBalance - minRentExemption - 5000;
+  const transferAmount = solBalance - minRentExemption - feeReserve;
 
   console.log(`SOL sweep: balance=${solBalance / LAMPORTS_PER_SOL}, ` +
     `transferring=${transferAmount / LAMPORTS_PER_SOL}`);
@@ -423,6 +481,9 @@ export async function sweepSolToDestination({
   }
 
   const tx = new Transaction().add(
+    // ComputeBudget instructions FIRST (limit must be set before the app
+    // instruction runs), then the transfer. See priorityFees.js.
+    ...computeBudgetIxs({ units: CU_SOL_TRANSFER, microLamports }),
     SystemProgram.transfer({
       fromPubkey: ownerKeypair.publicKey,
       toPubkey: destPk,
@@ -458,15 +519,26 @@ export async function transferTokenWithProgram({
   amount,        // bigint
   decimals,      // number
   programId,     // PublicKey — TOKEN_PROGRAM_ID or TOKEN_2022_PROGRAM_ID
+  // The ACTUAL token account to transfer FROM, as discovered during
+  // enumeration. When omitted, falls back to the owner's derived ATA —
+  // correct for the common case, but the sweep paths must always pass the
+  // discovered account: an asset sitting in a non-ATA account (aux accounts
+  // created by DEX/lock programs, incoming transfers to secondary accounts)
+  // enumerates fine and then a derived-ATA transfer reads an empty account
+  // and fails "insufficient funds". That is precisely how Fee Key NFTs were
+  // being left behind in user reports.
+  sourceTokenAccount = null,
 }) {
   // Compute ATA addresses. getAssociatedTokenAddressSync takes the program ID
   // — important for Token-2022, which derives ATAs differently from classic.
-  const ownerAta = getAssociatedTokenAddressSync(
-    mint,
-    ownerKeypair.publicKey,
-    /* allowOwnerOffCurve */ false,
-    programId,
-  );
+  const sourceAccount = sourceTokenAccount
+    ? new PublicKey(sourceTokenAccount)
+    : getAssociatedTokenAddressSync(
+        mint,
+        ownerKeypair.publicKey,
+        /* allowOwnerOffCurve */ false,
+        programId,
+      );
   const destAta = getAssociatedTokenAddressSync(
     mint,
     destination,
@@ -475,6 +547,12 @@ export async function transferTokenWithProgram({
   );
 
   const tx = new Transaction();
+
+  // Priority fee: sampled fresh per transfer so each tx reflects current
+  // conditions. This path serves every token/NFT sweep and the Fee Key
+  // slice transfers — all post-launch money movements that must land.
+  const microLamports = await samplePriorityFeeMicroLamports(connection);
+  tx.add(...computeBudgetIxs({ units: CU_TOKEN_TRANSFER, microLamports }));
 
   // Idempotent ATA creation for the destination — does nothing if the ATA
   // already exists, otherwise creates it. Owner pays rent.
@@ -493,7 +571,7 @@ export async function transferTokenWithProgram({
   // before they cost SOL. It's also REQUIRED for Token-2022 transfers.
   tx.add(
     createTransferCheckedInstruction(
-      ownerAta,
+      sourceAccount,
       mint,
       destAta,
       ownerKeypair.publicKey,
@@ -670,10 +748,20 @@ function buildAirdropTx({
   tokenDecimals,
   programId,
   recentBlockhash,
+  priorityFeeMicroLamports,
 }) {
   const tx = new Transaction();
   tx.feePayer = ownerKeypair.publicKey;
   tx.recentBlockhash = recentBlockhash;
+  // Priority fee, sampled once per airdrop run by executeAirdrop and
+  // escalated per retry attempt by deliverOneAirdropRecipient. Airdrop
+  // txs used to ride at zero priority — the first thing dropped when the
+  // network is busy, and with many small txs per run the failure odds
+  // compound per recipient.
+  tx.add(...computeBudgetIxs({
+    units: CU_TOKEN_TRANSFER,
+    microLamports: priorityFeeMicroLamports,
+  }));
   // Idempotent ATA creation for the recipient. No-op if their ATA
   // already exists. Owner pays the rent either way.
   tx.add(
@@ -760,6 +848,7 @@ async function deliverOneAirdropRecipient({
   amountRaw,
   tokenDecimals,
   programId,
+  priorityFeeMicroLamports,
 }) {
   let lastError = null;
   let lastSignature = null;
@@ -788,9 +877,20 @@ async function deliverOneAirdropRecipient({
     }
 
     // Build + sign tx. Cheap and deterministic; doesn't touch RPC.
+    //
+    // Fee escalation on retry: double the bid each attempt (x1, x2, x4),
+    // clamped at the global ceiling. If attempt 1 didn't land, current
+    // conditions demand more than our sample said — the standard
+    // retry-with-higher-fee pattern. The ceiling keeps the worst case
+    // bounded (see priorityFees.js cost math).
+    const escalatedFee = Math.min(
+      PRIORITY_FEE_CEIL_MICROLAMPORTS,
+      priorityFeeMicroLamports * (2 ** (attempt - 1)),
+    );
     const tx = buildAirdropTx({
       ownerKeypair, ownerAta, recipientPk, recipientAta, mintPk,
       amountRaw, tokenDecimals, programId, recentBlockhash: blockhash,
+      priorityFeeMicroLamports: escalatedFee,
     });
 
     // Phase 1: send. Pre-send errors are clean retries (the tx didn't
@@ -913,6 +1013,13 @@ export async function executeAirdrop({
   const transferred = [];
   const failed = [];
 
+  // Sample the priority fee ONCE for the whole run. Airdrops can span
+  // minutes, but the clamp bounds any drift and the per-attempt doubling
+  // in deliverOneAirdropRecipient absorbs a market that moves up mid-run.
+  // One sample also spares the RPC ~1 call per recipient.
+  const priorityFeeMicroLamports = await samplePriorityFeeMicroLamports(connection);
+  console.log(`  airdrop priority fee: ${priorityFeeMicroLamports} microlamports/CU`);
+
   // Pre-compute the owner's launched-token ATA. Stable across the run;
   // doing it inside the loop would just repeat the same derivation.
   const ownerAta = getAssociatedTokenAddressSync(
@@ -1026,6 +1133,7 @@ export async function executeAirdrop({
       amountRaw,
       tokenDecimals,
       programId,
+      priorityFeeMicroLamports,
     });
 
     if (result.ok) {

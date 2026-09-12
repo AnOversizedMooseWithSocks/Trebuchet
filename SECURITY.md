@@ -2,13 +2,33 @@
 
 ## npm audit residuals
 
-`npm audit --audit-level=high` currently reports high-severity findings in transitive Solana/Irys dependencies:
+The audit policy is enforced by `scripts/audit-gate.mjs` (run in CI): **any** critical fails the build, and so does
+any high-severity finding that is not on the script's reviewed allowlist. Allowlisted residuals print with the reason
+they cannot be fixed. Keep `ALLOWED_HIGH` in that script and this section in sync.
 
-- `bigint-buffer` through `@solana/spl-token` and `@raydium-io/raydium-sdk-v2`.
+`npm audit` currently reports 4 high-severity findings, all in one unfixable transitive chain:
+
+- `bigint-buffer` through `@solana/spl-token` -> `@solana/buffer-layout-utils` (and `@raydium-io/raydium-sdk-v2`).
 - `elliptic` through `@metaplex-foundation/umi-uploader-irys` and its Irys upload stack.
 
-`tmp <0.2.6` was also reported through `@metaplex-foundation/umi-uploader-irys -> @irys/sdk -> arbundles -> tmp-promise`.
-That path is pinned with an npm override to `tmp ^0.2.6`, because npm reported a non-force fix path for this package and it does not require changing the Metaplex/Irys API surface.
+Three findings that DID have safe fix paths were resolved by override/version bumps rather than left as residuals
+(release audit, August 2026). Each stays within its current major, so no API surface changed:
+
+| Package | Was | Now | Advisory |
+| --- | --- | --- | --- |
+| `multer` (direct) | `^2.1.1` | `^2.2.0` | DoS via deeply nested field names; DoS via incomplete cleanup of aborted uploads. Directly reachable — this is the logo-upload endpoint. |
+| `axios` (override) | `^1.16.1` | `^1.19.0` | Ten advisories incl. prototype pollution, `maxBodyLength` bypass, `NO_PROXY` bypass. Reached via Raydium SDK and the Irys stack. |
+| `tmp` (override) | `^0.2.6` | `^0.2.7` | Type-confusion path traversal via non-string prefix/postfix. Reached via `arbundles -> tmp-promise`. |
+| `form-data` (override) | `^4.0.5` | `^4.0.6` | CRLF injection via unescaped multipart field names. |
+| `tar` (override) | `^7.5.15` | `^7.5.21` | **Critical** — six advisories incl. file smuggling via PAX header confusion and parser DoS. Build-time only (electron-builder), but it is the packaging toolchain. Was the finding that failed CI. |
+| `electron` (dev) | 42.2.0 | 42.9.2 | `ProtocolResponse.url` session-cache confusion. In-major bump; lockfile only, spec unchanged at `^42.2.0`. |
+| `electron-builder` + toolchain (dev) | 26.8.1 | 26.15.3 | AppImage search-path, credential leak on cross-origin redirect, `extract-zip` symlink traversal, `js-yaml` / `brace-expansion` / `undici` DoS. In-major; lockfile only. |
+
+`bigint-buffer` has **no patched release at all** (latest published is the vulnerable `1.1.5`), so it cannot be
+fixed in place at any version — it is an ecosystem-wide residual affecting every Solana app on the current
+`@solana/spl-token` line. Mitigating detail: the vulnerability is in the *native* binding's `toBigIntLE()`, and
+this app logs `bigint: Failed to load bindings, pure JS will be used` at startup, so the affected native path is
+not the one in use. Revisit when `@solana/buffer-layout-utils` drops the dependency.
 
 The npm force fixes are not safe to apply blindly:
 
@@ -32,7 +52,7 @@ Do not run `npm audit fix --force` without validating token minting, metadata up
 
 Dependency changes touching token minting, metadata upload, or Raydium CLMM creation should:
 
-- Run `npm audit --audit-level=high` before and after the change.
+- Run `node scripts/audit-gate.mjs` before and after the change.
 - Avoid `npm audit fix --force` unless the resulting dependency graph is validated.
 - Run `npm run check:syntax` and `npm test`.
 - Exercise metadata upload through `metadataUploadService.js` tests before attempting a full launch.

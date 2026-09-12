@@ -199,10 +199,65 @@ test('publishLaunchReport: upload failure is non-fatal and does not throw', asyn
     launchData: { mint: 'M' },
     mint: 'M',
     onProgress: (e) => progress.push(e),
-    logger: { log() {}, error() {} },
+    logger: { log() {}, warn() {}, error() {} },
+    // Exhaust the retry budget instantly so the test stays fast; retry
+    // behaviour itself is covered by the dedicated tests below.
+    uploadRetry: { attempts: 2, baseDelayMs: 1 },
   });
   assert.equal(result.skipped, false);
   assert.equal(result.failed, true);
   assert.equal(result.error, 'Irys unavailable');
-  assert.deepEqual(progress, [{ stage: 'report_publish_failed', error: 'Irys unavailable' }]);
+  // Every attempt after the first emits a retry event; the terminal event
+  // is still the non-fatal publish failure.
+  assert.deepEqual(progress, [
+    { stage: 'report_upload_retry', label: 'HTML', attempt: 1, error: 'Irys unavailable' },
+    { stage: 'report_upload_retry', label: 'HTML', attempt: 2, error: 'Irys unavailable' },
+    { stage: 'report_publish_failed', error: 'Irys unavailable' },
+  ]);
+});
+
+test('publishLaunchReport: a transient upload failure is retried and succeeds', async () => {
+  // First upload call rejects, every later call succeeds — the report must
+  // still publish, costing one retry rather than the whole record.
+  const umi = makeUmi();
+  const realUpload = umi.uploader.upload.bind(umi.uploader);
+  let calls = 0;
+  umi.uploader.upload = async (files) => {
+    calls += 1;
+    if (calls === 1) throw new Error('gateway 503');
+    return realUpload(files);
+  };
+  const result = await publishLaunchReport({
+    enabled: true,
+    umi,
+    reportHtml: null, // JSON-only publish keeps the call accounting simple
+    launchData: { mint: 'M' },
+    mint: 'M',
+    logger: { log() {}, warn() {}, error() {} },
+    uploadRetry: { attempts: 3, baseDelayMs: 1 },
+  });
+  assert.equal(result.failed, false);
+  assert.equal(result.jsonUri, 'https://arweave.test/report-json');
+  assert.equal(calls, 2, 'one failed attempt, one successful retry');
+});
+
+test('publishLaunchReport: a hung upload hits the deadline and fails non-fatally', async () => {
+  // The uploader never resolves. The deadline must return a failed (but
+  // non-throwing) result so the sweep that follows the publish in step 6
+  // can never be stalled indefinitely.
+  const umi = makeUmi();
+  umi.uploader.upload = () => new Promise(() => {});
+  const result = await publishLaunchReport({
+    enabled: true,
+    umi,
+    reportHtml: null,
+    launchData: { mint: 'M' },
+    mint: 'M',
+    logger: { log() {}, warn() {}, error() {} },
+    deadlineMs: 50,
+  });
+  assert.equal(result.skipped, false);
+  assert.equal(result.failed, true);
+  assert.equal(result.deadlineExceeded, true);
+  assert.match(result.error, /deadline/);
 });
