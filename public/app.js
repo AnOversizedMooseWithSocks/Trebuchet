@@ -15978,10 +15978,17 @@ function renderLpSummary() {
 // Modal is shown and torn down here; on Confirm we resolve with the
 // passed-in prices unchanged (the modal doesn't modify them), on
 // Cancel we resolve null.
+// Sentinel returned by showPreflightModal when the user asks for fresh
+// prices instead of confirming or cancelling. runPreflightAndConfirm
+// handles it by re-basing each allocation's drift reference to the prices
+// just shown and running preflight again.
+const PREFLIGHT_REFRESH = Object.freeze({ refresh: true });
+
 function showPreflightModal(resolvedPrices) {
   const modal = document.getElementById('createLpConfirmModal');
   const proceedBtn = document.getElementById('createLpConfirmProceedBtn');
   const cancelBtn = document.getElementById('createLpConfirmCancelBtn');
+  const refreshBtn = document.getElementById('createLpConfirmRefreshBtn'); // optional: older markup lacks it
   if (!modal || !proceedBtn || !cancelBtn) {
     // Modal markup missing. The plan's safety-first principle is: when
     // in doubt, REFUSE to launch — silently bypassing the confirmation
@@ -16010,14 +16017,17 @@ function showPreflightModal(resolvedPrices) {
       modal.classList.remove('is-active');
       proceedBtn.removeEventListener('click', onProceed);
       cancelBtn.removeEventListener('click', onCancel);
+      if (refreshBtn) refreshBtn.removeEventListener('click', onRefresh);
       const bg = modal.querySelector('.modal-background');
       if (bg) bg.removeEventListener('click', onCancel);
       resolve(val);
     };
     const onProceed = () => finish(resolvedPrices);
     const onCancel = () => finish(null);
+    const onRefresh = () => finish(PREFLIGHT_REFRESH);
     proceedBtn.addEventListener('click', onProceed);
     cancelBtn.addEventListener('click', onCancel);
+    if (refreshBtn) refreshBtn.addEventListener('click', onRefresh);
     const bg = modal.querySelector('.modal-background');
     if (bg) bg.addEventListener('click', onCancel);
     modal.classList.add('is-active');
@@ -16242,7 +16252,24 @@ async function runPreflightAndConfirm(allocations, targetMc) {
     throw err;
   }
 
-  return await showPreflightModal(data.preflight.resolvedPrices);
+  const choice = await showPreflightModal(data.preflight.resolvedPrices);
+  if (choice === PREFLIGHT_REFRESH) {
+    // "Refresh prices": re-base each allocation's drift reference to the
+    // price the user was just looking at, then run preflight again. The
+    // drift indicator therefore measures movement SINCE THE LAST LOOK —
+    // if it's still large after a refresh or two, the market itself is
+    // unstable (thin liquidity), and the modal copy says so. This is the
+    // same re-basing Confirm performs, done early and in place, instead of
+    // sending the user back to Step 3 to click a different button.
+    for (const rp of data.preflight.resolvedPrices) {
+      if (!Number.isInteger(rp.allocationIndex)) continue;
+      if (rp.allocationIndex < 0 || rp.allocationIndex >= allocations.length) continue;
+      allocations[rp.allocationIndex].quoteUsdOverride = Number(rp.quoteUsd);
+    }
+    log('Refreshing prices…', 'info');
+    return await runPreflightAndConfirm(allocations, targetMc);
+  }
+  return choice;
 }
 
 bind('createLpBtn', 'click', async () => {

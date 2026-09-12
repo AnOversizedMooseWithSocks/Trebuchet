@@ -151,3 +151,32 @@ test('ladder multiplier fields may keep a 0.01 step because they are formatted o
   assert.ok(idx > 0);
   assert.match(appJs.slice(Math.max(0, idx - 220), idx), /step="0\.01"/);
 });
+
+test('index.html carries the current markup (catches a stale merge of the page)', () => {
+  // index.html is large and conflict-prone, and a merge that keeps the
+  // OLD side passes every app.js test while shipping stale markup. That
+  // happened: the Solflare panel (whose JS was deleted) reappeared in a
+  // build because index.html was merged from the wrong side, leaving a
+  // dead "Connect Solflare" button on step 1. Each line below is a
+  // feature whose markup lives ONLY in index.html; if any is missing, the
+  // page is not the one this bundle was built for.
+  const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  // Removed markup must stay removed.
+  assert.doesNotMatch(html, /solflareWalletPanel|Connect Solflare|connectSolflareBtn/,
+    'the Solflare panel was removed; its markup must not be present');
+
+  // Added markup must be present.
+  for (const [marker, feature] of [
+    ['id="welcomeCard"', 'first-launch welcome card'],
+    ['id="rpcSectionAnchor"', 'RPC explainer / settings anchor'],
+    ['id="settingsSetupPill"', 'RPC-setup-needed pill on the settings header'],
+    ['class="demo-champion"', 'demo-mode champion styling in settings'],
+    ['id="revokeMetadataToggle"', 'metadata-authority option'],
+    ['data-explain="', 'concept-help links'],
+    ['id="createLpConfirmRefreshBtn"', 'Refresh prices button on the pool-confirm modal'],
+    ['max 200×200 px', 'logo size label'],
+  ]) {
+    assert.ok(html.includes(marker), `index.html is missing the ${feature} (${marker})`);
+  }
+});

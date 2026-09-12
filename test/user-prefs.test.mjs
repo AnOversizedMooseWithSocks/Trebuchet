@@ -36,8 +36,10 @@ test('returns defaults when no preferences file exists', async (t) => {
   // checkForUpdatesOnStartup defaults to true — opt-out, not opt-in.
   // If users had to opt in they'd never discover the feature exists.
   assert.equal(prefs.checkForUpdatesOnStartup, true);
-  assert.equal(prefs.medievalCursor, false);
-  assert.equal(prefs.medievalCursorOptIn, false);
+  // Custom cursor is ON by default (product decision, Sept 2026). Both
+  // fields default true because the renderer requires the pair.
+  assert.equal(prefs.medievalCursor, true);
+  assert.equal(prefs.medievalCursorOptIn, true);
   assert.equal(prefs.playBackgroundMusic, false);
 
   // Calling get() before any set() should not touch the disk. The
@@ -198,7 +200,9 @@ test('fills missing keys from defaults when the file has partial data', async (t
   const userPrefs = await importFreshUserPrefs(configDir);
   const prefs = userPrefs.get();
   assert.equal(prefs.checkForUpdatesOnStartup, true);
-  assert.equal(prefs.medievalCursor, false);
-  assert.equal(prefs.medievalCursorOptIn, false);
+  // Custom cursor is ON by default (product decision, Sept 2026). Both
+  // fields default true because the renderer requires the pair.
+  assert.equal(prefs.medievalCursor, true);
+  assert.equal(prefs.medievalCursorOptIn, true);
   assert.equal(prefs.playBackgroundMusic, false);
 });
