@@ -52,6 +52,18 @@ export const AUTOSWAP_SIZING_MULTIPLIER = 2;
 export const AUTOSWAP_CUSTOM_TARGET_MULTIPLIER = 1.15;
 export const AUTOSWAP_CUSTOM_SIZING_MULTIPLIER = 1.10;
 
+// Minimum share of a pool's supply that must stay in the wide "main"
+// position — the one that spans from just above the launch price to the top
+// of the tick range. It is the pool's continuous base layer. Ladder and
+// custom bands are discrete ranges stacked ON TOP of it; if they consume
+// the entire supply, the pool has zero liquidity between bands and above
+// the top band. In a CLMM, price teleports across a zero-liquidity range on
+// the first trade with nothing to swap against — effectively untradeable
+// there. A thin base is enough: it only needs to exist at every price so
+// the bands are the *bulk* of the supply, never the *only* supply.
+// 0.5% of the pool's supply, expressed in basis points.
+export const MIN_WIDE_BASE_BPS = 50;
+
 // Fallback SOL-USD price when oracle is unavailable.
 export const FALLBACK_SOL_USD = 200;
 

@@ -373,6 +373,12 @@ const SPLIT_MAX_COUNT = 10;
 const LADDER_DEFAULT_PERCENT = 50;
 const LADDER_MIN_PERCENT = 20;
 const LADDER_MAX_PERCENT = 80;
+// Minimum % of a pool's supply that must stay in the full-range main
+// position when bands are configured. Mirrors MIN_WIDE_BASE_BPS on the
+// server (50 bps). The main is the pool's continuous base layer; bands
+// stack on top. Without it the pool has no liquidity between bands or
+// above the top band, and price jumps through those regions untradeably.
+const MIN_MAIN_BASE_PERCENT = 0.5;
 const LADDER_DEFAULT_BANDS = 5;
 const LADDER_MIN_BANDS = 3;
 const LADDER_MAX_BANDS = 10;
@@ -10589,6 +10595,27 @@ function updateContinueToFundingState() {
     reasons.push(`Token supply must not exceed ${MAX_TOKEN_SUPPLY.toLocaleString()}`);
   }
   if (!mc || mc <= 0) reasons.push('Target market cap must be > 0');
+
+  // Continuous-liquidity guard (custom mode). Bands are discrete ranges
+  // stacked on the full-range main; if they take nearly all the supply the
+  // pool has gaps with no liquidity. The server refuses this too; catching
+  // it here means the user sees it while editing, not at launch.
+  if (simpleConfig.mode !== 'default') {
+    for (let i = 0; i < pools.length; i++) {
+      const p = pools[i];
+      const bands = (p.ladderConfig && p.ladderConfig.mode === 'manual' && Array.isArray(p.ladderConfig.bands))
+        ? p.ladderConfig.bands : [];
+      if (bands.length === 0) continue;
+      const mainPct = Array.isArray(p.distribution)
+        ? p.distribution.reduce((s, x) => s + (Number(x.sharePercent) || 0), 0) : 0;
+      if (mainPct < MIN_MAIN_BASE_PERCENT) {
+        reasons.push(
+          `Pool ${i + 1}: keep at least ${MIN_MAIN_BASE_PERCENT}% of supply in the main position — ` +
+          'it is the full-range base under the bands; without it the pool has price gaps with no liquidity',
+        );
+      }
+    }
+  }
 
   // Airdrop shortfall BLOCKS, not just warns. Launching with an airdrop
   // that needs more tokens than are preallocated runs the wallet dry

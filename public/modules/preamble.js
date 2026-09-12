@@ -373,6 +373,12 @@ const SPLIT_MAX_COUNT = 10;
 const LADDER_DEFAULT_PERCENT = 50;
 const LADDER_MIN_PERCENT = 20;
 const LADDER_MAX_PERCENT = 80;
+// Minimum % of a pool's supply that must stay in the full-range main
+// position when bands are configured. Mirrors MIN_WIDE_BASE_BPS on the
+// server (50 bps). The main is the pool's continuous base layer; bands
+// stack on top. Without it the pool has no liquidity between bands or
+// above the top band, and price jumps through those regions untradeably.
+const MIN_MAIN_BASE_PERCENT = 0.5;
 const LADDER_DEFAULT_BANDS = 5;
 const LADDER_MIN_BANDS = 3;
 const LADDER_MAX_BANDS = 10;

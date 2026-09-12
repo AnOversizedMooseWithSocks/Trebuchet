@@ -158,6 +158,7 @@ import {
   WSOL_MINT,
   MIN_QUOTE_LIQUIDITY_USD,
   MAX_PROBE_PRICE_IMPACT_PCT,
+  MIN_WIDE_BASE_BPS,
   COST_POOL_RENT_SOL,
   COST_TICK_ARRAY_SOL,
   COST_POSITION_SOL,
@@ -434,6 +435,46 @@ export function unrecordedPositionsAtRange(onChainPositions, tickLower, tickUppe
       Number(p.tickUpper) === Number(tickUpper) &&
       !recordedNftMints.has(p.nftMint),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Continuous-liquidity guard.
+//
+// The wide "main" position spans from just above the launch price to the
+// top of the tick range — it is the pool's continuous base layer. Ladder
+// and custom bands are discrete ranges stacked ON TOP of it. If the bands
+// consume (nearly) all of a pool's supply there is no base, and the pool has
+// zero liquidity between bands and above the top band. In a CLMM, price
+// jumps through a zero-liquidity range on the first trade with nothing to
+// swap against (Raydium: "liquidity runs out at that tick and the next
+// price range takes over") — effectively untradeable there. The base only
+// needs to EXIST at every price; MIN_WIDE_BASE_BPS of the pool's supply is
+// enough for the bands to be the bulk of the supply without being the only
+// supply.
+//
+// Throws a pre_flight-tagged error (no SOL spent) naming the pool and the
+// exact fix. Pure over BN inputs so it's unit-testable without a launch.
+// ---------------------------------------------------------------------------
+export function assertWideBaseKept({
+  mainBaseRaw, wideBaseRaw, ladderTotalBaseRaw, ladderMode, poolLabel = 'Pool', allocIdx = 0,
+}) {
+  if (ladderMode === 'off') return; // no bands -> the main IS the whole supply
+  const minWideRaw = mainBaseRaw.mul(new BN(MIN_WIDE_BASE_BPS)).div(new BN(10_000));
+  if (!wideBaseRaw.lt(minWideRaw)) return;
+  const bandsPct = mainBaseRaw.isZero() ? 0
+    : Number(ladderTotalBaseRaw.mul(new BN(10_000)).div(mainBaseRaw).toString()) / 100;
+  const floorPct = (MIN_WIDE_BASE_BPS / 100).toFixed(2);
+  const err = new Error(
+    `${poolLabel}: the ladder/custom bands take ${bandsPct.toFixed(2)}% of this pool's supply, ` +
+    `leaving less than ${floorPct}% for the full-range base position. Bands are discrete price ` +
+    `ranges stacked on top of the base; without a base the pool has NO liquidity between bands ` +
+    `or above the top band, and price would jump through those regions with nothing to trade ` +
+    `against. Reduce the bands' total supply so at least ${floorPct}% stays in the main position. ` +
+    `No SOL was spent.`,
+  );
+  err.failedPhase = 'pre_flight';
+  err.failedAllocationIndex = allocIdx;
+  throw err;
 }
 
 // ---------------------------------------------------------------------------
@@ -4847,6 +4888,18 @@ export async function createPoolsAndPositions({
         ladderTotalBaseRaw = totalLadderRaw;
         wideBaseRaw = mainBaseRaw.sub(totalLadderRaw);
       }
+
+      // Continuous-liquidity guard. The wide main is the pool's base layer
+      // from launch to the top of the range; bands sit on top of it. If the
+      // bands consume (nearly) all of the supply, the pool has no liquidity
+      // between bands or above the top one, and price jumps through those
+      // regions with nothing to trade against. Refuse before any SOL is
+      // spent; the message says exactly how much to give back to the base.
+      assertWideBaseKept({
+        mainBaseRaw, wideBaseRaw, ladderTotalBaseRaw, ladderMode,
+        poolLabel: `Pool ${allocIdx + 1} (${quoteToken.symbol || quoteToken.address})`,
+        allocIdx,
+      });
 
       console.log(
         `  raw split: total=${allocatedSupplyRaw.toString()}, ` +
