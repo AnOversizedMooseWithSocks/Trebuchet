@@ -373,6 +373,33 @@ const SPLIT_MAX_COUNT = 10;
 const LADDER_DEFAULT_PERCENT = 50;
 const LADDER_MIN_PERCENT = 20;
 const LADDER_MAX_PERCENT = 80;
+// Continuous-liquidity rules (mirror lpConstants on the server). The main
+// position is the full-range base the bands stack on. It is glue, not a
+// reserve: if the bands leave GAPS, the base must exist (server requires
+// >= 1 whole token; here "any supply at all"); if the bands touch, no base
+// is needed. A THIN base is a warning — base-only stretches are high-impact.
+const THIN_BASE_WARN_PERCENT = 0.5;
+const BAND_GAP_TOLERANCE = 0.01;
+// Minimal bootstrap covers launch ± half its width; coverage starts here.
+const MINIMAL_BOOTSTRAP_UPPER_MULT = 1 + 30 / 200;
+
+// Sort manual bands by lower multiplier and report any stretch above the
+// bootstrap's upper edge that no band covers. Same logic as findBandGaps
+// on the server so the editor and the launch never disagree.
+function findManualBandGaps(bands, bootstrapMode) {
+  if (bootstrapMode === 'custom') return [];
+  const sorted = (bands || [])
+    .map((b) => ({ lower: Number(b.lowerMultiplier), upper: Number(b.upperMultiplier) }))
+    .filter((b) => Number.isFinite(b.lower) && Number.isFinite(b.upper) && b.upper > b.lower)
+    .sort((x, y) => x.lower - y.lower);
+  let cursor = MINIMAL_BOOTSTRAP_UPPER_MULT;
+  const gaps = [];
+  for (const b of sorted) {
+    if (b.lower > cursor * (1 + BAND_GAP_TOLERANCE)) gaps.push({ from: cursor, to: b.lower });
+    cursor = Math.max(cursor, b.upper);
+  }
+  return gaps;
+}
 const LADDER_DEFAULT_BANDS = 5;
 const LADDER_MIN_BANDS = 3;
 const LADDER_MAX_BANDS = 10;
@@ -10589,6 +10616,40 @@ function updateContinueToFundingState() {
     reasons.push(`Token supply must not exceed ${MAX_TOKEN_SUPPLY.toLocaleString()}`);
   }
   if (!mc || mc <= 0) reasons.push('Target market cap must be > 0');
+
+  // Continuous-liquidity check (custom mode). The main position is the
+  // full-range base the bands stack on. It is glue: required only when the
+  // bands leave gaps; a thin base is a warning, not a block. The server
+  // applies the same rule (>= 1 token when gapped); catching it here means
+  // the user sees it while editing, not at launch.
+  if (simpleConfig.mode !== 'default') {
+    for (let i = 0; i < pools.length; i++) {
+      const p = pools[i];
+      const bands = (p.ladderConfig && p.ladderConfig.mode === 'manual' && Array.isArray(p.ladderConfig.bands))
+        ? p.ladderConfig.bands : [];
+      if (bands.length === 0) continue;
+      const mainPct = Array.isArray(p.distribution)
+        ? p.distribution.reduce((s, x) => s + (Number(x.sharePercent) || 0), 0) : 0;
+      const bootstrapMode = (p.bootstrapConfig && p.bootstrapConfig.mode) || 'minimal';
+      const gaps = findManualBandGaps(bands, bootstrapMode);
+      if (gaps.length === 0) continue; // contiguous bands: no base needed
+      const g = gaps[0];
+      if (mainPct <= 0) {
+        reasons.push(
+          `Pool ${i + 1}: the bands leave a price range with no liquidity ` +
+          `(${g.from.toFixed(2)}× → ${g.to.toFixed(2)}× of launch) and the main position is empty. ` +
+          'Put a little supply in the main position — it is the full-range base that connects the bands — ' +
+          'or move the bands so they touch',
+        );
+      } else if (mainPct < THIN_BASE_WARN_PERCENT) {
+        warnings.push(
+          `Pool ${i + 1}: the main position holds under ${THIN_BASE_WARN_PERCENT}% of supply. ` +
+          'That keeps the pool tradeable everywhere, but between bands only that thin base is trading, ' +
+          'so small orders will move the price a long way there. Fine if that scarcity is intended.',
+        );
+      }
+    }
+  }
 
   // Airdrop shortfall BLOCKS, not just warns. Launching with an airdrop
   // that needs more tokens than are preallocated runs the wallet dry

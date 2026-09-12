@@ -52,6 +52,29 @@ export const AUTOSWAP_SIZING_MULTIPLIER = 2;
 export const AUTOSWAP_CUSTOM_TARGET_MULTIPLIER = 1.15;
 export const AUTOSWAP_CUSTOM_SIZING_MULTIPLIER = 1.10;
 
+// Continuous-liquidity rules for the wide "main" position (launch price to
+// the top of the tick range — the pool's base layer that bands stack on).
+//
+// The base is GLUE, not a reserve. Its only job is to connect the discrete
+// band positions so price can move between them; in a CLMM a zero-liquidity
+// stretch has nothing to swap against and price teleports across it.
+//
+//   - If the bands leave GAPS between positions, the base must exist with
+//     at least one whole token. That is a hard requirement (refused before
+//     any SOL is spent). One token is enough to make the range continuous.
+//   - If the bands are contiguous, no base is required at all.
+//   - Either way, a THIN base makes the base-only stretches high-impact
+//     (a small trade moves price a long way). That is a warning, not a
+//     block — the user may want exactly that scarcity.
+//
+// Whole tokens required in the base when gaps exist:
+export const MIN_BASE_TOKENS_WHEN_GAPPED = 1;
+// Below this share of the pool's supply the base is "thin" and we warn:
+export const THIN_BASE_WARN_BPS = 50; // 0.5%
+// Multiplier tolerance when deciding whether two bands touch (tick
+// alignment can leave slivers that are not real gaps):
+export const BAND_GAP_TOLERANCE = 0.01;
+
 // Fallback SOL-USD price when oracle is unavailable.
 export const FALLBACK_SOL_USD = 200;
 

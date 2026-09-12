@@ -625,6 +625,188 @@
         grid-template-columns: repeat(4, 1fr);
         gap: 28px;
     }
+    .hero-os-list {
+        display: block;
+        width: 100%;
+        margin-top: 10px;
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+        opacity: 0.8;
+    }
+
+    /* "What it solves" — problem-first cards. Same schematic frame as the
+       does-cards, but each one reads as a short case file: the obstacle
+       most launches hit, what the usual tools do about it, what Trebuchet
+       does instead. Three across so the copy has room. */
+    .solves-intro {
+        max-width: 760px;
+        margin: 0 0 40px;
+        font-size: 1.05rem;
+        line-height: 1.7;
+        color: var(--ink-soft);
+    }
+    .solves-intro strong { color: var(--ink); }
+    .solves-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 28px;
+    }
+    .solves-card {
+        border: 1px solid var(--ink-soft);
+        padding: 26px 24px 24px;
+        background: rgba(244, 234, 210, 0.4);
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .solves-card::before, .solves-card::after {
+        content: ''; position: absolute; width: 14px; height: 14px;
+        border: 1.5px solid var(--rubric);
+    }
+    .solves-card::before { top: -2px; left: -2px; border-right: 0; border-bottom: 0; }
+    .solves-card::after  { bottom: -2px; right: -2px; border-left: 0; border-top: 0; }
+    .solves-card .num {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        color: var(--rubric);
+    }
+    .solves-card h3 {
+        font-family: var(--serif);
+        font-size: 1.28rem;
+        margin: 2px 0 0;
+        line-height: 1.25;
+    }
+    .solves-card .problem {
+        font-size: 0.95rem;
+        line-height: 1.6;
+        color: var(--ink-soft);
+        margin: 0;
+    }
+    .solves-card .problem::before {
+        content: 'THE OBSTACLE';
+        display: block;
+        font-family: var(--mono);
+        font-size: 0.66rem;
+        letter-spacing: 0.14em;
+        color: var(--ink-soft);
+        opacity: 0.75;
+        margin-bottom: 4px;
+    }
+    .solves-card .answer {
+        font-size: 0.95rem;
+        line-height: 1.6;
+        margin: 0;
+    }
+    .solves-card .answer::before {
+        content: 'WHAT TREBUCHET DOES';
+        display: block;
+        font-family: var(--mono);
+        font-size: 0.66rem;
+        letter-spacing: 0.14em;
+        color: var(--rubric);
+        margin-bottom: 4px;
+    }
+    .solves-card .answer strong { color: var(--rubric); }
+    .solves-foot {
+        margin-top: 36px;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        line-height: 1.7;
+        color: var(--ink-soft);
+        max-width: 860px;
+    }
+    @media (max-width: 1000px) { .solves-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 640px)  { .solves-grid { grid-template-columns: 1fr; } }
+
+    /* ---- Supply control section: prose + schematic figure + table ---- */
+    .supply-lede {
+        font-family: var(--serif);
+        font-size: 1.45rem;
+        line-height: 1.4;
+        max-width: 820px;
+        margin: 0 0 32px;
+    }
+    .supply-lede em { color: var(--rubric); font-style: italic; }
+    .supply-prose {
+        max-width: 760px;
+        font-size: 1.02rem;
+        line-height: 1.75;
+        color: var(--ink-soft);
+    }
+    .supply-prose p { margin: 0 0 18px; }
+    .supply-prose strong { color: var(--ink); }
+    .supply-prose h3 {
+        font-family: var(--serif);
+        font-size: 1.3rem;
+        color: var(--ink);
+        margin: 34px 0 10px;
+    }
+    .supply-prose h3 .num {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        color: var(--rubric);
+        margin-right: 12px;
+        vertical-align: middle;
+    }
+    .supply-figure {
+        margin: 40px 0 8px;
+        border: 1px solid var(--ink-soft);
+        background: rgba(244, 234, 210, 0.4);
+        padding: 22px 22px 14px;
+        position: relative;
+    }
+    .supply-figure::before, .supply-figure::after {
+        content: ''; position: absolute; width: 14px; height: 14px;
+        border: 1.5px solid var(--rubric);
+    }
+    .supply-figure::before { top: -2px; left: -2px; border-right: 0; border-bottom: 0; }
+    .supply-figure::after  { bottom: -2px; right: -2px; border-left: 0; border-top: 0; }
+    .supply-figure svg { width: 100%; height: auto; display: block; }
+    .supply-figure .cap {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        color: var(--ink-fade);
+        margin-top: 12px;
+        text-transform: uppercase;
+    }
+    .supply-figure .cap .rubric { color: var(--rubric); }
+    .supply-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 28px 0 8px;
+        font-size: 0.93rem;
+        line-height: 1.5;
+    }
+    .supply-table th, .supply-table td {
+        text-align: left;
+        vertical-align: top;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--paper-shadow);
+    }
+    .supply-table th {
+        font-family: var(--mono);
+        font-size: 0.68rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--ink-fade);
+        border-bottom: 1px solid var(--ink-soft);
+    }
+    .supply-table td:first-child { font-weight: 600; color: var(--ink); white-space: nowrap; }
+    .supply-table tr.is-ladder td { background: rgba(154, 36, 36, 0.06); }
+    .supply-table tr.is-ladder td:first-child { color: var(--rubric); }
+    @media (max-width: 720px) {
+        .supply-lede { font-size: 1.2rem; }
+        .supply-table { font-size: 0.85rem; }
+        .supply-table th, .supply-table td { padding: 10px 8px; }
+        .supply-table td:first-child { white-space: normal; }
+    }
     .does-card {
         border: 1px solid var(--ink-soft);
         padding: 28px 24px;
@@ -1975,6 +2157,8 @@
         <nav>
             <ul>
                 <li><a href="#what">What it does</a></li>
+                <li><a href="#solves">What it solves</a></li>
+                <li><a href="#supply">Supply control</a></li>
                 <li><a href="#compare">Compare</a></li>
                 <li><a href="#architecture">Why an app</a></li>
                 <li><a href="#flow">How it works</a></li>
@@ -1996,7 +2180,7 @@
 <section class="hero">
     <div class="container hero-grid">
         <div class="hero-text">
-            <span class="hero-tag"><span class="rubric">FIG. 1</span> &nbsp;·&nbsp; Solana Token Launcher &nbsp;·&nbsp; v1.0</span>
+            <span class="hero-tag"><span class="rubric">FIG. 1</span> &nbsp;·&nbsp; Solana Token Launcher &nbsp;·&nbsp; v__TREBUCHET_VERSION__</span>
 
             <!-- Wordmark with per-letter staggered reveal animation.
                  Each letter gets its own delay via inline style. -->
@@ -2011,8 +2195,9 @@
             <div class="hero-cta">
                 <a href="#download" class="btn btn-primary" id="hero-download">
                     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 3v14m0 0l-5-5m5 5l5-5M5 21h14"/></svg>
-                    Download for <span class="hero-download-os">Windows</span>
+                    Download for your OS
                 </a>
+                <span class="hero-os-list">Windows &nbsp;·&nbsp; macOS &nbsp;·&nbsp; Linux</span>
                 <a href="https://github.com/AnOversizedMooseWithSocks/trebuchet" target="_blank" rel="noopener" class="btn">
                     <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
                     View source
@@ -2265,6 +2450,361 @@
                 <p>One NFT per pool. Holding it accrues trading fees forever — claim them anytime from Raydium's portfolio page. Transferable. Yours to keep, gift, or distribute.</p>
             </div>
         </div>
+    </div>
+</section>
+
+<!-- =====================================================================
+     WHAT IT SOLVES — problem-first tour of the advanced features.
+     Each card names an obstacle real launches hit, what the usual tools do
+     about it, and what Trebuchet does instead. Ordered roughly in the
+     order a launcher meets them: pricing, liquidity shape, rug-proofing,
+     distribution, then the operational stuff nobody thinks about until it
+     bites. Sources for the industry claims are in docs/ and the README.
+     ===================================================================== -->
+<section id="solves">
+    <div class="container">
+        <div class="section-header">
+            <h2 class="section-title">What it solves</h2>
+            <span class="section-aside">The obstacles between "I have an idea" and "it trades"</span>
+        </div>
+
+        <p class="solves-intro">
+            Most launchpads solve one problem: getting a token to exist. <strong>Trebuchet was built
+            for everything that goes wrong after that</strong> — the price that opens in the wrong
+            place, the liquidity that gets drained in the first minute, the lock that turns out to be
+            optional, the crash mid-launch that strands your funds. Each of these is a feature because
+            each one was, first, a failure somebody had.
+        </p>
+
+        <div class="solves-grid">
+
+            <div class="solves-card">
+                <span class="num">[ 01 ] &nbsp;PRICE DISCOVERY</span>
+                <h3>Your token opens at the price <em>you</em> chose</h3>
+                <p class="problem">On a bonding curve the curve sets the price, not buyers and sellers, with a built-in edge for whoever is automated and first. Launch tools that skip the curve often price your pool off an indexer's quote — which for a low-cap pairing can be one dust trade in an empty pool.</p>
+                <p class="answer">You set a <strong>target market cap</strong>; Trebuchet derives the starting price and opens every pool at exactly that value. Quote-token prices are read <strong>from the pool accounts on-chain</strong>, deepest in-range pool first, and a launch is refused outright if the pools disagree or a pool would open at a different market cap than its siblings.</p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 02 ] &nbsp;LIQUIDITY SHAPE</span>
+                <h3>Concentrated liquidity, laddered upward</h3>
+                <p class="problem">A single wide pool spreads your supply thin across prices nobody will ever pay, so early buyers get a huge slice for almost nothing and the chart looks like a cliff either way.</p>
+                <p class="answer">Liquidity goes into <strong>Raydium CLMM</strong> as concentrated, single-sided positions. The <strong>ladder</strong> option stacks bands above the launch price — a controlled release as the price climbs — and the <strong>support</strong> option places a buy wall beneath it. Only your token goes in; the SOL side fills as people buy. <a href="#supply">Why this replaces presales, taxes, and bundling →</a></p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 03 ] &nbsp;MULTI-POOL</span>
+                <h3>Launch into several markets at once</h3>
+                <p class="problem">One SOL pool means one place to buy. If your community holds a different token, or you want a stablecoin pair, you're doing a second launch by hand — and hoping the two prices line up.</p>
+                <p class="answer">Split supply across <strong>SOL, USDC/USDT, and any other token</strong> in one launch. Every pool opens at the same market cap by construction, a preflight check refuses the launch if they wouldn't, and bootstraps are deferred until all pools are built so trading can't start on one while the others are still being shaped.</p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 04 ] &nbsp;RUG-PROOFING</span>
+                <h3>Liquidity locked — and still earning</h3>
+                <p class="problem">Burning LP proves you can't pull liquidity, but it also throws away the trading fees forever. Many teams skip the lock entirely, or lock it somewhere holders can't verify.</p>
+                <p class="answer">Positions are locked with <strong>Raydium Burn &amp; Earn</strong>: withdrawal is gone permanently, verifiable on-chain by anyone, but each lock mints a <strong>Fee Key NFT</strong> that collects that position's fees forever. Slice the main position and each slice gets its own Fee Key — team fee-sharing without a custom contract. Trebuchet takes none of it.</p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 05 ] &nbsp;SUPPLY DISCIPLINE</span>
+                <h3>100% to liquidity, by default</h3>
+                <p class="problem">Launchpads protect graduation liquidity and stop there. A dev wallet holding 10–20% of supply is the other half of the trust equation, and holders assume the worst. In one 47-launch dataset the tokens that put full supply in the pool with all authorities null survived at roughly four times the rate of tokens missing even one of those.</p>
+                <p class="answer">The default is <strong>the entire supply into the pools</strong>, mint and freeze authorities renounced, metadata frozen. Preallocation for an airdrop or team share is opt-in, capped, and <strong>stated plainly in the permanent launch report</strong> — so it's a disclosed choice, not a hidden wallet.</p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 06 ] &nbsp;DISTRIBUTION</span>
+                <h3>Airdrops from a CSV, retryable</h3>
+                <p class="problem">Distributing to a community list by hand is slow, error-prone, and one failed transfer halfway through leaves you unsure who got what.</p>
+                <p class="answer">Paste a list, Trebuchet validates every address and amount, sizes the preallocation to cover it, and delivers with per-recipient retry. It <strong>journals every delivery</strong>, so a retry skips who's already paid and a crash never double-sends.</p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 07 ] &nbsp;CRASH RECOVERY</span>
+                <h3>Nothing strands your funds</h3>
+                <p class="problem">Launching is a dozen transactions. If the app, your machine, or the RPC dies in the middle, most tools leave you with a half-built launch, a wallet full of assets, and no idea what already happened on-chain.</p>
+                <p class="answer">Every launch runs from an <strong>ephemeral wallet</strong> you fund once, with a <strong>journal</strong> of each step. Resume picks up exactly where it stopped, verifying against the chain rather than trusting the log. The final sweep moves every asset out and <strong>only then</strong> the SOL — so a failed transfer can always pay for its own retry. The wallet's recovery phrase stays encrypted on your machine until it's verifiably empty.</p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 08 ] &nbsp;RELIABILITY</span>
+                <h3>Transactions that land</h3>
+                <p class="problem">A congested network drops unprioritized transactions, and a tool that retries the wrong way either gives up or does something twice — a double mint, a duplicate pool.</p>
+                <p class="answer">Every transaction carries a <strong>priority fee sampled from the live market</strong> and bid slightly above it. Retries rebuild with a fresh blockhash and <strong>check the chain before every re-send</strong>, so a confirmation that timed out but actually landed is adopted, never repeated.</p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 09 ] &nbsp;PROOF</span>
+                <h3>A launch report nobody can edit</h3>
+                <p class="problem">"Trust me" is the whole pitch of most launches. Holders have no way to check how a token was actually configured — what was locked, what was kept, at what price.</p>
+                <p class="answer">Trebuchet publishes a <strong>signed launch report to Arweave</strong>: supply, pools, locks, Fee Keys, preallocation, starting price — permanent, public, findable from the token address. Optional, if you'd rather keep a launch private.</p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 10 ] &nbsp;IDENTITY</span>
+                <h3>A contract address people recognize</h3>
+                <p class="problem">Addresses are random strings. Yours looks like everyone else's, including the scam copies.</p>
+                <p class="answer">Grind a <strong>vanity contract address</strong> that starts or ends with your ticker — locally, on your CPU, with the key encrypted behind your Recovery PIN. Cosmetic, but it's the address your community will paste ten thousand times.</p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 11 ] &nbsp;REHEARSAL</span>
+                <h3>Practice the whole launch for free</h3>
+                <p class="problem">The first time most people see a launch flow is the one that costs real money.</p>
+                <p class="answer"><strong>Demo mode</strong> runs the identical six-step flow with every on-chain action simulated — wallet, token, pools, locks, sweep, report — no SOL, no RPC. When you switch it off, nothing about the flow changes except that it's real.</p>
+            </div>
+
+            <div class="solves-card">
+                <span class="num">[ 12 ] &nbsp;NO MIDDLEMAN</span>
+                <h3>Your keys, your machine, no house</h3>
+                <p class="problem">Hosted launchpads take a cut of every trade, hold your flow on their servers, and decide which DEX your token lands on.</p>
+                <p class="answer">Trebuchet is a <strong>desktop app you run yourself</strong>. Keys never leave your computer, there's no platform fee, no per-trade cut, and no server between you and Solana except the RPC you choose. You pay the network and Raydium's standard pool costs. That's the whole bill.</p>
+            </div>
+
+        </div>
+
+        <p class="solves-foot">
+            None of this is a premium tier. Every feature above ships in the free desktop app, runs on your machine,
+            and takes no cut of your launch or your trades. What you pay is what the network charges — and nothing else.
+        </p>
+    </div>
+</section>
+
+<!-- =====================================================================
+     SUPPLY CONTROL — the thesis. Concentrated liquidity (Uniswap v3, 2021)
+     removed the 1:1 deposit requirement that every launch hack was a
+     workaround for. Launch tooling mostly ignored it. This is the argument
+     for why it matters, with a figure and a table of what it replaces.
+     ===================================================================== -->
+<section id="supply">
+    <div class="container">
+        <div class="section-header">
+            <h2 class="section-title">Supply control at launch</h2>
+            <span class="section-aside">The 2021 idea that launch tooling ignored</span>
+        </div>
+
+        <p class="supply-lede">
+            Every presale, token tax, vesting lock, and launch-block bundle is a workaround for
+            <em>one constraint</em> — and that constraint stopped existing in 2021.
+        </p>
+
+        <div class="supply-prose">
+
+            <h3><span class="num">[ 01 ]</span>The constraint</h3>
+            <p>
+                A classic AMM pool (the <strong>x·y=k</strong> kind, still what most launchpads
+                graduate into) needs <strong>equal value on both sides</strong>. Put your whole
+                supply in, and the pool prices each token at the SOL you deposited divided by the
+                supply. Deposit little SOL and you've launched at a tiny market cap with every
+                token for sale at that giveaway price. Want to open at a meaningful valuation? Then
+                match it with real capital — a million-dollar launch needs half a million in SOL
+                sitting in the pool. Nobody has that. So a whole industry of hacks grew up around
+                pretending to.
+            </p>
+
+            <h3><span class="num">[ 02 ]</span>The hacks</h3>
+            <p>
+                <strong>Presales</strong> raise the matching capital from buyers before the pool
+                exists — and hand them tokens below the launch price to sell into it.
+                <strong>Token taxes</strong> claw value back from every trade to fund what the pool
+                couldn't. <strong>Vesting and locks</strong> hide most of the supply so the visible
+                float looks small, then release it on a schedule the market dreads.
+                <strong>Bundling</strong> means buying your own token in the launch block to push the
+                price up — paying fees and slippage to yourself for a chart that was never real.
+                And the blunt version: <strong>just put up the capital</strong>, and hope the launch
+                earns it back. Each of these costs money, trust, or both, and each one exists only
+                because the pool demanded a 1:1 deposit.
+            </p>
+
+            <h3><span class="num">[ 03 ]</span>What changed</h3>
+            <p>
+                Concentrated liquidity — Uniswap v3 on Ethereum in May 2021, Raydium CLMM on Solana —
+                lets a liquidity position live in a <strong>price range</strong> instead of across all
+                prices. And a position placed <em>above</em> the current price needs <strong>only the
+                token side</strong>. No SOL. No 1:1. You can put supply into the pool at 2×, 5×, 10×
+                the launch price, on-chain, visible, fully tradeable — and it doesn't sell until the
+                market actually gets there. That single property dissolves the constraint every hack
+                was built around. It has been sitting in plain sight for years; launch tooling almost
+                entirely ignored it and kept graduating tokens into x·y=k pools.
+            </p>
+
+            <h3><span class="num">[ 04 ]</span>What it means for a launch</h3>
+            <p>
+                <strong>Real supply control, at launch, without hiding anything.</strong> You choose
+                the opening market cap <em>and</em> how much is for sale there — a 10% float at open
+                if that's the scarcity you want. The bulk goes into bands you place — more at 4×, more
+                still at 10×, the biggest tranche at 25× — and if you leave space between bands, a
+                thin <strong>full-range base</strong> connects them so the pool is tradeable at every
+                price. That base can be a handful of tokens; its only job is to make sure there is
+                never a hole. Between 4× and 10× only the base trades, so the price has to
+                <em>earn</em> its way across. Each band is a commitment
+                to sell at that price and not before. Supply isn't locked away in a wallet holders
+                have to trust; it's <em>in the pool</em>, where anyone can see it and nobody can move
+                it early. The bands <em>are</em> the raise, paid by real buyers at real prices as the
+                token earns each step. No presale, because there's nothing to pre-sell. No tax,
+                because the pool funds itself. No bundling, because the price is where you placed the
+                supply, not where you bought it up to. And no capital sitting idle: supply above the
+                launch price costs you zero SOL to place.
+            </p>
+
+            <h3><span class="num">[ 05 ]</span>What Trebuchet gives you</h3>
+            <p>
+                The <strong>main position</strong> is the full-range base. Trebuchet checks your
+                bands for gaps and, if there are any, requires the base to hold at least one token —
+                so a pool can never be configured with a hole in it — and warns you when the base is
+                thin enough that price will move sharply between bands. The <strong>ladder</strong>
+                option builds bands on top of it for you — a supply percentage spread across rising price
+                multiples — or you set each band's range and share by hand. A <strong>support</strong> position places a buy wall beneath the launch price
+                with a depth you choose. The <strong>main position</strong> is the tranche live at
+                opening, sliceable so Fee Keys can be split among a team. And every one of those
+                positions is locked with <strong>Burn &amp; Earn</strong> — so the supply control
+                isn't just a plan, it's a commitment the chain enforces, and the fees from every band
+                still come back to you.
+            </p>
+        </div>
+
+        <div class="supply-figure">
+            <svg viewBox="0 0 960 360" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+                <!-- ============ LEFT: full-range x·y=k ============ -->
+                <g transform="translate(20,20)">
+                    <text x="0" y="12" font-size="11" letter-spacing="2" fill="#9a2424">FULL-RANGE POOL · x·y=k</text>
+                    <text x="0" y="30" font-size="10" fill="#7a6a4f">Equal value required on both sides</text>
+                    <line x1="40" y1="260" x2="420" y2="260" stroke="#1c1610" stroke-width="1.2"/>
+                    <line x1="40" y1="260" x2="40" y2="70" stroke="#1c1610" stroke-width="1.2"/>
+                    <text x="230" y="282" font-size="10" text-anchor="middle" fill="#7a6a4f">PRICE →</text>
+                    <text x="14" y="165" font-size="10" fill="#7a6a4f" transform="rotate(-90 14 165)">SUPPLY IN POOL</text>
+                    <!-- token supply: one thin sheet across every price -->
+                    <rect x="41" y="212" width="379" height="48" fill="#9a2424" opacity="0.18"/>
+                    <path d="M41 212 L420 212" stroke="#9a2424" stroke-width="1.5" stroke-dasharray="4 3"/>
+                    <text x="230" y="241" font-size="10" text-anchor="middle" fill="#6e1818">100% of supply · for sale at the launch price</text>
+                    <!-- launch marker at the low end -->
+                    <line x1="70" y1="70" x2="70" y2="260" stroke="#1c1610" stroke-width="1" stroke-dasharray="2 3"/>
+                    <text x="75" y="84" font-size="10" fill="#1c1610">launch</text>
+                    <text x="75" y="98" font-size="10" fill="#1c1610">(low mcap)</text>
+                    <!-- SOL required: tall bar with clean two-line label ABOVE it -->
+                    <text x="360" y="82" font-size="10" text-anchor="middle" fill="#1c1610">SOL you must</text>
+                    <text x="360" y="95" font-size="10" text-anchor="middle" fill="#1c1610">deposit to open here</text>
+                    <rect x="330" y="104" width="60" height="108" fill="#1c1610" opacity="0.14" stroke="#1c1610" stroke-width="1"/>
+                    <text x="360" y="166" font-size="18" text-anchor="middle" fill="#1c1610" font-weight="700">1 : 1</text>
+                    <text x="230" y="318" font-size="10" text-anchor="middle" fill="#6e1818">→ the reason presales, taxes, locks and bundling exist</text>
+                </g>
+
+                <!-- divider -->
+                <line x1="480" y1="30" x2="480" y2="340" stroke="#d9c79a" stroke-width="1"/>
+
+                <!-- ============ RIGHT: concentrated, supply-controlled ============ -->
+                <g transform="translate(500,20)">
+                    <text x="0" y="12" font-size="11" letter-spacing="2" fill="#9a2424">CONCENTRATED POOL · SUPPLY CONTROL</text>
+                    <text x="0" y="30" font-size="10" fill="#7a6a4f">Thin base at every price · bulk released only as valuations are earned</text>
+                    <line x1="40" y1="260" x2="420" y2="260" stroke="#1c1610" stroke-width="1.2"/>
+                    <line x1="40" y1="260" x2="40" y2="70" stroke="#1c1610" stroke-width="1.2"/>
+                    <text x="230" y="292" font-size="10" text-anchor="middle" fill="#7a6a4f">PRICE (multiples of launch) →</text>
+                    <text x="14" y="165" font-size="10" fill="#7a6a4f" transform="rotate(-90 14 165)">SUPPLY IN POOL</text>
+
+                    <!-- bracket over the held bands -->
+                    <path d="M150 66 L150 58 L420 58 L420 66" fill="none" stroke="#9a2424" stroke-width="1"/>
+                    <text x="285" y="52" font-size="9" text-anchor="middle" fill="#9a2424">90% held above launch · sells only when earned</text>
+
+                    <!-- support wall under launch (quote side) -->
+                    <rect x="52" y="226" width="34" height="34" fill="#1c1610" opacity="0.14" stroke="#1c1610" stroke-width="1"/>
+                    <text x="69" y="220" font-size="9" text-anchor="middle" fill="#1c1610">support</text>
+
+                    <!-- launch marker -->
+                    <line x1="96" y1="70" x2="96" y2="260" stroke="#1c1610" stroke-width="1" stroke-dasharray="2 3"/>
+                    <text x="100" y="84" font-size="10" fill="#1c1610">launch</text>
+                    <text x="100" y="98" font-size="10" fill="#1c1610">(your mcap)</text>
+
+                    <!-- THE BASE: thin, continuous, launch -> top of range. Always present. -->
+                    <rect x="98" y="246" width="322" height="14" fill="#9a2424" opacity="0.22" stroke="#9a2424" stroke-width="0.8"/>
+                    <path d="M98 246 L420 246" stroke="#9a2424" stroke-width="1" stroke-dasharray="3 2"/>
+                    <text x="259" y="257" font-size="8" text-anchor="middle" fill="#6e1818">thin full-range base · a few tokens · keeps every price tradeable</text>
+
+                    <!-- FLOAT at open, stacked on the base -->
+                    <rect x="98" y="216" width="38" height="30" fill="#9a2424" opacity="0.55" stroke="#9a2424" stroke-width="1"/>
+                    <text x="117" y="210" font-size="9" text-anchor="middle" fill="#6e1818" font-weight="700">10%</text>
+                    <text x="117" y="272" font-size="9" text-anchor="middle" fill="#6e1818">1×</text>
+
+                    <!-- Bands GROW with price, all stacked on the base; between them only the base carries price -->
+                    <rect x="150" y="204" width="38" height="42" fill="#9a2424" opacity="0.30" stroke="#9a2424" stroke-width="1"/>
+                    <text x="169" y="198" font-size="9" text-anchor="middle" fill="#6e1818">15%</text>
+                    <text x="169" y="272" font-size="9" text-anchor="middle" fill="#6e1818">2×</text>
+
+                    <rect x="202" y="190" width="38" height="56" fill="#9a2424" opacity="0.30" stroke="#9a2424" stroke-width="1"/>
+                    <text x="221" y="184" font-size="9" text-anchor="middle" fill="#6e1818">20%</text>
+                    <text x="221" y="272" font-size="9" text-anchor="middle" fill="#6e1818">4×</text>
+
+                    <!-- between 4x and 10x only the thin base trades: a quiet stretch, not a hole -->
+                    <text x="270" y="232" font-size="8" text-anchor="middle" fill="#7a6a4f" font-style="italic">base only</text>
+                    <text x="270" y="272" font-size="9" text-anchor="middle" fill="#7a6a4f">·</text>
+
+                    <rect x="298" y="164" width="38" height="82" fill="#9a2424" opacity="0.30" stroke="#9a2424" stroke-width="1"/>
+                    <text x="317" y="158" font-size="9" text-anchor="middle" fill="#6e1818">22%</text>
+                    <text x="317" y="272" font-size="9" text-anchor="middle" fill="#6e1818">10×</text>
+
+                    <rect x="350" y="136" width="38" height="110" fill="#9a2424" opacity="0.30" stroke="#9a2424" stroke-width="1"/>
+                    <text x="369" y="130" font-size="9" text-anchor="middle" fill="#6e1818">28%</text>
+                    <text x="369" y="272" font-size="9" text-anchor="middle" fill="#6e1818">25×</text>
+
+                    <!-- SOL required: none -->
+                    <text x="110" y="128" font-size="10" text-anchor="start" fill="#1c1610">SOL to deposit</text>
+                    <text x="110" y="150" font-size="18" text-anchor="start" fill="#1c1610" font-weight="700">0</text>
+                    <text x="110" y="163" font-size="8" text-anchor="start" fill="#7a6a4f">above launch: token side only</text>
+
+                    <text x="230" y="318" font-size="10" text-anchor="middle" fill="#6e1818">→ scarce at open, revealed as it climbs, tradeable at every price</text>
+                </g>
+            </svg>
+            <p class="cap"><span class="rubric">FIG. 2</span> &nbsp;·&nbsp; Same 100% of supply, two pools. Left: everything for sale at a giveaway price, or matching capital to open higher. Right: a 10% float opens at your chosen valuation, 90% is committed in bands above it, and a base of a few tokens keeps the pool tradeable across the stretches between bands — zero SOL required.</p>
+        </div>
+
+        <table class="supply-table">
+            <thead>
+                <tr>
+                    <th>Approach</th>
+                    <th>What it costs you</th>
+                    <th>What it costs holders</th>
+                    <th>What it tells the market</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Presale</td>
+                    <td>Time, trust, and a class of buyers holding below launch price</td>
+                    <td>A pre-positioned group ready to sell into them</td>
+                    <td>"Someone got in cheaper than you"</td>
+                </tr>
+                <tr>
+                    <td>Token tax</td>
+                    <td>Exchange listings, aggregator routing, legitimacy</td>
+                    <td>A cut of every trade, forever</td>
+                    <td>"The pool couldn't fund itself"</td>
+                </tr>
+                <tr>
+                    <td>Vesting / locks</td>
+                    <td>Supply you can't touch, on a schedule you can't change</td>
+                    <td>A known unlock date to trade against</td>
+                    <td>"Watch the cliff"</td>
+                </tr>
+                <tr>
+                    <td>Bundling</td>
+                    <td>Fees and slippage paid to yourself for a fake chart</td>
+                    <td>An entry price with nothing behind it</td>
+                    <td>"The first buyers were the dev"</td>
+                </tr>
+                <tr>
+                    <td>Capital push</td>
+                    <td>Real SOL parked in a pool at 1:1</td>
+                    <td>—</td>
+                    <td>"Well-funded" (until it isn't)</td>
+                </tr>
+                <tr class="is-ladder">
+                    <td>Concentrated ladder</td>
+                    <td>Nothing beyond the pool rent — supply above launch needs no SOL</td>
+                    <td>Nothing hidden; every band visible and locked</td>
+                    <td>"Here is the supply, here is where it sells, and it can't move"</td>
+                </tr>
+            </tbody>
+        </table>
     </div>
 </section>
 
@@ -3677,15 +4217,10 @@
             el.classList.add('primary-os');
         });
 
-        // Update the hero CTA label to match. The span has a default
-        // text of "Windows" so this only changes anything for Mac/Linux
-        // visitors (which is the right behaviour — most visitors are
-        // on Windows and don't need a label change).
-        const heroLabel = document.querySelector('#hero-download .hero-download-os');
-        if (heroLabel) {
-            const labels = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
-            heroLabel.textContent = labels[os];
-        }
+        // The hero CTA is deliberately generic ("Download for your OS") and
+        // scrolls to the grid, where the detected OS card is highlighted as
+        // primary-os above. All three platforms are supported; the button
+        // must not read as Windows-only.
     })();
 </script>
 
