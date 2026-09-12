@@ -1,5 +1,6 @@
 {
   "name": "@anoversizedmoosewithsocks/trebuchet-desktop",
+  "desktopName": "trebuchet",
   "version": "1.0.0",
   "description": "Trebuchet token launcher, packaged as a desktop app.",
   "main": "main.js",
@@ -212,7 +213,8 @@
       ],
       "category": "Development",
       "executableName": "Trebuchet",
-      "artifactName": "Trebuchet-${version}-${arch}.${ext}"
+      "artifactName": "Trebuchet-${version}-${arch}.${ext}",
+      "syncDesktopName": true
     },
     "deb": {
       "packageName": "trebuchet-desktop",

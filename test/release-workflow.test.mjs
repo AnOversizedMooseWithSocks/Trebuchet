@@ -348,3 +348,75 @@ test('update-check API URL matches the canonical repo case from package.json', (
       `prereleases and 404s while every release is unsigned`,
   );
 });
+
+test('electron-builder cache never sits inside the ESM project scope', () => {
+  // electron-builder downloads CommonJS helper tools (the icons bundle's
+  // icon-tool.js) into its cache and runs them with node. A cache inside
+  // this repo inherits package.json's "type": "module" and the tools die
+  // with "require is not defined in ES module scope" — which failed
+  // release 1.0.49. Two layers: the workflows keep the cache outside the
+  // workspace, and the build script marks any in-project cache as
+  // CommonJS scope in case a workflow points it back inside.
+  for (const wf of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+    const src = read(wf);
+    assert.doesNotMatch(src, /ELECTRON_BUILDER_CACHE: \$\{\{ github\.workspace \}\}/,
+      `${wf} must not put the electron-builder cache inside the workspace`);
+    // Set in a STEP via GITHUB_ENV (the runner context is unavailable in
+    // job-level env — using it there broke the workflow file outright).
+    assert.match(src, /ELECTRON_BUILDER_CACHE=\$RUNNER_TEMP\/electron-builder-cache" >> "\$GITHUB_ENV"/,
+      `${wf} must export the cache path from a step using RUNNER_TEMP`);
+  }
+  const build = read('scripts/release-build.mjs');
+  assert.match(build, /type: 'commonjs'/,
+    'release-build must write a commonjs package.json marker into an in-project cache');
+});
+
+test('workflow env blocks only use contexts that are valid at that level', () => {
+  // GitHub validates expression CONTEXTS, not just YAML: `runner`, `env`,
+  // `steps`, and `job` are not available in workflow- or job-level `env:`
+  // blocks. Using one there makes the whole workflow file invalid — every
+  // job fails before checkout, which is how CI went completely red once.
+  // A YAML parse cannot catch this; this check walks the parsed structure.
+  const yaml = read('.github/workflows/ci.yml') + '\n' + read('.github/workflows/release.yml');
+  // Cheap structural scan: find `env:` blocks that are direct children of
+  // the document or of a job (2- or 4-space indent), and inspect their
+  // immediate key/value lines (indented one level deeper).
+  const lines = yaml.split(/\r?\n/);
+  const offenders = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)env:\s*$/);
+    if (!m) continue;
+    const indent = m[1].length;
+    if (indent !== 0 && indent !== 4) continue; // 0 = workflow-level, 4 = job-level (jobs > id > env)
+    for (let j = i + 1; j < lines.length; j++) {
+      const l = lines[j];
+      if (l.trim() === '' || /^\s*#/.test(l)) continue;
+      const li = l.match(/^(\s*)/)[1].length;
+      if (li <= indent) break; // left the env block
+      if (/\$\{\{\s*(runner|env|steps|job)\./.test(l)) offenders.push(`line ${j + 1}: ${l.trim()}`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    'these env entries use a context that GitHub does not allow at workflow/job level');
+});
+
+test('package.json "build" config validates against electron-builder\'s own schema', async () => {
+  // electron-builder rejects unknown keys anywhere in its config (schema has
+  // additionalProperties:false), and it does so at BUILD time on every
+  // platform — so one misplaced key fails macOS, Windows, and Linux builds
+  // at once. That happened: `desktopName` (a top-level package.json field)
+  // was put under build.linux. Validating here, against the schema shipped
+  // in node_modules, turns that into a unit-test failure instead.
+  const { default: Ajv } = await import('ajv');
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const schema = req('app-builder-lib/scheme.json');
+  const pkg = JSON.parse(read('package.json'));
+  const ajv = new Ajv({ strict: false, allErrors: true });
+  const ok = ajv.validate(schema, pkg.build);
+  assert.ok(ok, 'electron-builder config errors:\n' + JSON.stringify(ajv.errors, null, 2));
+  // And the desktop-association fields sit where electron-builder expects.
+  assert.equal(pkg.desktopName, 'trebuchet', 'desktopName is a TOP-LEVEL package.json field');
+  assert.equal(pkg.build.linux.syncDesktopName, true);
+  assert.equal(pkg.build.linux.desktopName, undefined, 'desktopName must not be under build.linux');
+});

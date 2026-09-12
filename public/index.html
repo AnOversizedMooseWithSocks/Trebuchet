@@ -5176,14 +5176,19 @@
                          label, and any drift indicator. -->
                 </div>
                 <div class="content is-size-7 mt-3 has-text-grey">
-                    <p>If a price looks off, click Cancel and refresh the
-                    funding estimate on Step 3. If prices keep drifting,
-                    you've picked a quote token with very thin liquidity
-                    — consider a different one.</p>
+                    <p>If a price looks off, click <strong>Refresh prices</strong>
+                    to fetch them again — it re-bases the comparison so you
+                    can see whether the market has settled. If prices keep
+                    drifting on every refresh, you've picked a quote token
+                    with very thin liquidity — consider a different one.</p>
                 </div>
             </section>
             <footer class="modal-card-foot">
                 <button class="button" id="createLpConfirmCancelBtn">Cancel</button>
+                <button class="button" id="createLpConfirmRefreshBtn" title="Fetch the prices again and re-base the drift comparison">
+                    <span class="icon"><i class="fas fa-rotate"></i></span>
+                    <span>Refresh prices</span>
+                </button>
                 <button class="button is-primary" id="createLpConfirmProceedBtn">
                     <span class="icon"><i class="fas fa-check"></i></span>
                     <span>Confirm and Create Pools</span>
