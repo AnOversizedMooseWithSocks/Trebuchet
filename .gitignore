@@ -18,3 +18,8 @@ _tutorial/
 test/e2e/videos/
 test/ui/actual/
 test/ui/diffs/*.png
+
+# Local capture output and runtime records
+/artifacts
+/brandShield.json
+/incident-tx.json
