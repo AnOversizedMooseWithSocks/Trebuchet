@@ -8115,8 +8115,10 @@ function renderResolvedInfoHtml(pool) {
   // safety plan's Milestone B principle: the user should see the same
   // number throughout the flow, and know where it came from.
   let techLine;
-  if (pool.resolvedPriceUsd) {
-    const priceTxt = `$${Number(pool.resolvedPriceUsd).toLocaleString(
+  const userEntered = pool.priceEnteredByUser === true && pool.quoteUsdOverride != null;
+  const shownPrice = userEntered ? pool.quoteUsdOverride : pool.resolvedPriceUsd;
+  if (shownPrice) {
+    const priceTxt = `$${Number(shownPrice).toLocaleString(
       undefined,
       { maximumFractionDigits: 6 },
     )}`;
@@ -8151,8 +8153,10 @@ function renderResolvedInfoHtml(pool) {
       sourceLabel = ' <span class="has-text-success is-size-7">· verified from Raydium</span>';
     } else if (src === 'sol') {
       sourceLabel = ' <span class="has-text-grey is-size-7">· from SOL/USD oracle</span>';
-    } else if (src === 'user-override') {
-      sourceLabel = ' <span class="has-text-grey is-size-7">· user-set</span>';
+    } else if (src === 'user-override' || userEntered) {
+      sourceLabel =
+        ' <span class="has-text-grey is-size-7">· user-set · ' +
+        '<a href="#" data-action="enterPrice">change</a></span>';
     } else if (src === 'oracle') {
       // Price came from an aggregator (GeckoTerminal/DexScreener) rather
       // than a direct Raydium probe. This can happen because:
@@ -8209,7 +8213,8 @@ function renderResolvedInfoHtml(pool) {
     // hunt for a toggle.
     techLine =
       `<div class="resolved-info-tech">${pool.resolvedDecimals} decimals · ` +
-      `<span class="has-text-danger">no USD price — set one in the override fields below</span></div>`;
+      `<span class="has-text-danger">no USD price</span> · ` +
+      `<a href="#" data-action="enterPrice" class="has-text-weight-semibold">Enter price</a></div>`;
   }
 
   // Info icon — opens the token info modal on click. Wired via delegated
@@ -8268,12 +8273,22 @@ function renderResolvedInfoHtml(pool) {
   //    the Continue button when this is true.
   let freezeAuthLine = '';
   if (pool.resolvedFreezeAuthorityBlock === true) {
+    // A RISK, not a technical impossibility: the pool can be created; the
+    // danger is that the token's deployer could freeze the launch wallet's
+    // holdings mid-launch. The user is told plainly and can accept it —
+    // once acknowledged it becomes a warning, and the launch proceeds.
+    const acked = pool.riskAcknowledged === true;
     freezeAuthLine =
       `<div class="resolved-info-tech has-text-danger">` +
         `<i class="fas fa-exclamation-triangle"></i> ` +
-        `This token has an active freeze authority. The token deployer ` +
-        `can freeze your wallet's holdings, which would brick the launch.` +
-      `</div>`;
+        `This token has an active freeze authority. Its deployer could freeze ` +
+        `your launch wallet's holdings mid-launch, which would strand the launch ` +
+        `until they unfreeze it. Trebuchet cannot protect you from that.` +
+      `</div>` +
+      `<label class="checkbox is-size-7 mt-1" style="display:block;">` +
+        `<input type="checkbox" data-field="riskAcknowledged" ${acked ? 'checked' : ''}> ` +
+        `I understand this risk and want to use this token anyway` +
+      `</label>`;
   }
 
   // 2. Mint authority — soft warning. Supply can be inflated by the
@@ -8737,6 +8752,20 @@ function buildPoolNode(pool, idx) {
   resolvedBlock.className = 'resolved-info-block';
   resolvedBlock.dataset.field = 'resolvedBlock';
   resolvedBlock.innerHTML = renderResolvedInfoHtml(pool);
+  // Risk acknowledgement lives inside this block and the block is
+  // re-rendered in place on every refresh, so delegate from the container.
+  resolvedBlock.addEventListener('change', (e) => {
+    const t = e.target;
+    if (!t || t.dataset.field !== 'riskAcknowledged') return;
+    pool.riskAcknowledged = !!t.checked;
+    updateContinueToFundingState();
+  });
+  resolvedBlock.addEventListener('click', (e) => {
+    const t = e.target && e.target.closest ? e.target.closest('[data-action="enterPrice"]') : null;
+    if (!t) return;
+    e.preventDefault();
+    openManualPriceDialog(pool);
+  });
   // Hide the block entirely until resolution returns something — empty
   // grey card looks like a layout bug otherwise.
   if (!pool.resolvedSymbol) resolvedBlock.classList.add('hidden');
@@ -9997,6 +10026,82 @@ function buildSliceNode(pool, poolIdx, slice, sliceIdx) {
 // Apply a resolved-info payload to a pool object. Used by both the
 // fresh-fetch path and the cache-hit path so behavior is consistent.
 // Mutates the pool in place; doesn't trigger any rendering.
+// ---------------------------------------------------------------------------
+// Manual price entry.
+//
+// When a quote token resolves with no USD price — Raydium has no route and
+// no aggregator could price it, or the only market is too thin to trust —
+// the pool can't be opened at a known market cap. Rather than a silent
+// block, ask the user for the current fiat price. What they enter becomes
+// the pool's price source of last resort (the server uses it only when no
+// market source can price the token) and is labelled "user-set".
+// ---------------------------------------------------------------------------
+function maybePromptForManualPrice(pool) {
+  if (!pool || !pool.quoteToken) return;
+  if (pool.quoteUsdOverride != null) return;              // already have a number
+  if (pool.resolvedPriceUsd != null) return;              // market priced it
+  if (pool.resolvedDecimals == null) return;              // token itself didn't resolve; different problem
+  if (pool.manualPricePromptedFor === pool.quoteToken) return; // asked once already
+  pool.manualPricePromptedFor = pool.quoteToken;
+  openManualPriceDialog(pool);
+}
+
+function openManualPriceDialog(pool) {
+  const modal = document.getElementById('manualPriceModal');
+  if (!modal) return;
+  const symbol = pool.resolvedSymbol || pool.quoteSymbolOverride || pool.quoteToken;
+  const symEl = document.getElementById('manualPriceSymbol');
+  const input = document.getElementById('manualPriceInput');
+  const errEl = document.getElementById('manualPriceError');
+  const saveBtn = document.getElementById('manualPriceSaveBtn');
+  const cancelBtn = document.getElementById('manualPriceCancelBtn');
+  const reasonEl = document.getElementById('manualPriceReason');
+  if (symEl) symEl.textContent = symbol;
+  if (reasonEl) {
+    reasonEl.textContent = pool.resolvedPriceWarning
+      ? `Trebuchet found on-chain pools for ${symbol}, but they disagree with each other, so no single price is safe to use. Your pool's starting price is calculated from it — please enter the token's current value.`
+      : `Trebuchet couldn't fetch a reliable current price for ${symbol}. Your pool's starting price is calculated from it, so to keep the launch accurate, please enter the token's current value.`;
+  }
+  if (input) input.value = '';
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  const close = () => {
+    modal.classList.remove('is-active');
+    saveBtn.removeEventListener('click', onSave);
+    cancelBtn.removeEventListener('click', onCancel);
+    input.removeEventListener('keydown', onKey);
+    const bg = modal.querySelector('.modal-background');
+    if (bg) bg.removeEventListener('click', onCancel);
+  };
+  const onSave = () => {
+    const v = Number(String(input.value).replace(/,/g, '').trim());
+    if (!Number.isFinite(v) || v <= 0) {
+      if (errEl) { errEl.textContent = 'Enter a positive number — the price of one token in USD.'; errEl.style.display = ''; }
+      input.focus();
+      return;
+    }
+    pool.quoteUsdOverride = v;
+    pool.priceEnteredByUser = true;
+    pool.resolvedPriceSource = 'user-override';
+    close();
+    // Re-render this pool's card so the price line shows "user-set", and
+    // re-evaluate the Continue gate.
+    const idx = pools.indexOf(pool);
+    if (idx >= 0) updateQuoteResolvedDisplay(idx);
+    updateContinueToFundingState();
+    if (typeof rebuildPoolsFromSimpleDebounced === 'function' && simpleConfig.mode === 'default') rebuildPoolsFromSimpleDebounced();
+  };
+  const onCancel = () => close();
+  const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); onSave(); } if (e.key === 'Escape') onCancel(); };
+  saveBtn.addEventListener('click', onSave);
+  cancelBtn.addEventListener('click', onCancel);
+  input.addEventListener('keydown', onKey);
+  const bg = modal.querySelector('.modal-background');
+  if (bg) bg.addEventListener('click', onCancel);
+  modal.classList.add('is-active');
+  setTimeout(() => input && input.focus(), 50);
+}
+
 function applyResolvedInfoToPool(pool, info) {
   if (!info) return;
   // For each field, prefer the new value when it's non-null, else
@@ -10064,6 +10169,7 @@ function applyResolvedInfoToPool(pool, info) {
   // pass them through directly. null = "couldn't verify" and is
   // distinct from false ("verified safe").
   if (info.freezeAuthorityBlock !== undefined) {
+    if (pool.resolvedFreezeAuthorityBlock !== info.freezeAuthorityBlock) pool.riskAcknowledged = false;
     pool.resolvedFreezeAuthorityBlock = info.freezeAuthorityBlock;
   }
   if (info.mintAuthorityWarning !== undefined) {
@@ -10216,6 +10322,11 @@ async function resolvePoolQuote(idx) {
       return;
     }
     applyResolvedInfoToPool(currentPool, info);
+
+    // No usable price? Ask for one, instead of leaving "no USD price for X"
+    // as a blocking reason the user has to decode. Once per token: if they
+    // dismiss, the blocking reason still says how to proceed.
+    maybePromptForManualPrice(currentPool);
 
     // Post-resolution refresh of derived values that depend on the
     // live SOL price. Bootstrap supplyPercent is derived from
@@ -10468,7 +10579,10 @@ function updateContinueToFundingState() {
     }
     const hasPrice = p.resolvedPriceUsd != null || p.quoteUsdOverride != null;
     if (!hasPrice) {
-      reasons.push(`Pool ${i + 1}: no USD price for ${p.resolvedSymbol || p.quoteToken}`);
+      reasons.push(
+        `Pool ${i + 1}: no USD price for ${p.resolvedSymbol || p.quoteToken} — ` +
+        'click "Enter price" on the pool card to type its current value',
+      );
     }
     // Hard-block on known Raydium-CLMM incompatibility. We do NOT block on
     // resolvedCompatible === null (couldn't verify) — that's a soft warning,
@@ -10501,11 +10615,22 @@ function updateContinueToFundingState() {
     //   - Couldn't verify Raydium liquidity: maybe Trade API is
     //     down right now; user can retry. Step 5 will hard-check.
     if (p.resolvedFreezeAuthorityBlock === true) {
-      reasons.push(
-        `Pool ${i + 1}: ${p.resolvedSymbol || p.quoteToken} has an active ` +
-          `freeze authority. Its deployer could freeze your launch wallet's ` +
-          `holdings mid-launch and brick the process.`,
-      );
+      // A risk the user may accept: blocked until they tick the
+      // acknowledgement on the pool card, then carried as a warning so
+      // the funding step still says it out loud.
+      if (p.riskAcknowledged === true) {
+        warnings.push(
+          `Pool ${i + 1}: you've accepted the freeze-authority risk on ` +
+            `${p.resolvedSymbol || p.quoteToken}. If its deployer freezes the launch ` +
+            `wallet mid-launch, the launch stalls until they unfreeze it.`,
+        );
+      } else {
+        reasons.push(
+          `Pool ${i + 1}: ${p.resolvedSymbol || p.quoteToken} has an active ` +
+            `freeze authority. Its deployer could freeze your launch wallet's ` +
+            `holdings mid-launch. Tick "I understand this risk" on the pool card to proceed anyway.`,
+        );
+      }
     }
     if (p.resolvedRaydiumTradeable === 'no') {
       // No Raydium liquidity for this token. NOT a hard block — we fall
@@ -14564,6 +14689,12 @@ function buildAllocationsForApi() {
       supplyPercent: p.supplyPercent,
       ammConfigIndex: p.ammConfigIndex,
       quoteUsdOverride: effectiveUsdOverride,
+      // True when the user typed the USD price themselves (customize-mode
+      // override, or the "we couldn't fetch a price" dialog). The server
+      // then treats the number as a PRICE SOURCE of last resort — used only
+      // when no market source can price the token — rather than merely as
+      // the drift-guard reference.
+      priceEnteredByUser: p.priceEnteredByUser === true,
       quoteDecimalsOverride: effectiveDecimalsOverride,
       quoteSymbolOverride: effectiveSymbolOverride,
       distribution,
@@ -16161,6 +16292,10 @@ function renderPreflightModalBody(resolvedPrices) {
       sourceHtml =
         '<span title="Price read directly from the on-chain pool account — the exact source the launch uses.">' +
         'on-chain ' + escapeHtml(anchor) + ' pool' + shared + '</span>';
+    } else if (rp.source === 'user') {
+      sourceHtml =
+        '<span class="has-text-warning-dark" title="No market source could price this token; ' +
+        'Trebuchet is using the value you entered.">price you entered — no market source</span>';
     } else if (rp.source === 'raydium-probe') {
       sourceHtml = 'verified from Raydium';
     } else if (rp.source === 'sol') {
@@ -16203,6 +16338,15 @@ function renderPreflightModalBody(resolvedPrices) {
           `<i class="fas fa-exclamation-circle"></i> ` +
           `${symbol} price is ${Math.abs(rp.driftPct).toFixed(1)}% ${direction} than ` +
           `the funding estimate — within tolerance, but worth a glance.` +
+        `</div>`;
+    }
+    // Second opinion on a user-entered price: the market disagrees with
+    // what they typed. Not a refusal (they chose it) — but say so, here,
+    // where they are about to commit real money.
+    if (rp.secondOpinionWarning) {
+      driftLine +=
+        `<div class="is-size-7 has-text-danger mt-1">` +
+          `<i class="fas fa-exclamation-triangle"></i> ${escapeHtml(rp.secondOpinionWarning)}` +
         `</div>`;
     }
 

@@ -50,7 +50,7 @@ let _pc = 0, _tc = 0;
 const fB58 = () => { const b = new Uint8Array(32); let v = ++_pc + 1; for (let i = 0; i < 32 && v > 0; i++) { b[i] = v & 0xff; v = Math.floor(v / 256); } b[31] = b[31] || 1; return new PublicKey(b).toBase58(); };
 const fC = () => ({ getBalance: async () => 5e9, getMinimumBalanceForRentExemption: async () => 890880, getAccountInfo: async () => ({ data: Buffer.alloc(0), owner: null }), getParsedAccountInfo: async () => ({ value: null }), getParsedTokenAccountsByOwner: async () => ({ value: [] }), getTokenAccountsByOwner: async () => ({ value: [] }), confirmTransaction: async () => ({ value: { err: null } }), sendTransaction: async () => 'f', getSignaturesForAddress: async () => [], getParsedTransaction: async () => null, getLatestBlockhash: async () => ({ blockhash: '1'.repeat(32), lastValidBlockHeight: 1 }) });
 const fUmi = () => ({ identity: { publicKey: 'f' }, eddsa: { createKeypairFromSecretKey: () => ({ publicKey: 'f', secretKey: new Uint8Array(64) }) }, use() { return this; }, uploader: { async upload() { return ['https://a.test/i']; }, async uploadJson() { return 'https://a.test/m'; } } });
-const mRay = () => ({ connection: fC(), clmm: { async createPool() { const id = fB58(); return { execute: async () => ({ txId: 't' + (++_tc) }), extInfo: { address: { id } } }; }, async getPoolInfoFromRpc(id) { return { poolInfo: { id, mintA: { address: fB58(), decimals: 9 }, mintB: { address: 'So11111111111111111111111111111111111111112', decimals: 9 }, config: { tickSpacing: 60 } }, poolKeys: { id } }; }, async getRpcClmmPoolInfo() { return { tickCurrent: 0, sqrtPriceX64: '79228162514264337593543950336', liquidity: '0' }; }, async openPositionFromBase() { return { execute: async () => ({ txId: 't' + (++_tc) }), extInfo: { nftMint: fB58() } }; }, async lockPosition() { return { execute: async () => ({ txId: 't' + (++_tc) }), extInfo: { nftMint: fB58() } }; } }, api: { async getClmmConfigs() { return [{ id: 'c1', index: 0, tickSpacing: 60, tradeFeeRate: 2500, protocolFeeRate: 120000, fundFeeRate: 40000 }]; } }, account: { async fetchWalletTokenAccounts() { return { tokenAccounts: [], tokenAccountRawInfos: [] }; } } });
+const mRay = () => ({ connection: fC(), clmm: { async createPool() { const id = fB58(); return { execute: async () => ({ txId: 't' + (++_tc) }), extInfo: { address: { id } } }; }, async getPoolInfoFromRpc(id) { return { poolInfo: { id, mintA: { address: fB58(), decimals: 9 }, mintB: { address: 'So11111111111111111111111111111111111111112', decimals: 9 }, config: { tickSpacing: 60 } }, poolKeys: { id } }; }, async getRpcClmmPoolInfo() { return { tickCurrent: 0, sqrtPriceX64: '79228162514264337593543950336', liquidity: '0' }; }, async openPositionFromBase() { return { execute: async () => ({ txId: 't' + (++_tc) }), extInfo: { nftMint: fB58() } }; }, async lockPosition() { return { execute: async () => ({ txId: 't' + (++_tc) }), extInfo: { nftMint: fB58() } }; } }, api: { async getClmmConfigs() { return [{ id: 'c1', index: 0, tickSpacing: 60, tradeFeeRate: 2500, protocolFeeRate: 120000, fundFeeRate: 40000 }]; }, async fetchPoolByMints() { return { count: 0, hasNextPage: false, data: [] }; } }, liquidity: { async getRpcPoolInfos() { return {}; } }, cpmm: { async getRpcPoolInfos() { return {}; } }, account: { async fetchWalletTokenAccounts() { return { tokenAccounts: [], tokenAccountRawInfos: [] }; } } });
 
 tokenService.setConnectionFactoryForTests(() => fC());
 tokenService.setUmiFactoryForTests(() => fUmi());
@@ -158,6 +158,20 @@ async function withPage(fn, size = 'desktop') {
 
 async function textOf(p, s) { return p.textContent(s).then(x => (x || '').trim()); }
 async function stepIs(p, n) { await p.waitForSelector('#step' + n + '-card.is-active', { timeout: 15000 }); }
+
+// Step 5 shows a "Confirm pool creation" modal with the resolved prices
+// before anything is created — a real user reads it and clicks Confirm.
+// The demo preflight now succeeds (it used to fail on the public RPC,
+// which showed #lpFailInfo and let these flows "complete" via the failure
+// path), so the modal appears and must be confirmed for the LP to run.
+async function confirmPoolsIfPrompted(p) {
+  try {
+    await p.waitForSelector('#createLpConfirmModal.is-active', { state: 'visible', timeout: 20000 });
+  } catch {
+    return; // no modal (e.g. preflight failed) — let the caller's wait decide
+  }
+  await forceClick(p, '#createLpConfirmProceedBtn');
+}
 function ok(cond, msg) { if (!cond) throw new Error(msg); }
 
 // Force-click a disabled button by stripping its disabled attr first.
@@ -255,11 +269,16 @@ const flows = {
         await p.locator('#continueToLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#continueToLpBtn'); await stepIs(p, 5);
       }
       await p.locator('#createLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#createLpBtn');
+      await confirmPoolsIfPrompted(p);
       const done = await Promise.race([
         p.waitForSelector('#lpDoneInfo', { state: 'visible', timeout: 60000 }).then(() => 'ok'),
         p.waitForSelector('#lpFailInfo', { state: 'visible', timeout: 60000 }).then(() => 'fail'),
       ]).catch(() => null);
       ok(done !== null, 'LP did not complete');
+      // Demo LP creation must SUCCEED. This flow used to pass on the
+      // failure branch (real preflight failing on the public RPC), which
+      // hid a broken demo step 5 for as long as it lasted.
+      ok(done === 'ok', 'LP completed with a failure in demo mode');
     },
   },
   '06': {
@@ -277,6 +296,7 @@ const flows = {
         await p.locator('#continueToLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#continueToLpBtn'); await stepIs(p, 5);
       }
       await p.locator('#createLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#createLpBtn');
+      await confirmPoolsIfPrompted(p);
       await Promise.race([
         p.waitForSelector('#lpDoneInfo', { state: 'visible', timeout: 60000 }),
         p.waitForSelector('#lpFailInfo', { state: 'visible', timeout: 60000 }),

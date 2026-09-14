@@ -2283,6 +2283,9 @@ const ON_CHAIN_PRICE_TTL_MS = 60 * 1000;
 // back to a truncated address as the symbol if the token isn't indexed
 // (in which case the user will need to fill in manual overrides).
 app.post('/api/quote-token-info', async (req, res) => {
+  // Demo: synthetic, instant, never blocks. Real mode below does on-chain
+  // reads, authority audits, Raydium probes, and pool-price discovery.
+  if (isDemoMode()) return demoChainService.handleQuoteTokenInfo(req, res);
   try {
     const { quoteToken } = req.body;
     if (!quoteToken) throw new Error('quoteToken required');
@@ -3021,6 +3024,8 @@ app.delete('/api/acquire-quote-tokens/:jobId', (req, res) => {
 // Error shape matches /api/create-lp's pre_flight branch so the
 // frontend can handle both with the same code path.
 app.post('/api/preflight-create-lp', async (req, res) => {
+  // Demo: synthetic resolved prices, no RPC, no on-chain mint reads.
+  if (isDemoMode()) return demoChainService.handlePreflightCreateLp(req, res);
   try {
     const {
       tokenTotalSupply,

@@ -1047,7 +1047,19 @@ export async function executeAirdrop({
 
     // Convert UI token amount to mint-base units (integer in mint
     // decimals). Math.round absorbs frontend floating-point noise.
-    const amountRaw = BigInt(Math.round(Number(r.tokens) * 10 ** tokenDecimals));
+    // A non-numeric amount must fail THIS recipient: BigInt(NaN) throws,
+    // which used to abort the entire airdrop mid-list.
+    const tokensNum = Number(r.tokens);
+    if (!Number.isFinite(tokensNum) || tokensNum <= 0) {
+      console.warn(`Airdrop: invalid amount for ${r.wallet}: ${JSON.stringify(r.tokens)}`);
+      failed.push({ wallet: r.wallet, tokens: r.tokens, amountRaw: null, error: 'Invalid token amount', attempts: 0 });
+      if (typeof onProgress === 'function') {
+        try { onProgress({ recipient: r.wallet, tokens: r.tokens, success: false }); }
+        catch (_) { /* never let a progress callback break the airdrop */ }
+      }
+      continue;
+    }
+    const amountRaw = BigInt(Math.round(tokensNum * 10 ** tokenDecimals));
     const amountRawStr = amountRaw.toString();
 
     // Validate recipient address before attempting the tx.

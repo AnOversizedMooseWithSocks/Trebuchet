@@ -159,6 +159,7 @@ import {
   WSOL_MINT,
   MIN_QUOTE_LIQUIDITY_USD,
   MAX_PROBE_PRICE_IMPACT_PCT,
+  MAX_SECOND_OPINION_SPREAD_PCT,
   MIN_BASE_TOKENS_WHEN_GAPPED,
   THIN_BASE_WARN_BPS,
   BAND_GAP_TOLERANCE,
@@ -3612,6 +3613,19 @@ async function transferFeeKeys({ raydium, ownerKeypair, results, onProgress }) {
 //
 // `quoteToken` shape:  { address: base58, symbol: string, decimals: number }
 // `alloc` shape:       { quoteUsdOverride?: number | string | null, ... }
+// A USD price the user typed themselves (customize override or the
+// "couldn't fetch a price" dialog). Only counts when the frontend marks it
+// as user-entered — a resolved price echoed back as quoteUsdOverride is the
+// drift reference, not a source.
+function userEnteredPrice(alloc) {
+  if (!alloc || alloc.priceEnteredByUser !== true) return null;
+  if (alloc.quoteUsdOverride === undefined || alloc.quoteUsdOverride === null) return null;
+  try {
+    const d = new Decimal(alloc.quoteUsdOverride);
+    return d.isFinite() && d.gt(0) ? d : null;
+  } catch (_) { return null; }
+}
+
 export async function resolveQuoteUsdForCreate({
   quoteToken,
   alloc,
@@ -3744,19 +3758,32 @@ export async function resolveQuoteUsdForCreate({
       try {
         aggregatorPrice = await _launchGetUsdPrice(quoteToken.address);
       } catch (_) { /* handled below */ }
+      const userPrice = userEnteredPrice(alloc);
       if (!aggregatorPrice || !aggregatorPrice.gt(0)) {
-        const symbolHint =
-          quoteToken.symbol && quoteToken.symbol !== quoteToken.address
-            ? `${quoteToken.symbol} (${quoteToken.address})`
-            : quoteToken.address;
-        throw new Error(
-          `Raydium has no route for ${symbolHint}, and no aggregator ` +
-          `(GeckoTerminal, DexScreener) could price it either. We can't ` +
-          `safely set the initial pool price without a current market ` +
-          `reference. Either set a price manually in the Advanced ` +
-          `override field, or pick a different quote token. No SOL was spent.`,
-        );
+        if (userPrice) {
+          // No market source at all, but the user told us the price. That
+          // is what the "we couldn't fetch a price" dialog is for; honour it.
+          quoteUsd = userPrice;
+          source = 'user';
+          console.log(`  ${quoteToken.symbol || quoteToken.address}: no market source; using the user-entered price $${userPrice.toString()}`);
+        } else {
+          const symbolHint =
+            quoteToken.symbol && quoteToken.symbol !== quoteToken.address
+              ? `${quoteToken.symbol} (${quoteToken.address})`
+              : quoteToken.address;
+          const err = new Error(
+            `Raydium has no route for ${symbolHint}, and no aggregator ` +
+            `(GeckoTerminal, DexScreener) could price it either. We can't ` +
+            `safely set the initial pool price without a current market ` +
+            `reference. Enter its current USD price when Trebuchet asks (or in ` +
+            `the pool's Advanced settings), or pick a different quote token. ` +
+            `No SOL was spent.`,
+          );
+          err.code = 'NO_PRICE_SOURCE';
+          throw err;
+        }
       }
+      if (!quoteUsd) {
       // Depth gate. The aggregators return a price for almost any
       // indexed token, including ones whose only market is a dust pool —
       // exactly the case for unverified low-cap tokens (the kind Phantom
@@ -3771,7 +3798,11 @@ export async function resolveQuoteUsdForCreate({
       // reason: we cannot show the user this price is real.
       const backingLiquidity = aggregatorPrice.liquidityUsd;
       const backingNum = backingLiquidity ? Number(backingLiquidity.toString()) : NaN;
-      if (!Number.isFinite(backingNum) || backingNum < MIN_QUOTE_LIQUIDITY_USD) {
+      if ((!Number.isFinite(backingNum) || backingNum < MIN_QUOTE_LIQUIDITY_USD) && userPrice) {
+        quoteUsd = userPrice;
+        source = 'user';
+        console.log(`  ${quoteToken.symbol || quoteToken.address}: aggregator market too thin; using the user-entered price $${userPrice.toString()}`);
+      } else if (!Number.isFinite(backingNum) || backingNum < MIN_QUOTE_LIQUIDITY_USD) {
         const symbolHint =
           quoteToken.symbol && quoteToken.symbol !== quoteToken.address
             ? `${quoteToken.symbol} (${quoteToken.address})`
@@ -3789,8 +3820,11 @@ export async function resolveQuoteUsdForCreate({
           `in the Advanced override field if you are certain. No SOL was spent.`,
         );
       }
-      quoteUsd = aggregatorPrice;
-      source = 'oracle';
+      if (!quoteUsd) {
+        quoteUsd = aggregatorPrice;
+        source = 'oracle';
+      }
+      }
     } else {
       // Depth gate for the Raydium path — the FIRST source tried, so this
       // is the more likely way a dust-pool price reaches the launch. The
@@ -3800,7 +3834,12 @@ export async function resolveQuoteUsdForCreate({
       // is the last tiny trade, not a rate, and using it opens this pool
       // at a different market cap than its siblings.
       const impact = probeResult.priceImpactPct;
-      if (Number.isFinite(impact) && impact > MAX_PROBE_PRICE_IMPACT_PCT) {
+      const userPriceForProbe = userEnteredPrice(alloc);
+      if (Number.isFinite(impact) && impact > MAX_PROBE_PRICE_IMPACT_PCT && userPriceForProbe) {
+        quoteUsd = userPriceForProbe;
+        source = 'user';
+        console.log(`  ${quoteToken.symbol || quoteToken.address}: Raydium market too thin (${impact.toFixed(1)}% impact); using the user-entered price $${userPriceForProbe.toString()}`);
+      } else if (Number.isFinite(impact) && impact > MAX_PROBE_PRICE_IMPACT_PCT) {
         const symbolHint =
           quoteToken.symbol && quoteToken.symbol !== quoteToken.address
             ? `${quoteToken.symbol} (${quoteToken.address})`
@@ -3816,8 +3855,10 @@ export async function resolveQuoteUsdForCreate({
           `you are certain. No SOL was spent.`,
         );
       }
-      quoteUsd = probeResult.effectiveQuoteUsd;
-      source = 'raydium-probe';
+      if (!quoteUsd) {
+        quoteUsd = probeResult.effectiveQuoteUsd;
+        source = 'raydium-probe';
+      }
     }
   }
 
@@ -4054,57 +4095,51 @@ export async function preflightCreatePoolsAndPositions({
   }
 
   // ---------------------------------------------------------------------
-  // Cross-pool consistency check.
+  // Second-opinion check.
   //
-  // Every pool in a launch is meant to open at the SAME USD market cap.
-  // Each pool's initialPrice is computed independently as
-  // launchedTokenUsd / quoteUsd, so the implied mcap is only equal across
-  // pools if every quoteUsd is right. Nothing verified that before: a
-  // single bad quote price (a stale aggregator quote, a mispriced thin
-  // market) put one pool at a different mcap while its siblings were
-  // fine. On launch, arbitrage immediately drains the cheap side and the
-  // chart opens with what looks like an instant dump.
+  // (Replaces an earlier "cross-pool market cap" check that could never
+  // fire: implied mcap = initialPrice × quoteUsd × supply, and initialPrice
+  // was derived from that same quoteUsd, so the product always equalled
+  // the target by construction. A wrong quoteUsd produced a wrong
+  // initialPrice AND a matching implied mcap. Detecting a mispriced pool
+  // needs an INDEPENDENT number.)
   //
-  // Recomputing implied mcap per pool and comparing them catches exactly
-  // that, before any SOL is spent. Implied mcap = initialPrice * quoteUsd
-  // * totalSupply, which reduces to targetMarketCapUsd when quoteUsd is
-  // self-consistent — so this is really a guard against a quoteUsd that
-  // disagrees between the price used for the ratio and the price the
-  // market will actually trade at.
-  if (resolvedPrices.length > 1) {
-    const implied = resolvedPrices.map((rp) => ({
-      symbol: rp.quoteSymbol,
-      allocationIndex: rp.allocationIndex,
-      mcap: new Decimal(rp.initialPrice)
-        .mul(new Decimal(rp.quoteUsd))
-        .mul(new Decimal(tokenTotalSupply)),
-    }));
-    let lowest = implied[0];
-    let highest = implied[0];
-    for (const e of implied) {
-      if (e.mcap.lt(lowest.mcap)) lowest = e;
-      if (e.mcap.gt(highest.mcap)) highest = e;
+  // For every non-SOL pool, ask the aggregator chain for its own view of
+  // the quote token's price. Only a view backed by real depth counts
+  // (MIN_QUOTE_LIQUIDITY_USD, the same floor used as a source). If the
+  // primary source and that independent view disagree by more than
+  // MAX_SECOND_OPINION_SPREAD_PCT, something is wrong with one of them —
+  // refuse before any SOL is spent. A user-entered price is not refused
+  // (they chose it knowingly) but the disagreement is attached to the
+  // resolved price so the confirm modal can show it.
+  // ---------------------------------------------------------------------
+  for (const rp of resolvedPrices) {
+    if (rp.source === 'sol') continue;
+    let second = null;
+    try { second = await _launchGetUsdPrice(rp.quoteMint); } catch (_) { second = null; }
+    const depth = second && second.liquidityUsd ? Number(second.liquidityUsd.toString()) : NaN;
+    if (!second || !second.gt(0) || !Number.isFinite(depth) || depth < MIN_QUOTE_LIQUIDITY_USD) continue;
+    if (rp.source === 'oracle') continue; // the second opinion IS the source; nothing independent to compare
+    const primary = new Decimal(rp.quoteUsd);
+    const spreadPct = primary.sub(second).abs().div(second).mul(100);
+    if (spreadPct.lte(MAX_SECOND_OPINION_SPREAD_PCT)) continue;
+    const msg =
+      `${rp.quoteSymbol}: the price Trebuchet resolved ($${primary.toSignificantDigits(6)} via ` +
+      `${rp.source}) disagrees with an independent market view ($${second.toSignificantDigits(6)} ` +
+      `from the aggregators, $${Math.round(depth).toLocaleString()} deep) by ` +
+      `${spreadPct.toFixed(1)}%.`;
+    if (rp.source === 'user') {
+      rp.secondOpinionWarning = msg + ' You entered this price yourself — double-check it before confirming.';
+      continue;
     }
-    // Tolerance is deliberately tight: these are all derived from the same
-    // launchedTokenUsd, so any material spread means a quote price is
-    // wrong rather than merely moving. 1% absorbs Decimal rounding.
-    if (lowest.mcap.gt(0)) {
-      const spreadPct = highest.mcap.sub(lowest.mcap).div(lowest.mcap).mul(100);
-      if (spreadPct.gt(1)) {
-        const err = new Error(
-          `Pools would open at different market caps: ${lowest.symbol} at ` +
-            `$${lowest.mcap.toFixed(0)} vs ${highest.symbol} at ` +
-            `$${highest.mcap.toFixed(0)} (${spreadPct.toFixed(1)}% apart). Every pool ` +
-            `must start at the same market cap — otherwise arbitrage will drain the ` +
-            `cheaper pool the moment trading opens and the chart will show an ` +
-            `immediate crash. This usually means one quote token's price could not ` +
-            `be read accurately. Re-check the quote tokens and try again. ` +
-            `No SOL was spent.`,
-        );
-        err.failedPhase = 'pre_flight';
-        throw err;
-      }
-    }
+    const err = new Error(
+      msg + ' One of them is wrong, and a pool opened at the wrong price is drained by arbitrage ' +
+      'as soon as trading starts. Refresh prices; if it persists, enter the price manually. ' +
+      'No SOL was spent.',
+    );
+    err.failedPhase = 'pre_flight';
+    err.failedAllocationIndex = rp.allocationIndex;
+    throw err;
   }
 
   return {
@@ -5488,6 +5523,26 @@ function _launchOnChainPrice(opts) {
 // launch path and the display endpoint so the price the user SEES in the
 // pool editor and the price the launch USES come from the same code.
 export function onChainPriceDeps(raydium) {
+  // Contract check. Every method below is read off the SDK by name. If a
+  // future SDK bump renames one, discovery would fail on EVERY lookup with
+  // "x is not a function" — logged at warn level and caught, so the on-chain
+  // source would silently die while the aggregator fallback kept the app
+  // looking healthy. Fail here with an unmistakable message instead, and
+  // see test/sdk-surface.test.mjs, which asserts these against the REAL
+  // SDK so a rename fails CI rather than production.
+  const missing = [
+    ['api.fetchPoolByMints', raydium?.api?.fetchPoolByMints],
+    ['clmm.getRpcClmmPoolInfo', raydium?.clmm?.getRpcClmmPoolInfo],
+    ['liquidity.getRpcPoolInfos', raydium?.liquidity?.getRpcPoolInfos],
+    ['cpmm.getRpcPoolInfos', raydium?.cpmm?.getRpcPoolInfos],
+  ].filter(([, fn]) => typeof fn !== 'function').map(([name]) => name);
+  if (missing.length > 0) {
+    throw new Error(
+      `SDK SURFACE MISMATCH — on-chain pricing is disabled: the Raydium SDK instance lacks ` +
+      `${missing.join(', ')}. This is a code/SDK-version problem, not a network one; prices ` +
+      `will come from the fallback sources until it is fixed.`,
+    );
+  }
   return {
     fetchPoolsByMints: async (m1, m2) => {
       // Explicit liquidity-desc sort. The SDK's default is sort="default",

@@ -620,6 +620,125 @@ export async function handleCreateToken(req, res) {
 // Demo stub for /api/publish-launch-report. No Arweave write — returns
 // Arweave-shaped URIs so the success modal's permanent-report card renders in
 // a demo walkthrough exactly as it would after a real publish.
+// ===========================================================================
+// /api/quote-token-info — demo: synthetic, instant, never blocks
+// ===========================================================================
+//
+// The real endpoint reads the mint on-chain, audits authorities, probes
+// Raydium, and reads pool prices — all against the user's RPC and public
+// indexers. In demo that meant real network calls (slow or rate-limited on
+// the free RPC), real risk verdicts (blocking tokens the user only wanted
+// to *look* at), and real "no price" failures. Demo is for exploring the
+// whole app without any of that, so this returns a plausible, fully
+// compatible token for ANY input, mirroring the real response shape field
+// for field (report-parity: the editor renders both identically).
+//
+// Known quotes keep their canonical decimals/symbols and a fixed price;
+// arbitrary mints get a symbol from their address and a deterministic
+// price derived from the address, so the same input always shows the same
+// number within a session.
+const DEMO_KNOWN_QUOTES = {
+  SOL:  { address: 'So11111111111111111111111111111111111111112', symbol: 'SOL',  decimals: 9, priceUsd: '150' },
+  USDC: { address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', symbol: 'USDC', decimals: 6, priceUsd: '1' },
+  USDT: { address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', symbol: 'USDT', decimals: 6, priceUsd: '1' },
+};
+function demoDeterministicPrice(seed) {
+  // FNV-1a over the address -> a price between $0.0001 and ~$5, log-spread.
+  let h = 2166136261;
+  for (const ch of String(seed)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  const unit = (h % 100000) / 100000; // 0..1
+  return (0.0001 * Math.pow(50000, unit)).toPrecision(6);
+}
+export function handleQuoteTokenInfo(req, res) {
+  const { quoteToken } = req.body || {};
+  if (!quoteToken) return res.status(400).json({ success: false, error: 'quoteToken required' });
+  const upper = String(quoteToken).toUpperCase();
+  const known = DEMO_KNOWN_QUOTES[upper] || Object.values(DEMO_KNOWN_QUOTES).find((k) => k.address === quoteToken);
+  const base = known || {
+    address: String(quoteToken),
+    symbol: String(quoteToken).slice(0, 4).toUpperCase(),
+    decimals: 6,
+    priceUsd: demoDeterministicPrice(quoteToken),
+  };
+  const info = {
+    address: base.address,
+    symbol: base.symbol,
+    name: known ? base.symbol : `Demo ${base.symbol}`,
+    decimals: base.decimals,
+    programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    imageUrl: null,
+    priceUsd: base.priceUsd,
+    priceSource: upper === 'SOL' ? 'sol' : 'on-chain:SOL',
+    pricePoolId: known ? null : `DemoPool${base.symbol}`,
+    priceLiquidityUsd: known ? null : 250000,
+    pricePoolsQualified: known ? null : 2,
+    pricePoolsDiscovered: known ? null : 3,
+    priceWarning: null,
+    // Everything a real audit could flag is clean in demo: the point of
+    // demo is to explore the flow, not to be told a pretend token is risky.
+    compatible: true,
+    compatError: null,
+    isToken2022: false,
+    extensions: [],
+    disallowedNames: [],
+    freezeAuthorityDisabled: true,
+    mintAuthorityRenounced: true,
+    freezeAuthorityBlock: false,
+    mintAuthorityWarning: false,
+    raydiumTradeable: 'yes',
+    raydiumProbeError: null,
+    demo: true,
+  };
+  console.log(`[demo] quote-token-info ${base.symbol} -> $${base.priceUsd} (synthetic)`);
+  res.json({ success: true, info });
+}
+
+// ===========================================================================
+// /api/preflight-create-lp — demo: synthetic resolved prices, no RPC
+// ===========================================================================
+//
+// The real preflight loads the SDK against the user's RPC, reads each quote
+// mint on-chain, and resolves prices from pools/probes/aggregators. In demo
+// that meant a custom quote token — which the demo quote-token-info now
+// happily accepts — hit "mint does not exist on chain" at step 5 and the
+// confirm modal never appeared. This mirrors the real response shape using
+// the same synthetic prices the demo editor already showed.
+export function handlePreflightCreateLp(req, res) {
+  const { tokenTotalSupply, targetMarketCapUsd, allocations } = req.body || {};
+  if (!Array.isArray(allocations) || allocations.length === 0) {
+    return res.status(400).json({ success: false, error: 'allocations must be a non-empty array' });
+  }
+  if (!tokenTotalSupply || !targetMarketCapUsd) {
+    return res.status(400).json({ success: false, error: 'tokenTotalSupply and targetMarketCapUsd required' });
+  }
+  const solUsd = Number(DEMO_KNOWN_QUOTES.SOL.priceUsd);
+  const launchedUsd = Number(targetMarketCapUsd) / Number(tokenTotalSupply);
+  const resolvedPrices = allocations.map((alloc, allocationIndex) => {
+    const fake = { body: null, status() { return this; }, json(b) { this.body = b; return this; } };
+    handleQuoteTokenInfo({ body: { quoteToken: alloc.quoteToken } }, fake);
+    const info = fake.body && fake.body.info;
+    const quoteUsd = alloc.priceEnteredByUser === true && Number(alloc.quoteUsdOverride) > 0
+      ? Number(alloc.quoteUsdOverride)
+      : Number(info ? info.priceUsd : 1);
+    const source = alloc.priceEnteredByUser === true && Number(alloc.quoteUsdOverride) > 0
+      ? 'user'
+      : (String(alloc.quoteToken).toUpperCase() === 'SOL' ? 'sol' : 'on-chain:SOL');
+    const ref = Number(alloc.quoteUsdOverride);
+    const driftPct = Number.isFinite(ref) && ref > 0 ? ((quoteUsd - ref) / ref) * 100 : null;
+    return {
+      allocationIndex,
+      quoteMint: info ? info.address : String(alloc.quoteToken),
+      quoteSymbol: info ? info.symbol : String(alloc.quoteToken),
+      quoteUsd: String(quoteUsd),
+      source,
+      driftPct,
+      initialPrice: String(launchedUsd / quoteUsd),
+    };
+  });
+  console.log(`[demo] preflight: ${resolvedPrices.length} pool(s) priced synthetically`);
+  res.json({ success: true, preflight: { resolvedPrices, solUsd: String(solUsd) } });
+}
+
 export function handlePublishLaunchReport(req, res) {
   const { mint } = req.body || {};
   if (!mint) {
@@ -1039,7 +1158,15 @@ async function simulateAirdrop({ st, tokenMint, tokenDecimals, recipients, onPro
     const r = recipients[i];
     // Convert UI token amount to raw mint-base units. Same math the
     // real executeAirdrop uses; Math.round absorbs frontend float noise.
-    const amountRaw = BigInt(Math.round(Number(r.tokens) * 10 ** tokenDecimals));
+    const tokensNum = Number(r.tokens);
+    if (!Number.isFinite(tokensNum) || tokensNum <= 0) {
+      // A malformed amount used to throw BigInt(NaN) and 500 the whole
+      // airdrop. Fail this recipient, keep going — same as the real path.
+      failed.push({ wallet: r.wallet, tokens: r.tokens, error: 'Invalid token amount' });
+      if (onProgress) onProgress({ index: i, wallet: r.wallet, ok: false });
+      continue;
+    }
+    const amountRaw = BigInt(Math.round(tokensNum * 10 ** tokenDecimals));
     console.log(`[demo] airdrop ${i + 1}/${recipients.length} → ${r.wallet} (${r.tokens} tokens)`);
     await sleep(1500);
     // Deduct from launch wallet's launched-token balance so the token

@@ -314,6 +314,10 @@ function renderPreflightModalBody(resolvedPrices) {
       sourceHtml =
         '<span title="Price read directly from the on-chain pool account — the exact source the launch uses.">' +
         'on-chain ' + escapeHtml(anchor) + ' pool' + shared + '</span>';
+    } else if (rp.source === 'user') {
+      sourceHtml =
+        '<span class="has-text-warning-dark" title="No market source could price this token; ' +
+        'Trebuchet is using the value you entered.">price you entered — no market source</span>';
     } else if (rp.source === 'raydium-probe') {
       sourceHtml = 'verified from Raydium';
     } else if (rp.source === 'sol') {
@@ -356,6 +360,15 @@ function renderPreflightModalBody(resolvedPrices) {
           `<i class="fas fa-exclamation-circle"></i> ` +
           `${symbol} price is ${Math.abs(rp.driftPct).toFixed(1)}% ${direction} than ` +
           `the funding estimate — within tolerance, but worth a glance.` +
+        `</div>`;
+    }
+    // Second opinion on a user-entered price: the market disagrees with
+    // what they typed. Not a refusal (they chose it) — but say so, here,
+    // where they are about to commit real money.
+    if (rp.secondOpinionWarning) {
+      driftLine +=
+        `<div class="is-size-7 has-text-danger mt-1">` +
+          `<i class="fas fa-exclamation-triangle"></i> ${escapeHtml(rp.secondOpinionWarning)}` +
         `</div>`;
     }
 

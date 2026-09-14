@@ -103,6 +103,14 @@ export const MIN_QUOTE_LIQUIDITY_USD = 10_000;
 // dust-pool case decisively.
 export const MAX_PROBE_PRICE_IMPACT_PCT = 5;
 
+// Preflight second opinion: the primary price source (on-chain pool read
+// or Raydium probe) is compared against the aggregators' independent view
+// of the same token, when that view is backed by real depth. Beyond this
+// spread one of the two is wrong and the launch is refused. Generous
+// because low-cap markets legitimately differ across venues; a 3x error
+// (the incident this defends against) is far outside it.
+export const MAX_SECOND_OPINION_SPREAD_PCT = 25;
+
 // Well-known mint addresses.
 export const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
