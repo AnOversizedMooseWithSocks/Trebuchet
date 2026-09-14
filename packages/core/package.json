@@ -16,6 +16,7 @@
     "./launch-store": "./src/launch-store.js",
     "./v2-execution-context": "./src/v2-execution-context.js",
     "./proof-integrity": "./src/proof-integrity.js",
+    "./streamlined-launch": "./src/streamlined-launch.js",
     "./validators": "./src/validators.js",
     "./lp-constants": "./src/lp-constants.js"
   }

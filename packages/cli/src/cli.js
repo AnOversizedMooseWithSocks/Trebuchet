@@ -229,6 +229,50 @@ export async function runCli(argv = [], {
         writeLine(stdout, `Operations: ${data.operationCount}`);
         writeLine(stdout, `Plan digest: ${data.planDigest}`);
       };
+    } else if (positionals[0] === 'stream' && positionals[1] === 'build') {
+      requirePositionals(positionals, ['stream', 'build'], 'trebuchet stream build --config <launch.json> [--out <plan.json>]');
+      requireOptions(options, ['config', 'out', 'json'], 'trebuchet stream build --config <launch.json> [--out <plan.json>] [--json]');
+      if (!options.config) throw commandError(TrebuchetCoreErrorCode.INVALID_INPUT, '--config is required.');
+      const input = await readJsonFile(options.config, 'Launch config');
+      const plan = core.planStreamlined(input.value);
+      const verification = core.verifyStreamlined(plan);
+      if (!verification.valid) {
+        throw commandError(TrebuchetCoreErrorCode.INTEGRITY_MISMATCH, 'Generated streamlined plan failed verification.', verification.errors);
+      }
+      const outputPath = options.out ? await writeJsonFileAtomic(options.out, plan) : null;
+      data = {
+        inputPath: input.path,
+        outputPath,
+        digest: verification.digest,
+        plan: outputPath ? null : plan,
+      };
+      humanOutput = () => {
+        writeLine(stdout, 'Streamlined launch plan (one signature, no custody, no sweep)');
+        writeLine(stdout, `    Pools: ${plan.topology.poolCount}   Batches: ${plan.batch?.policy?.batchSignatureCount ?? 0}   Signatures: ${plan.batch?.policy?.batchSignatureCount ?? 0}`);
+        for (const line of plan.ledger.lines) {
+          writeLine(stdout, `    ${line.sol.toFixed(6).padStart(10)} SOL  ${line.label}`);
+        }
+        writeLine(stdout, `    ${plan.ledger.subtotalSol.toFixed(6).padStart(10)} SOL  subtotal (${(plan.ledger.variancePct * 100).toFixed(0)}% variance margin)`);
+        if (plan.fees?.enabled) {
+          writeLine(stdout, `Fees: ${plan.fees.buyBps / 100}% buy / ${plan.fees.sellBps / 100}% sell → treasury ${plan.fees.treasury}`);
+        }
+        writeLine(stdout, `    ${plan.ledger.totalSol.toFixed(6).padStart(10)} SOL  total`);
+        if (outputPath) {
+          writeLine(stdout, `Plan written: ${outputPath}`);
+          writeLine(stdout, `Digest: ${verification.digest}`);
+        }
+      };
+    } else if (positionals[0] === 'stream' && positionals[1] === 'verify') {
+      if (positionals.length !== 3) {
+        throw commandError(TrebuchetCoreErrorCode.INVALID_INPUT, 'Usage: trebuchet stream verify <plan.json> [--json]');
+      }
+      requireOptions(options, ['json'], 'trebuchet stream verify <plan.json> [--json]');
+      const input = await readJsonFile(positionals[2], 'Streamlined launch plan');
+      data = { path: input.path, ...core.verifyStreamlined(input.value) };
+      if (!data.valid) {
+        throw commandError(TrebuchetCoreErrorCode.INTEGRITY_MISMATCH, 'Streamlined launch plan is invalid.', data);
+      }
+      humanOutput = () => humanVerification('Streamlined launch plan', data, stdout, stderr);
     } else if (positionals[0] === 'proof' && positionals[1] === 'verify') {
       if (positionals.length !== 3) {
         throw commandError(TrebuchetCoreErrorCode.INVALID_INPUT, 'Usage: trebuchet proof verify <proof.json> [--json]');

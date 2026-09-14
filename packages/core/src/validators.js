@@ -19,7 +19,8 @@ const JPEG_SOF_MARKERS = new Set([
 ]);
 
 function byteLength(s) {
-  return Buffer.byteLength(String(s), 'utf8');
+  // Browser-safe: TextEncoder counts UTF-8 bytes without a Node Buffer.
+  return new TextEncoder().encode(String(s)).length;
 }
 
 export function normalizeTokenName(value) {
@@ -97,7 +98,9 @@ export function normalizeVanityTargetBase58(prefixValue = '', suffixValue = '') 
 }
 
 export function detectLogoImageMime(buffer) {
-  if (!Buffer.isBuffer(buffer)) return null;
+  const isByteView = buffer instanceof Uint8Array
+    || (typeof Buffer !== 'undefined' && Buffer.isBuffer(buffer));
+  if (!isByteView) return null;
 
   const isPng =
     buffer.length >= 24 &&

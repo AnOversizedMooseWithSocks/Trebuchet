@@ -5,6 +5,8 @@ Usage:
   trebuchet plan build --config <launch.json> [--out <plan.json>] [--json]
   trebuchet plan verify <plan.json> [--json]
   trebuchet estimate (--plan <plan.json> | --config <launch.json>) [--json]
+  trebuchet stream build --config <launch.json> [--out <plan.json>] [--json]
+  trebuchet stream verify <plan.json> [--json]
   trebuchet proof verify <proof.json> [--json]
   trebuchet execute --config <launch.json> [--network demo] [--out <run.json>]
                    [--server <server.js>] [--timeout <seconds>] [--json]

@@ -3,6 +3,11 @@ import {
   TREBUCHET_CORE_PROTOCOL_VERSION,
   verifyLaunchPlan,
 } from './launch-plan.js';
+import {
+  buildStreamlinedPlan,
+  STREAMLINED_PLAN_SCHEMA,
+  verifyStreamlinedPlan,
+} from './streamlined-launch.js';
 import { verifyTrebuchetProof } from './proof-verification.js';
 import {
   TREBUCHET_CORE_NAME,
@@ -63,6 +68,47 @@ export function createTrebuchetCore({ clock = () => new Date() } = {}) {
     };
   };
   const verifyProof = (payload = {}) => verifyTrebuchetProof(payload);
+  const planStreamlined = (intent = {}, options = {}) => {
+    try {
+      return buildStreamlinedPlan(intent, {
+        ...options,
+        now: options.now || normalizeClockValue(clock),
+      });
+    } catch (error) {
+      if (error instanceof TrebuchetCoreError) throw error;
+      throw new TrebuchetCoreError(
+        TrebuchetCoreErrorCode.INVALID_INPUT,
+        error.message || 'Streamlined launch intent is invalid.',
+        { cause: error },
+      );
+    }
+  };
+  const verifyStreamlined = (plan = {}) => verifyStreamlinedPlan(plan);
+  const estimateStreamlined = (intentOrPlan = {}, options = {}) => {
+    const plan = intentOrPlan?.schema === STREAMLINED_PLAN_SCHEMA
+      ? intentOrPlan
+      : planStreamlined(intentOrPlan, options);
+    const verification = verifyStreamlinedPlan(plan);
+    if (!verification.valid) {
+      throw new TrebuchetCoreError(
+        TrebuchetCoreErrorCode.INTEGRITY_MISMATCH,
+        'Streamlined launch plan failed integrity verification.',
+        { details: verification.errors },
+      );
+    }
+    return {
+      schema: STREAMLINED_PLAN_SCHEMA,
+      protocolVersion: TREBUCHET_CORE_PROTOCOL_VERSION,
+      planDigest: verification.digest,
+      poolCount: Number(plan.topology?.poolCount || 0),
+      subtotalSol: Number(plan.ledger?.subtotalSol || 0),
+      varianceSol: Number(plan.ledger?.varianceSol || 0),
+      estimatedSolCost: Number(plan.ledger?.totalSol || 0),
+      classicTotalSol: Number(plan.classicReference?.totalSol || 0),
+      savingPct: Number(plan.comparison?.savingPct || 0),
+      signatureCount: plan.batch?.policy?.batchSignatureCount ?? null,
+    };
+  };
 
   return Object.freeze({
     name: TREBUCHET_CORE_NAME,
@@ -73,5 +119,9 @@ export function createTrebuchetCore({ clock = () => new Date() } = {}) {
     verifyPlan,
     estimateLaunch,
     verifyProof,
+
+    planStreamlined,
+    verifyStreamlined,
+    estimateStreamlined,
   });
 }

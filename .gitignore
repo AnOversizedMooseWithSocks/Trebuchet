@@ -23,3 +23,6 @@ test/ui/diffs/*.png
 /artifacts
 /brandShield.json
 /incident-tx.json
+
+# Cloudflare wrangler local state
+/.wrangler

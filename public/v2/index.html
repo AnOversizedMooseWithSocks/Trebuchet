@@ -99,6 +99,26 @@
               <span class="badge" id="launchStatus">Draft</span>
             </div>
 
+            <section class="quick-launch-card" aria-label="Streamlined one-shot launch">
+              <div class="quick-launch-copy">
+                <span class="eyebrow">Launch your token</span>
+                <h3>Ready in one step</h3>
+                <p>Trebuchet creates the token, opens your pool, deposits liquidity, and locks it in — all in one step, at rent-only cost.</p>
+              </div>
+              <div class="quick-launch-fields">
+                <label><span>Token name</span><input id="quickTokenName" type="text" maxlength="32" value="Your Token" autocomplete="off"></label>
+                <label><span>Symbol</span><input id="quickTokenSymbol" type="text" maxlength="10" value="TOK" autocomplete="off"></label>
+                <label><span>Pool quote</span><select id="quickQuote"><option value="SOL">SOL</option><option value="USDC">USDC</option><option value="USDT">USDT</option></select></label>
+                <label><span>Swap fees</span><select id="quickFee"><option value="0">none</option><option value="100">1% buy · 1% sell</option><option value="250">2.5% buy · 2.5% sell</option><option value="500">5% buy · 5% sell</option></select></label>
+                <label><span>Treasury</span><input id="quickTreasury" type="text" maxlength="44" placeholder="Fee collector address" autocomplete="off"></label>
+              </div>
+              <div class="quick-cost" id="quickCost" aria-live="polite"></div>
+              <button class="quick-launch-button" type="button" data-action="quick-launch-run">
+                <i class="fa-solid fa-bolt" aria-hidden="true"></i><span>Launch token</span>
+              </button>
+              <ol class="quick-launch-log" id="quickLaunchLog" aria-live="polite" hidden></ol>
+            </section>
+
             <section class="live-launch-monitor" id="liveLaunchMonitor" aria-live="polite" hidden></section>
 
             <div class="launch-toolbar" aria-label="Launch tools">
@@ -267,11 +287,6 @@
                 </span>
               </div>
               <section class="guided-launch-flow" id="guidedLaunchFlow" aria-live="polite"></section>
-
-                
-              <section class="vortex-panel" aria-label="Flywheel vortex allocation">
-                <div class="vortex-control" id="vortexControl"></div>
-              </section>
               <div class="advanced-launch-controls" id="advancedLaunchControls">
               <section class="launch-step-guide configure-step-guide" aria-labelledby="configureStepTitle">
                 <div>
@@ -415,7 +430,6 @@
                     <span class="flywheel-pick-label">Meme flywheel pairing</span>
                     <code class="flywheel-pick-mint" id="flywheelPickMint">—</code>
                     <button class="pill-button" type="button" data-action="shuffle-flywheel" title="Draw another memecoin from the flywheel pool">Shuffle</button>
-                    <button class="pill-button" type="button" data-action="spin-flywheel-vortex" title="Pair with three memecoins from the pool and open a four-token vortex">4-token vortex</button>
                   </div>
                   <label>
                     <span>Main slices</span>
@@ -819,7 +833,6 @@
   <script src="./runtime-state.js?v=1"></script>
   <script src="./api-client.js?v=37"></script>
   <script src="../gif-optimizer.js?v=3"></script>
-    <script src="vortex.js"></script>
   <script src="./app.js?v=173"></script>
 </body>
 </html>

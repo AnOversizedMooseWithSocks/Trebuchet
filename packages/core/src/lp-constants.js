@@ -30,6 +30,19 @@ export function estimateAirdropExecutionCostSol(recipientCount) {
   return (count * AIRDROP_ATA_RENT_SOL)
     + (Math.ceil(count / AIRDROP_RECIPIENTS_PER_TX) * AIRDROP_TX_FEE_SOL);
 }
+// CPMM (constant-product) venue rent constants for the streamlined launch.
+// A CPMM pool has no tick arrays and no per-range positions: one pool state,
+// one LP mint, two vault/ATA accounts. These values are the working estimate
+// for the two launch programs we publish on; the exact number is confirmed
+// during the next devnet/unfunded drill before a release flags them as fixed.
+export const CPMM_POOL_RENT_SOL = 0.062;
+export const CPMM_LP_MINT_RENT_SOL = 0.002;
+export const CPMM_VAULT_ATA_RENT_SOL = 0.001;
+// "Lock" on a CPMM is not Burn & Earn — it is transferring the LP token to a
+// committed holder (a regular SPL transfer + rent for a token account the
+// holder already owns). Keep a tiny line so the ledger is honest.
+export const CPMM_LOCK_TRANSFER_SOL = 0.001;
+
 // Permanent launch report (Arweave) publish cost.
 //
 // The report — the rendered HTML plus a small JSON record — is posted to Arweave

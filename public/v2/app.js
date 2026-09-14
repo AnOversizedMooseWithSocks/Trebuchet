@@ -2,7 +2,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
 const views = {
-  launch: { eyebrow: 'Six guided phases', title: 'Launch a token' },
+  launch: { eyebrow: 'Launch in five steps', title: 'Launch a token' },
   wallet: { eyebrow: 'Wallet', title: 'Signer & asset custody' },
   discovery: { eyebrow: 'Tokens & wallets', title: 'Discovery' },
   history: { eyebrow: 'History', title: 'Execution journal' },
@@ -22,11 +22,11 @@ const GUIDED_RECIPE_ID = 'simple-sol-v1';
 const GUIDED_DRAFT_STORAGE_KEY = 'trebuchet-v2-guided-draft';
 const GUIDED_PRACTICE_DESTINATION = '11111111111111111111111111111112';
 const guidedSteps = Object.freeze([
-  { id: 'welcome', label: 'Welcome' },
-  { id: 'identity', label: 'Token' },
-  { id: 'destination', label: 'Wallet' },
-  { id: 'value', label: 'Value' },
+  { id: 'token', label: 'Token' },
+  { id: 'liquidity', label: 'Liquidity pairs' },
   { id: 'review', label: 'Review' },
+  { id: 'fund', label: 'Fund' },
+  { id: 'launch', label: 'Launch' },
 ]);
 
 const EMPTY_ACCOUNT = Object.freeze({
@@ -718,6 +718,11 @@ function syncGuidedField(input) {
   }
   if (field === 'description') $('#tokenDescription').value = input.value.slice(0, 200);
   if (field === 'destinationWallet') state.guidedIntent.destinationWallet = input.value.trim();
+  if (field === 'pairQuote') state.guidedIntent.pairQuote = input.value;
+  if (field === 'feeBps') {
+    state.guidedIntent.feeBps = Math.max(0, Number(input.value) || 0);
+    resetGuidedFundingEstimate();
+  }
   if (field === 'startingMarketCapUsd') {
     state.guidedIntent.startingMarketCapUsd = Math.max(0, parseNumericInput(input.value, 0));
     resetGuidedFundingEstimate();
@@ -792,13 +797,12 @@ function guidedStepErrors(step = state.guidedStep) {
 }
 
 function guidedStepProgress() {
-  if (state.guidedStep === 0) return '';
   return `
     <ol class="guided-progress" aria-label="Guided launch progress">
-      ${guidedSteps.slice(1).map((step, index) => {
+      ${guidedSteps.map((step, index) => {
         const stepNumber = index + 1;
-        const current = state.guidedStep === stepNumber;
-        const complete = state.guidedStep > stepNumber;
+        const current = state.guidedStep === index;
+        const complete = state.guidedStep > index;
         return `<li class="${current ? 'is-current' : ''} ${complete ? 'is-complete' : ''}">
           <span>${complete ? '<i class="fa-solid fa-check"></i>' : stepNumber}</span>
           <small>${escapeHtml(step.label)}</small>
@@ -819,7 +823,7 @@ function guidedIdentityStep() {
   return `
     <div class="guided-step-layout">
       <div class="guided-step-copy">
-        <span class="eyebrow">Step 1 of 4</span>
+        <span class="eyebrow">Step 1 of 5</span>
         <h2>What are you launching?</h2>
         <p>Name the token. Trebuchet uses a standard one-billion supply and hides the pool machinery until review.</p>
       </div>
@@ -900,6 +904,82 @@ function guidedValueStep() {
         <label><span>Pool liquidity budget</span><input data-guided-field="liquidityBudgetSol" value="${escapeHtml(liquidityBudgetSol)}" inputmode="decimal" autocomplete="off"><small>${escapeHtml(strategy.label)} · ${escapeHtml(strategy.structure)} · only a live launch uses this SOL</small></label>
         <div class="guided-price-preview guided-strategy-preview"><small>What this choice does</small><strong>${escapeHtml(strategy.detail)}</strong><span>Network fees, rent, publishing, and a safety buffer are calculated separately on Review.</span></div>
         <div class="guided-price-preview guided-token-price-preview"><small>Approximate starting token price</small><strong>$${tokenPrice.toFixed(tokenPrice < 0.001 ? 8 : 4)}</strong><span>Based on one billion tokens and your starting market value.</span></div>
+      </div>
+    </div>
+  `;
+}
+
+function guidedLiquidityStep() {
+  const base = guidedValueStep();
+  const pair = String(state.guidedIntent?.pairQuote || 'SOL');
+  const feeBps = Number(state.guidedIntent?.feeBps ?? 100);
+  const pairs = [
+    ['SOL', 'primary'],
+    ['USDC', 'stable'],
+    ['USDT', 'stable'],
+  ].map(([value, tone]) => `<option value="${value}"${value === pair ? ' selected' : ''}>${value} · ${tone}</option>`).join('');
+  const feeOptions = [
+    [0, 'No swap fee'],
+    [100, '1% buy · 1% sell'],
+    [250, '2.5% buy · 2.5% sell'],
+    [500, '5% buy · 5% sell'],
+  ].map(([value, label]) => `<option value="${value}"${feeBps === value ? ' selected' : ''}>${label}</option>`).join('');
+  const extra = `
+    <label class="guided-wide"><span>Liquidity pair</span>
+      <select data-guided-field="pairQuote">${pairs}</select>
+      <small>The pool is quoted with this asset. More pairs can be added after launch.</small>
+    </label>
+    <label class="guided-wide"><span>Swap fee</span>
+      <select data-guided-field="feeBps">${feeOptions}</select>
+      <small>A fee per trade is routed to your treasury automatically.</small>
+    </label>
+  `;
+  const updatedEyebrow = base.replace(
+    '<span class="eyebrow">Step 3 of 4</span>',
+    '<span class="eyebrow">Step 2 of 5</span>',
+  );
+  return updatedEyebrow.replace(
+    '<div class="guided-price-preview guided-strategy-preview">',
+    `${extra}<div class="guided-price-preview guided-strategy-preview">`,
+  );
+}
+
+function guidedFundingStep() {
+  const funding = state.guidedFunding;
+  const status = funding?.status;
+  const fundValue = status === 'ready'
+    ? `${Number(funding.requiredSol || 0).toFixed(3)} SOL`
+    : status === 'loading'
+      ? 'Calculating…'
+      : 'Estimated on the previous step';
+  const costValue = status === 'ready' ? `${Number(funding.launchCostsSol || 0).toFixed(3)} SOL` : '—';
+  return `
+    <div class="guided-step-layout">
+      <div class="guided-step-copy">
+        <span class="eyebrow">Step 4 of 5</span>
+        <h2>Fund the launch</h2>
+        <p>The exact requirement is shown below — rent, fees, and your chosen liquidity. Everything you fund beyond the cost is returned to you at the end.</p>
+      </div>
+      <div class="guided-form-card single-column">
+        <div class="guided-funding-summary">
+          <span><small>Total to fund</small><strong>${fundValue}</strong></span>
+          <span><small>Launch costs</small><strong>${costValue}</strong></span>
+        </div>
+        <p class="guided-funding-note">Funding also parks your liquidity for the pool. A live run starts only after you approve the launch on the next step.</p>
+      </div>
+    </div>
+  `;
+}
+
+function guidedLaunchStep() {
+  const token = guidedTokenDraft();
+  const identity = `${token.name || 'Untitled'} · $${token.symbol || 'TOK'}`;
+  return `
+    <div class="guided-step-layout">
+      <div class="guided-step-copy">
+        <span class="eyebrow">Step 5 of 5</span>
+        <h2>Ready to launch</h2>
+        <p>${escapeHtml(identity)} is fully planned and funded. ${practice ? 'Run the full simulation first — practice creates no usable token or pool, sends no transaction, and spends no SOL.' : 'Green light the live launch when you are ready, or run the simulation first.'}</p>
       </div>
     </div>
   `;
@@ -1057,35 +1137,17 @@ function renderGuidedLaunchFlow() {
   const technicalDetailsOpen = sameStep && target.querySelector('.guided-technical-details')?.open === true;
   const practice = practiceEnvironmentSelected();
   let body = '';
-  if (state.guidedStep === 0) {
-    body = `
-      <div class="guided-welcome">
-        <span class="guided-wand"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
-        <span class="eyebrow">Your first launch</span>
-        <h2>Create your first token, step by step.</h2>
-        <p>Answer three plain questions and review one clear recipe. ${practice ? 'Then prove the entire flow locally before risking funds.' : 'Then continue into guarded funding and on-chain execution.'}</p>
-        <div class="guided-promise-row">
-          <span><i class="fa-solid fa-shield-halved"></i><strong>Keys stay local</strong></span>
-          <span><i class="fa-solid fa-rotate-left"></i><strong>Recovery checkpoints</strong></span>
-          <span><i class="fa-solid ${practice ? 'fa-flask' : 'fa-satellite-dish'}"></i><strong>${practice ? 'Zero-spend practice' : 'Guarded live handoff'}</strong></span>
-        </div>
-        <div class="guided-welcome-actions">
-          <button class="primary-button" type="button" data-action="guided-next">Start the tutorial <i class="fa-solid fa-arrow-right"></i></button>
-          <button class="text-button" type="button" data-action="select-experience" data-experience="advanced">Use advanced controls</button>
-        </div>
-        <small>${practice ? 'Practice creates no usable token or pool, sends no transaction, and spends no SOL.' : 'Guided mode prepares the recipe; a live transaction starts only after funding and final approval.'}</small>
-      </div>
-    `;
-  } else if (state.guidedStep === 1) body = guidedIdentityStep();
-  else if (state.guidedStep === 2) body = guidedDestinationStep();
-  else if (state.guidedStep === 3) body = guidedValueStep();
-  else body = guidedReviewStep();
+  if (state.guidedStep === 0) body = guidedIdentityStep();
+  else if (state.guidedStep === 1) body = guidedLiquidityStep();
+  else if (state.guidedStep === 2) body = guidedReviewStep();
+  else if (state.guidedStep === 3) body = guidedFundingStep();
+  else body = guidedLaunchStep();
 
   const controls = state.guidedStep === 0 ? '' : `
     <div class="guided-navigation">
       <button class="secondary-button" type="button" data-action="guided-back"><i class="fa-solid fa-arrow-left"></i> Back</button>
       ${state.guidedStep < guidedSteps.length - 1
-        ? `<button class="primary-button" type="button" data-action="guided-next">${state.guidedStep === 3 ? 'Review launch recipe' : 'Continue'} <i class="fa-solid fa-arrow-right"></i></button>`
+        ? `<button class="primary-button" type="button" data-action="guided-next">${state.guidedStep === 1 ? 'Continue to review' : state.guidedStep === 2 ? 'Continue to funding' : 'Review launch'} <i class="fa-solid fa-arrow-right"></i></button>`
         : practice
           ? '<button class="primary-button" type="button" data-action="guided-practice"><i class="fa-solid fa-flask"></i> Start practice launch</button>'
           : '<button class="primary-button custody-action" type="button" data-action="guided-live-handoff"><i class="fa-solid fa-shield-halved"></i> Set up live launch wallet</button>'}
@@ -5487,21 +5549,11 @@ function applyVortexAllocation(pools = []) {
   scheduleLaunchAutoSave();
 }
 
+// The flywheel vortex has been removed from the shell (no mount point and
+// no vortex script). Kept as a documented no-op so renderer call sites and
+// the full-input audit stay intact.
 function renderVortexControl() {
-  const host = $('#vortexControl');
-  if (!host || !window.TrebuchetV2Vortex) return;
-  // Only render while the Configure pane is actually visible. Rendering a
-  // hidden pane does no useful work and churns layout during unrelated flows
-  // (it repeatedly detached elements other interactions were pointing at).
-  if (!host.offsetParent && state.vortexControl) return;
-  if (!state.vortexControl) {
-    state.vortexControl = window.TrebuchetV2Vortex.mount(host, {
-      read: vortexAllocationModel,
-      write: applyVortexAllocation,
-    });
-  } else {
-    state.vortexControl.render();
-  }
+  return;
 }
 
 function renderFlywheelPick() {
@@ -23039,6 +23091,12 @@ function handleClick(event) {
   if (!actionTarget) return;
 
   const { action } = actionTarget.dataset;
+  if (action === 'quick-launch-run') {
+    quickLaunchDemoRun();
+    renderLaunchPreview();
+    renderLaunchWorkspace();
+    return;
+  }
   if (action === 'open-launch-identity') {
     setView('launch');
     renderLaunchIdentity();
@@ -23257,11 +23315,6 @@ function handleClick(event) {
 
   if (action === 'shuffle-flywheel') {
     shuffleMemeFlywheel();
-    return;
-  }
-
-  if (action === 'spin-flywheel-vortex') {
-    spinFlywheelVortex();
     return;
   }
 
@@ -23845,6 +23898,137 @@ function handleClick(event) {
 
 }
 
+// ---------------------------------------------------------------------------
+// Quick Launch — the streamlined one-batch recipe (CPMM + Token-2022 native).
+// A visible, honest cost preview that mirrors the headless @trebuchet/core
+// streamlined-only ledger; zero network calls, zero dependencies.
+// ---------------------------------------------------------------------------
+
+const QUICK_POOL_STATE_SOL = 0.062;
+const QUICK_LP_MINT_SOL = 0.002;
+const QUICK_VAULT_ATA_SOL = 0.001;
+const QUICK_LOCK_TRANSFER_SOL = 0.001;
+const QUICK_NETWORK_SOL = 0.001;
+const QUICK_BOOT_DUST_SOL = 0.001;
+const QUICK_MINT_SOL = 0.05;
+let QUICK_SOL_USD = 150;
+const QUICK_VARIANCE_PCT = 0.02;
+
+function quickLaunchLedger(quoteSymbol) {
+  const isSol = String(quoteSymbol || '').toUpperCase() === 'SOL';
+  const lines = [
+    { label: 'Create pool', sol: QUICK_POOL_STATE_SOL },
+    { label: 'LP + vault accounts', sol: QUICK_LP_MINT_SOL + 2 * QUICK_VAULT_ATA_SOL },
+    { label: 'Deposit & lock', sol: QUICK_LOCK_TRANSFER_SOL },
+    { label: 'Network fee', sol: QUICK_NETWORK_SOL },
+    {
+      label: isSol ? 'Start liquidity (SOL)' : 'Start liquidity (swapped in)',
+      sol: isSol ? QUICK_BOOT_DUST_SOL : 1 / QUICK_SOL_USD,
+    },
+    { label: 'Token creation', sol: QUICK_MINT_SOL },
+  ];
+  const subtotal = lines.reduce((sum, line) => sum + line.sol, 0);
+  const variance = subtotal * QUICK_VARIANCE_PCT;
+  const total = subtotal + variance;
+  return {
+    lines,
+    subtotal,
+    variance,
+    total,
+  };
+}
+
+async function refreshQuickLaunchPrice() {
+  try {
+    const response = await fetch('/api/price', { signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined });
+    if (!response.ok || !response.json) return;
+    const payload = await response.json();
+    const usd = Number(payload?.solana?.usd);
+    if (Number.isFinite(usd) && usd > 0) {
+      QUICK_SOL_USD = usd;
+      renderQuickLaunchCost();
+    }
+  } catch (_error) {
+    // Static host or offline preview: keep the bundled fallback (150).
+  }
+}
+
+function quickLaunchFeeParams() {
+  const bps = Number($('#quickFee')?.value || 0);
+  const treasury = ($('#quickTreasury')?.value || '').trim();
+  return { bps, treasury };
+}
+
+function renderQuickLaunchCost() {
+  const cost = $('#quickCost');
+  if (!cost) return;
+  const quote = $('#quickQuote')?.value || 'SOL';
+  const ledger = quickLaunchLedger(quote);
+  const { bps, treasury } = quickFeeParams();
+  if (bps > 0) {
+    if (bps > 0) {
+    ledger.lines.push({
+      label: treasury
+        ? `Swap fees ${(bps / 100).toFixed(2)}% → treasury`
+        : 'Swap fees (% rate set)',
+      sol: 0,
+    });
+  }
+  }
+  const rows = ledger.lines.map((line) => (
+    `<div class="quick-cost-row"><span>${escapeHtml(line.label)}</span><strong>${line.sol.toFixed(4)} SOL</strong></div>`
+  )).join('');
+  cost.innerHTML = `
+    <div class="quick-cost-grid">
+      ${rows}
+      <div class="quick-cost-row"><span>Small buffer (${(ledger.variance / ledger.subtotal * 100).toFixed(0)}%)</span><strong>${ledger.variance.toFixed(4)}</strong></div>
+      <div class="quick-cost-row quick-cost-total"><span>Total launch cost</span><strong>${ledger.total.toFixed(4)} SOL</strong></div>
+      
+    </div>`;
+  const nameInput = $('#quickTokenName');
+  const launchName = $('#launchName');
+  if (nameInput && launchName) {
+    launchName.textContent = `${nameInput.value.trim() || 'Untitled'} launch`;
+  }
+}
+
+function quickLaunchDemoRun() {
+  const log = $('#quickLaunchLog');
+  const button = document.querySelector('[data-action="quick-launch-run"]');
+  if (!log || !button || button.getAttribute('aria-busy') === 'true') return;
+  button.setAttribute('aria-busy', 'true');
+  button.querySelector('span').textContent = 'Preparing your launch…';
+  log.hidden = false;
+
+  const symbol = ($('#quickTokenSymbol')?.value || 'TOK').toUpperCase().slice(0, 10) || 'TOK';
+  const quote = $('#quickQuote')?.value || 'SOL';
+  const { bps, treasury } = quickLaunchFeeParams();
+  const steps = [
+    `Create ${symbol} token`,
+    `Open the ${quote} pool`,
+    `Create LP and vault accounts`,
+    `Add ${quote} + ${symbol} liquidity`,
+  ];
+  if (bps > 0) {
+    steps.push(`Add swap fees (${(bps / 100).toFixed(2)}%)${treasury ? ` → ${shortAddress(treasury)}` : ''}`);
+  }
+  steps.push(`Lock the liquidity`);
+  log.innerHTML = steps.map((step) => `<li class="is-todo">${escapeHtml(step)}</li>`).join('');
+  const items = [...log.querySelectorAll('li')];
+  items.forEach((item, index) => {
+    setTimeout(() => {
+      item.classList.remove('is-todo');
+      item.classList.add('is-done');
+      if (index === items.length - 1) {
+        button.setAttribute('aria-busy', 'false');
+        button.querySelector('span').textContent = 'Launch ready';
+        const badge = $('#launchStatus');
+        if (badge) badge.textContent = 'Armed';
+      }
+    }, 150 * (index + 1));
+  });
+}
+
 function bindEvents() {
   document.addEventListener('click', handleClick);
   document.addEventListener('input', handleDynamicInput);
@@ -23983,6 +24167,14 @@ function bindEvents() {
   $('#liquidityBudgetSol')?.addEventListener('input', (event) => {
     applyLaunchBudgetRecommendation(event.target.value, { announce: false });
   });
+
+  $('#quickTokenName')?.addEventListener('input', renderQuickLaunchCost);
+  $('#quickTokenSymbol')?.addEventListener('input', renderQuickLaunchCost);
+  $('#quickQuote')?.addEventListener('change', renderQuickLaunchCost);
+  $('#quickFee')?.addEventListener('change', renderQuickLaunchCost);
+  $('#quickTreasury')?.addEventListener('input', renderQuickLaunchCost);
+  renderQuickLaunchCost();
+  refreshQuickLaunchPrice();
 
   $('#newVaultButton').addEventListener('click', () => {
     generateManagedWallet().catch((error) => notify(error.message || 'Wallet generation failed'));

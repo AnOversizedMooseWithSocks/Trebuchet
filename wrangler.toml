@@ -1,0 +1,31 @@
+# Cloudflare Workers project for trebu.ratimics.com
+#
+# Deploy:
+#   npm i -D wrangler          (or use your global wrangler)
+#   wrangler login
+#   wrangler deploy
+#
+# The Worker serves the whole v2 app statically (public/v2) and exposes
+#   GET /api/health  -> { ok: true }
+#   GET /api/price   -> { "solana": { "usd": <number> } }
+# Client-side launch planning runs entirely in the browser; this edge holds no
+# keys, no custody, and no launch state.
+
+name = "trebuchet-web"
+
+main = "worker/index.js"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Serve the static v2 app with an SPA fallback from the ASSETS binding.
+[assets]
+directory = "public/v2"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# Custom domain on your Cloudflare account (zone ratimics.com must be
+# present in the same account for custom_domain = true).
+[[routes]]
+pattern = "trebu.ratimics.com"
+custom_domain = true
+zone_name = "ratimics.com"
