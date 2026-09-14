@@ -158,6 +158,20 @@ async function withPage(fn, size = 'desktop') {
 
 async function textOf(p, s) { return p.textContent(s).then(x => (x || '').trim()); }
 async function stepIs(p, n) { await p.waitForSelector('#step' + n + '-card.is-active', { timeout: 15000 }); }
+
+// Step 5 shows a "Confirm pool creation" modal with the resolved prices
+// before anything is created — a real user reads it and clicks Confirm.
+// The demo preflight now succeeds (it used to fail on the public RPC,
+// which showed #lpFailInfo and let these flows "complete" via the failure
+// path), so the modal appears and must be confirmed for the LP to run.
+async function confirmPoolsIfPrompted(p) {
+  try {
+    await p.waitForSelector('#createLpConfirmModal.is-active', { state: 'visible', timeout: 20000 });
+  } catch {
+    return; // no modal (e.g. preflight failed) — let the caller's wait decide
+  }
+  await forceClick(p, '#createLpConfirmProceedBtn');
+}
 function ok(cond, msg) { if (!cond) throw new Error(msg); }
 
 // Force-click a disabled button by stripping its disabled attr first.
@@ -255,11 +269,16 @@ const flows = {
         await p.locator('#continueToLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#continueToLpBtn'); await stepIs(p, 5);
       }
       await p.locator('#createLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#createLpBtn');
+      await confirmPoolsIfPrompted(p);
       const done = await Promise.race([
         p.waitForSelector('#lpDoneInfo', { state: 'visible', timeout: 60000 }).then(() => 'ok'),
         p.waitForSelector('#lpFailInfo', { state: 'visible', timeout: 60000 }).then(() => 'fail'),
       ]).catch(() => null);
       ok(done !== null, 'LP did not complete');
+      // Demo LP creation must SUCCEED. This flow used to pass on the
+      // failure branch (real preflight failing on the public RPC), which
+      // hid a broken demo step 5 for as long as it lasted.
+      ok(done === 'ok', 'LP completed with a failure in demo mode');
     },
   },
   '06': {
@@ -277,6 +296,7 @@ const flows = {
         await p.locator('#continueToLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#continueToLpBtn'); await stepIs(p, 5);
       }
       await p.locator('#createLpBtn').scrollIntoViewIfNeeded(); await forceClick(p, '#createLpBtn');
+      await confirmPoolsIfPrompted(p);
       await Promise.race([
         p.waitForSelector('#lpDoneInfo', { state: 'visible', timeout: 60000 }),
         p.waitForSelector('#lpFailInfo', { state: 'visible', timeout: 60000 }),
