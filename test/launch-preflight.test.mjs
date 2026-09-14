@@ -20,7 +20,15 @@ import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import * as lp from '../lpService.js';
 import { WSOL_MINT, USDC_MINT } from '../lpConstants.js';
 
-const FAKE_SDK = { api: {}, clmm: {}, liquidity: {}, cpmm: {} };
+const FAKE_SDK = {
+  // Carries the surface onChainPriceDeps checks for — a fake missing these
+  // is exactly the shape that silently disabled on-chain pricing in the E2E
+  // harness. The seams below intercept before any of them are called.
+  api: { fetchPoolByMints: async () => ({ count: 0, hasNextPage: false, data: [] }), getClmmConfigs: async () => [] },
+  clmm: { getRpcClmmPoolInfo: async () => null },
+  liquidity: { getRpcPoolInfos: async () => ({}) },
+  cpmm: { getRpcPoolInfos: async () => ({}) },
+};
 const LOWCAP = '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr';
 
 // A minimal, valid SPL mint account (82 bytes; decimals at offset 44) so

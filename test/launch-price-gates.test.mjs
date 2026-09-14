@@ -129,7 +129,15 @@ test('a SOL pool uses the caller-resolved SOL price and touches no probe or orac
 
 // --- on-chain first -----------------------------------------------------------
 
-const FAKE_RAYDIUM = { api: {}, clmm: {}, liquidity: {} }; // presence enables the on-chain step
+const FAKE_RAYDIUM = {
+  // Carries the surface onChainPriceDeps checks for — a fake missing these
+  // is exactly the shape that silently disabled on-chain pricing in the E2E
+  // harness. The seams below intercept before any of them are called.
+  api: { fetchPoolByMints: async () => ({ count: 0, hasNextPage: false, data: [] }), getClmmConfigs: async () => [] },
+  clmm: { getRpcClmmPoolInfo: async () => null },
+  liquidity: { getRpcPoolInfos: async () => ({}) },
+  cpmm: { getRpcPoolInfos: async () => ({}) },
+}; // presence enables the on-chain step
 
 test('on-chain pool price is used FIRST and the probe/oracle are never consulted', async () => {
   let probeCalls = 0;
@@ -190,7 +198,7 @@ test('the display helper rebuilds its read-only SDK when the RPC changes', async
   // and observing how many times it's invoked as the "RPC" changes. The
   // seam returns a distinct fake per call so we can count constructions.
   let builds = 0;
-  lp.setSdkFactoryForTests(async () => { builds += 1; return { api: {}, clmm: {}, liquidity: {}, cpmm: {} }; });
+  lp.setSdkFactoryForTests(async () => { builds += 1; return FAKE_RAYDIUM; });
   lp.setLaunchOnChainPriceForTests(async () => { const e = new Error('none'); e.code = 'NO_POOLS'; throw e; });
 
   await lp.getQuoteTokenOnChainPrice({ mint: QUOTE.address, solUsd: SOL_USD });
@@ -199,7 +207,7 @@ test('the display helper rebuilds its read-only SDK when the RPC changes', async
 
   // Reset clears the cache (what an RPC switch does through the keyed cache).
   lp.resetTestFactories();
-  lp.setSdkFactoryForTests(async () => { builds += 1; return { api: {}, clmm: {}, liquidity: {}, cpmm: {} }; });
+  lp.setSdkFactoryForTests(async () => { builds += 1; return FAKE_RAYDIUM; });
   lp.setLaunchOnChainPriceForTests(async () => { const e = new Error('none'); e.code = 'NO_POOLS'; throw e; });
   await lp.getQuoteTokenOnChainPrice({ mint: QUOTE.address, solUsd: SOL_USD });
   assert.equal(builds, 2, 'a changed RPC key -> a fresh SDK is built');

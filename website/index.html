@@ -625,6 +625,18 @@
         grid-template-columns: repeat(4, 1fr);
         gap: 28px;
     }
+    .os-note {
+        margin: 12px 0 0;
+        font-size: 0.78rem;
+        line-height: 1.55;
+        color: var(--ink-soft);
+    }
+    .os-note code {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        background: rgba(28, 22, 16, 0.06);
+        padding: 1px 5px;
+    }
     .hero-os-list {
         display: block;
         width: 100%;
@@ -4054,6 +4066,11 @@
                    class="os-secondary">
                     or grab the .deb (Debian/Ubuntu) →
                 </a>
+                <p class="os-note">
+                    <strong>Ubuntu 24.04+ / Debian:</strong> use the .deb — it installs the security profile
+                    the sandbox needs. The AppImage also runs (it detects the restriction and adapts), but
+                    it needs <code>libfuse2t64</code> and the execute bit: <code>chmod +x Trebuchet-*.AppImage</code>.
+                </p>
             </div>
 
         </div>

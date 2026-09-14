@@ -20,7 +20,44 @@ import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { marked } from 'marked';
+
+// ---------------------------------------------------------------------------
+// Linux: keep Chromium's sandbox when the kernel allows it; fall back when
+// it doesn't, instead of dying before the first window.
+//
+// Ubuntu 24.04+ (and Debian by default) restrict unprivileged user
+// namespaces via AppArmor. Chromium's sandbox needs them, so an Electron
+// AppImage on those systems crashes on launch — the user sees "it didn't
+// even open". The .deb we also ship installs an AppArmor profile and is
+// unaffected; the AppImage cannot, so it must adapt at runtime.
+//
+// The probe is the one electron-builder adopted for its AppRun script:
+// ask the kernel for a user namespace with `unshare -Ur true`. If that
+// works, the sandbox works and we change nothing. If it fails (blocked, or
+// `unshare` absent), we append --no-sandbox so the app starts. This is a
+// deliberate, documented trade: a running app without the renderer sandbox
+// versus no app at all. It must run before the 'ready' event, which is why
+// it sits at module top level.
+// ---------------------------------------------------------------------------
+if (process.platform === 'linux') {
+  let userNamespacesOk = false;
+  try {
+    execFileSync('unshare', ['-Ur', 'true'], { stdio: 'ignore', timeout: 2000 });
+    userNamespacesOk = true;
+  } catch (_) {
+    userNamespacesOk = false;
+  }
+  if (!userNamespacesOk) {
+    app.commandLine.appendSwitch('no-sandbox');
+    console.warn(
+      '[linux] unprivileged user namespaces are unavailable (Ubuntu 24.04+ AppArmor ' +
+      'default, or Debian). Starting with --no-sandbox so the app can launch. For the ' +
+      'full sandbox, install the .deb package instead of the AppImage.',
+    );
+  }
+}
 
 import * as secretStore from './secretStore.js';
 import * as userPrefs from './userPrefs.js';

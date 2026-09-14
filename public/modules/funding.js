@@ -487,6 +487,12 @@ function buildAllocationsForApi() {
       supplyPercent: p.supplyPercent,
       ammConfigIndex: p.ammConfigIndex,
       quoteUsdOverride: effectiveUsdOverride,
+      // True when the user typed the USD price themselves (customize-mode
+      // override, or the "we couldn't fetch a price" dialog). The server
+      // then treats the number as a PRICE SOURCE of last resort — used only
+      // when no market source can price the token — rather than merely as
+      // the drift-guard reference.
+      priceEnteredByUser: p.priceEnteredByUser === true,
       quoteDecimalsOverride: effectiveDecimalsOverride,
       quoteSymbolOverride: effectiveSymbolOverride,
       distribution,
